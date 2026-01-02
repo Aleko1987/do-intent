@@ -3,6 +3,7 @@ import db from "../db";
 import type { IntentEvent, MarketingLead } from "./types";
 import { updateLeadScoring } from "./scoring";
 import { checkAndPushToSales } from "./auto_push";
+import { autoScoreEvent } from "../intent_scorer/auto_score";
 
 interface WebhookEventRequest {
   leadLookup: {
@@ -105,6 +106,9 @@ export const webhookEvent = api<WebhookEventRequest, WebhookEventResponse>(
     if (!event) {
       throw new Error("Failed to create event");
     }
+
+    // Auto-score the event using intent scorer
+    await autoScoreEvent(event.id);
 
     // Update scoring
     await updateLeadScoring(lead.id);

@@ -4,6 +4,7 @@ import db from "../db";
 import type { IntentEvent, MarketingLead } from "./types";
 import { updateLeadScoring } from "./scoring";
 import { checkAndPushToSales } from "./auto_push";
+import { autoScoreEvent } from "../intent_scorer/auto_score";
 
 interface CreateEventRequest {
   id: string;
@@ -65,6 +66,9 @@ export const createEvent = api<CreateEventRequest, CreateEventResponse>(
     if (!event) {
       throw new Error("Failed to create event");
     }
+
+    // Auto-score the event using intent scorer
+    await autoScoreEvent(event.id);
 
     // Update lead scoring
     await updateLeadScoring(req.id);
