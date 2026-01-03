@@ -1,7 +1,10 @@
-import { api } from "encore.dev/api";
+import { api, Header, APIError } from "encore.dev/api";
+import { secret } from "encore.dev/config";
 import db from "../db";
 import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
+
+const ingestApiKey = secret("IngestApiKey");
 
 // Whitelist of allowed event types
 const ALLOWED_EVENT_TYPES = [
@@ -16,6 +19,7 @@ const ALLOWED_EVENT_TYPES = [
 ];
 
 interface IngestIntentEventRequest {
+  "x-do-intent-key"?: Header<"x-do-intent-key">;
   event_source?: string;
   event_type: string;
   occurred_at?: string;
@@ -125,21 +129,23 @@ function validateAndNormalize(req: IngestIntentEventRequest): {
 }
 
 // Checks API key from header
-function checkApiKey(): void {
-  // In Encore, we can access headers via the request context
-  // For now, we'll use a simple approach with environment variable
-  // Note: Encore doesn't expose raw headers easily, so we'll use a query param or body field
-  // Actually, let's use a header check via Encore's request context if available
-  // For v1, we'll skip this and add it as a TODO if needed
-  // The user said "minimal security" - we can add this later
+function checkApiKey(headerKey: string | undefined): void {
+  const expectedKey = ingestApiKey();
+  if (!expectedKey) {
+    // If no key is configured, skip validation (for development)
+    return;
+  }
+  if (!headerKey || headerKey !== expectedKey) {
+    throw APIError.unauthenticated("missing or invalid x-do-intent-key header");
+  }
 }
 
 // POST endpoint for ingesting intent events from website
 export const ingestIntentEvent = api<IngestIntentEventRequest, IngestIntentEventResponse>(
   { expose: true, method: "POST", path: "/marketing/ingest-intent-event" },
   async (req) => {
-    // TODO: Add API key check via header when Encore supports it
-    // For now, this endpoint is public (v1 minimal security)
+    // Check API key
+    checkApiKey(req["x-do-intent-key"]);
 
     const normalized = validateAndNormalize(req);
 

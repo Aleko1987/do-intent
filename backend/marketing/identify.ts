@@ -1,8 +1,12 @@
-import { api } from "encore.dev/api";
+import { api, Header, APIError } from "encore.dev/api";
+import { secret } from "encore.dev/config";
 import db from "../db";
 import type { MarketingLead } from "./types";
 
+const ingestApiKey = secret("IngestApiKey");
+
 interface IdentifyRequest {
+  "x-do-intent-key"?: Header<"x-do-intent-key">;
   anonymous_id: string;
   email: string;
   company_name?: string;
@@ -15,11 +19,24 @@ interface IdentifyResponse {
   events_attached: number;
 }
 
+// Checks API key from header
+function checkApiKey(headerKey: string | undefined): void {
+  const expectedKey = ingestApiKey();
+  if (!expectedKey) {
+    // If no key is configured, skip validation (for development)
+    return;
+  }
+  if (!headerKey || headerKey !== expectedKey) {
+    throw APIError.unauthenticated("missing or invalid x-do-intent-key header");
+  }
+}
+
 // POST endpoint for identifying anonymous users
 export const identify = api<IdentifyRequest, IdentifyResponse>(
   { expose: true, method: "POST", path: "/marketing/identify" },
   async (req) => {
-    // TODO: Add API key check via header when Encore supports it
+    // Check API key
+    checkApiKey(req["x-do-intent-key"]);
 
     // Validate inputs
     if (!req.anonymous_id || typeof req.anonymous_id !== "string") {
