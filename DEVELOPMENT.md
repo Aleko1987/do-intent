@@ -120,6 +120,12 @@ git commit -m "Deploy via GitHub"
 git push origin main
 ```
 
+## Environment Variables
+
+### Backend
+
+- `INGEST_API_KEY` (optional): API key for website intent event ingestion endpoints. If set, endpoints will require `x-do-intent-key` header matching this value. For v1, endpoints are public (no auth required).
+
 ## Additional Resources
 
 - [Encore Documentation](https://encore.dev/docs)
