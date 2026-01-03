@@ -3,9 +3,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import EventsTab from "@/components/intent/EventsTab";
 import ScoresTab from "@/components/intent/ScoresTab";
 import RulesTab from "@/components/intent/RulesTab";
+import LeadsTab from "@/components/intent/LeadsTab";
 
 export default function IntentScorer() {
-  const [activeTab, setActiveTab] = useState("events");
+  const [activeTab, setActiveTab] = useState("leads");
 
   return (
     <div className="min-h-screen bg-background p-6">
@@ -18,11 +19,16 @@ export default function IntentScorer() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full max-w-md grid-cols-3">
+          <TabsList className="grid w-full max-w-lg grid-cols-4">
+            <TabsTrigger value="leads">Leads</TabsTrigger>
             <TabsTrigger value="events">Events</TabsTrigger>
             <TabsTrigger value="scores">Scores</TabsTrigger>
             <TabsTrigger value="rules">Rules</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="leads" className="mt-6">
+            <LeadsTab />
+          </TabsContent>
 
           <TabsContent value="events" className="mt-6">
             <EventsTab />
