@@ -81,9 +81,10 @@ function applyModifier(
 ): boolean {
   for (const [key, value] of Object.entries(condition)) {
     if (key === "utm_medium") {
-      if (metadata.utm_medium !== value) return false;
+      const utmMedium = metadata.utm_medium || "";
+      if (utmMedium !== value) return false;
     } else if (key === "reach_gte") {
-      const reach = metadata.reach || 0;
+      const reach = Number(metadata.reach) || 0;
       if (reach < value) return false;
     }
   }
@@ -96,7 +97,7 @@ function calculateModifierPoints(
   basePoints: number
 ): number {
   if (condition.clicks !== undefined) {
-    const clicks = metadata.clicks || 0;
+    const clicks = Number(metadata.clicks) || 0;
     return Math.min(clicks, 20);
   }
   return basePoints;

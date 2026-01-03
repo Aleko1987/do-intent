@@ -14,6 +14,7 @@ interface WebhookEventRequest {
   event_source?: string;
   metadata?: Record<string, any>;
   occurred_at?: string;
+  dedupe_key?: string;
 }
 
 interface WebhookEventResponse {
@@ -22,11 +23,46 @@ interface WebhookEventResponse {
   auto_pushed: boolean;
 }
 
-// Generic webhook endpoint for ingesting intent events.
+const VALID_EVENT_TYPES = [
+  'post_published',
+  'link_clicked',
+  'inbound_message',
+  'quote_requested',
+  'meeting_booked',
+  'purchase_made',
+  'other'
+];
+
+function normalizeEventType(eventType: string): string {
+  const normalized = eventType.toLowerCase().trim();
+  return VALID_EVENT_TYPES.includes(normalized) ? normalized : 'other';
+}
+
+function normalizeMetadata(metadata: Record<string, any>): Record<string, any> {
+  const normalized: Record<string, any> = { ...metadata };
+  
+  if (normalized.utm_medium) {
+    normalized.utm_medium = String(normalized.utm_medium).toLowerCase();
+  }
+  
+  if (normalized.reach !== undefined) {
+    normalized.reach = Number(normalized.reach) || 0;
+  }
+  
+  if (normalized.clicks !== undefined) {
+    normalized.clicks = Number(normalized.clicks) || 0;
+  }
+  
+  return normalized;
+}
+
 export const webhookEvent = api<WebhookEventRequest, WebhookEventResponse>(
   { expose: true, method: "POST", path: "/marketing/events" },
   async (req) => {
-    // Find or create lead
+    const normalizedEventType = normalizeEventType(req.event_type);
+    const normalizedMetadata = normalizeMetadata(req.metadata || {});
+    const eventSource = req.event_source || "webhook";
+    
     let lead: MarketingLead | null = null;
 
     if (req.leadLookup.email) {
@@ -73,38 +109,60 @@ export const webhookEvent = api<WebhookEventRequest, WebhookEventResponse>(
       throw new Error("Failed to find or create lead");
     }
 
-    // Get scoring rule
     const rule = await db.queryRow<{ points: number }>`
       SELECT points FROM scoring_rules
-      WHERE event_type = ${req.event_type} AND is_active = true
+      WHERE event_type = ${normalizedEventType} AND is_active = true
     `;
 
     const eventValue = rule?.points || 0;
 
-    // Create event
-    const event = await db.queryRow<IntentEvent>`
-      INSERT INTO intent_events (
-        lead_id,
-        event_type,
-        event_source,
-        event_value,
-        metadata,
-        occurred_at,
-        created_at
-      ) VALUES (
-        ${lead.id},
-        ${req.event_type},
-        ${req.event_source || "webhook"},
-        ${eventValue},
-        ${JSON.stringify(req.metadata || {})},
-        ${req.occurred_at || new Date().toISOString()},
-        now()
-      )
-      RETURNING *
-    `;
+    let event: IntentEvent | null = null;
+    
+    if (req.dedupe_key) {
+      event = await db.queryRow<IntentEvent>`
+        SELECT * FROM intent_events
+        WHERE event_source = ${eventSource} AND dedupe_key = ${req.dedupe_key}
+      `;
+    }
 
     if (!event) {
-      throw new Error("Failed to create event");
+      try {
+        event = await db.queryRow<IntentEvent>`
+          INSERT INTO intent_events (
+            lead_id,
+            event_type,
+            event_source,
+            event_value,
+            metadata,
+            occurred_at,
+            dedupe_key,
+            created_at
+          ) VALUES (
+            ${lead.id},
+            ${normalizedEventType},
+            ${eventSource},
+            ${eventValue},
+            ${JSON.stringify(normalizedMetadata)},
+            ${req.occurred_at || new Date().toISOString()},
+            ${req.dedupe_key || null},
+            now()
+          )
+          RETURNING *
+        `;
+      } catch (err: any) {
+        if (err.code === '23505') {
+          event = await db.queryRow<IntentEvent>`
+            SELECT * FROM intent_events
+            WHERE event_source = ${eventSource} AND dedupe_key = ${req.dedupe_key}
+          `;
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    if (!event) {
+      throw new Error("Failed to create or retrieve event");
     }
 
     // Auto-score the event using intent scorer
