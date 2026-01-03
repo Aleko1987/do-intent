@@ -6,6 +6,15 @@ import { autoScoreEvent } from "../intent_scorer/auto_score";
 
 const ingestApiKey = secret("IngestApiKey");
 
+// Parse allowed origins from environment
+function getAllowedOrigins(): string[] {
+  const origins = process.env.ALLOWED_INGEST_ORIGINS;
+  if (!origins) {
+    return [];
+  }
+  return origins.split(",").map((o) => o.trim()).filter((o) => o.length > 0);
+}
+
 // Whitelist of allowed event types
 const ALLOWED_EVENT_TYPES = [
   "page_view",
@@ -20,11 +29,13 @@ const ALLOWED_EVENT_TYPES = [
 
 interface IngestIntentEventRequest {
   "x-do-intent-key"?: Header<"x-do-intent-key">;
+  "origin"?: Header<"origin">;
+  "referer"?: Header<"referer">;
   event_source?: string;
   event_type: string;
   occurred_at?: string;
-  lead_id?: string;
-  anonymous_id?: string;
+  lead_id: string; // Required in identify-first flow
+  anonymous_id?: string; // Optional, stored in metadata only
   url?: string;
   path?: string;
   referrer?: string;
@@ -46,9 +57,14 @@ function validateAndNormalize(req: IngestIntentEventRequest): {
   event_type: string;
   event_source: string;
   occurred_at: string;
-  lead_id: string | null;
+  lead_id: string;
   metadata: Record<string, any>;
 } {
+  // Validate lead_id is required
+  if (!req.lead_id || typeof req.lead_id !== "string") {
+    throw APIError.invalidArgument("lead_id is required and must be a UUID string");
+  }
+
   // Validate event_type
   if (!req.event_type || typeof req.event_type !== "string") {
     throw new Error("event_type is required and must be a string");
@@ -107,23 +123,11 @@ function validateAndNormalize(req: IngestIntentEventRequest): {
     throw new Error("metadata exceeds 16kb limit");
   }
 
-  // Determine lead_id
-  let lead_id: string | null = null;
-  if (req.lead_id) {
-    lead_id = req.lead_id;
-  } else if (req.anonymous_id) {
-    // For anonymous events, we'll need to create a temporary lead
-    // This will be handled in the main function
-    lead_id = null; // Will be set after creating temp lead
-  } else {
-    throw new Error("Either lead_id or anonymous_id must be provided");
-  }
-
   return {
     event_type,
     event_source,
     occurred_at,
-    lead_id,
+    lead_id: req.lead_id,
     metadata,
   };
 }
@@ -131,12 +135,66 @@ function validateAndNormalize(req: IngestIntentEventRequest): {
 // Checks API key from header
 function checkApiKey(headerKey: string | undefined): void {
   const expectedKey = ingestApiKey();
-  if (!expectedKey) {
-    // If no key is configured, skip validation (for development)
-    return;
+  const isProduction = process.env.NODE_ENV === "production";
+
+  if (isProduction) {
+    if (!expectedKey) {
+      throw APIError.internal("IngestApiKey secret is required in production");
+    }
+    if (!headerKey || headerKey !== expectedKey) {
+      throw APIError.unauthenticated("missing or invalid x-do-intent-key header");
+    }
+  } else {
+    // In dev, enforce if secret is set, but allow if not set
+    if (expectedKey && (!headerKey || headerKey !== expectedKey)) {
+      throw APIError.unauthenticated("missing or invalid x-do-intent-key header");
+    }
   }
-  if (!headerKey || headerKey !== expectedKey) {
-    throw APIError.unauthenticated("missing or invalid x-do-intent-key header");
+}
+
+// Checks origin allowlist
+function checkOrigin(origin: string | undefined, referer: string | undefined): void {
+  const allowedOrigins = getAllowedOrigins();
+  if (allowedOrigins.length === 0) {
+    // If no allowlist configured, allow localhost in dev, otherwise allow all
+    if (process.env.NODE_ENV !== "production") {
+      return; // Allow all in dev if no allowlist
+    }
+    return; // In production without allowlist, allow all (admin's choice)
+  }
+
+  // Extract hostname from Origin or Referer
+  let hostname: string | null = null;
+  if (origin) {
+    try {
+      const url = new URL(origin);
+      hostname = url.hostname;
+    } catch {
+      // Invalid origin format, ignore
+    }
+  }
+  if (!hostname && referer) {
+    try {
+      const url = new URL(referer);
+      hostname = url.hostname;
+    } catch {
+      // Invalid referer format, ignore
+    }
+  }
+
+  if (!hostname) {
+    // No valid origin/referer, reject if allowlist is set
+    throw APIError.permissionDenied("origin or referer header required");
+  }
+
+  // Check if hostname matches any allowed origin
+  const isAllowed = allowedOrigins.some((allowed) => {
+    // Exact match or subdomain match
+    return hostname === allowed || hostname!.endsWith(`.${allowed}`);
+  });
+
+  if (!isAllowed) {
+    throw APIError.permissionDenied(`origin ${hostname} not in allowlist`);
   }
 }
 
@@ -147,58 +205,18 @@ export const ingestIntentEvent = api<IngestIntentEventRequest, IngestIntentEvent
     // Check API key
     checkApiKey(req["x-do-intent-key"]);
 
+    // Check origin allowlist
+    checkOrigin(req.origin, req.referer);
+
     const normalized = validateAndNormalize(req);
 
-    let lead_id = normalized.lead_id;
+    // Verify lead exists
+    const lead = await db.queryRow<{ id: string }>`
+      SELECT id FROM marketing_leads WHERE id = ${normalized.lead_id}
+    `;
 
-    // If anonymous_id provided but no lead_id, create a temporary lead
-    if (!lead_id && req.anonymous_id) {
-      // Find existing events with this anonymous_id to get their lead_id
-      const existingEvent = await db.queryRow<{ lead_id: string }>`
-        SELECT lead_id FROM intent_events
-        WHERE metadata->>'anonymous_id' = ${req.anonymous_id}
-        LIMIT 1
-      `;
-
-      if (existingEvent) {
-        lead_id = existingEvent.lead_id;
-      } else {
-        // Create temporary lead for this anonymous_id
-        const tempLead = await db.queryRow<{ id: string }>`
-          INSERT INTO marketing_leads (
-            company_name,
-            contact_name,
-            email,
-            source_type,
-            owner_user_id,
-            marketing_stage,
-            intent_score,
-            created_at,
-            updated_at
-          ) VALUES (
-            NULL,
-            NULL,
-            NULL,
-            'website',
-            'system',
-            'M1',
-            0,
-            now(),
-            now()
-          )
-          RETURNING id
-        `;
-
-        if (!tempLead) {
-          throw new Error("Failed to create temporary lead");
-        }
-
-        lead_id = tempLead.id;
-      }
-    }
-
-    if (!lead_id) {
-      throw new Error("Failed to resolve lead_id");
+    if (!lead) {
+      throw APIError.notFound("lead not found");
     }
 
     // Get scoring rule for event_value (optional, for backward compatibility)

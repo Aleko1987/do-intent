@@ -120,6 +120,66 @@ git commit -m "Deploy via GitHub"
 git push origin main
 ```
 
+<<<<<<< HEAD
+=======
+## Environment Variables
+
+### Backend
+
+#### Secrets (Required in Production)
+
+- `IngestApiKey` (secret, **required in production**): API key for website intent event ingestion endpoints. Endpoints require `x-do-intent-key` header matching this value. In production, missing secret causes startup error. In development, endpoints are public if secret is not set.
+
+To set the secret in Encore:
+```bash
+encore secret set --type dev IngestApiKey <your-api-key>
+encore secret set --type prod IngestApiKey <your-api-key>
+```
+
+#### Environment Variables
+
+- `ALLOWED_INGEST_ORIGINS` (optional): Comma-separated list of allowed origin hostnames for website ingestion endpoints. If set, requests must include `Origin` or `Referer` header with a matching hostname. Supports subdomain matching (e.g., `example.com` matches `app.example.com`). If not set, all origins are allowed.
+
+Example:
+```bash
+export ALLOWED_INGEST_ORIGINS="example.com,app.example.com,localhost"
+```
+
+## Website Integration Flow
+
+The website ingestion follows an **identify-first** pattern:
+
+1. **Identify** (`POST /marketing/identify`): Call with `email` and `anonymous_id` to get or create a lead. Returns `lead_id`.
+2. **Ingest Events** (`POST /marketing/ingest-intent-event`): Call with `lead_id` (required) to track intent events.
+
+Example flow:
+```bash
+# Step 1: Identify user (get lead_id)
+curl -X POST http://localhost:4000/marketing/identify \
+  -H "Content-Type: application/json" \
+  -H "x-do-intent-key: your-api-key" \
+  -H "Origin: https://example.com" \
+  -d '{
+    "anonymous_id": "550e8400-e29b-41d4-a716-446655440000",
+    "email": "user@example.com",
+    "company_name": "Acme Corp"
+  }'
+# Response: { "lead_id": "...", "lead_created": true }
+
+# Step 2: Ingest events with lead_id
+curl -X POST http://localhost:4000/marketing/ingest-intent-event \
+  -H "Content-Type: application/json" \
+  -H "x-do-intent-key: your-api-key" \
+  -H "Origin: https://example.com" \
+  -d '{
+    "event_type": "page_view",
+    "lead_id": "<lead_id from identify>",
+    "url": "https://example.com/pricing",
+    "metadata": { "page_title": "Pricing" }
+  }'
+```
+
+>>>>>>> 12a6029 (Harden website ingest: identify-first + API key + origin allowlist)
 ## Additional Resources
 
 - [Encore Documentation](https://encore.dev/docs)

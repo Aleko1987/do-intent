@@ -5,8 +5,19 @@ import type { MarketingLead } from "./types";
 
 const ingestApiKey = secret("IngestApiKey");
 
+// Parse allowed origins from environment
+function getAllowedOrigins(): string[] {
+  const origins = process.env.ALLOWED_INGEST_ORIGINS;
+  if (!origins) {
+    return [];
+  }
+  return origins.split(",").map((o) => o.trim()).filter((o) => o.length > 0);
+}
+
 interface IdentifyRequest {
   "x-do-intent-key"?: Header<"x-do-intent-key">;
+  "origin"?: Header<"origin">;
+  "referer"?: Header<"referer">;
   anonymous_id: string;
   email: string;
   company_name?: string;
@@ -16,43 +27,99 @@ interface IdentifyRequest {
 interface IdentifyResponse {
   lead_id: string;
   lead_created: boolean;
-  events_attached: number;
 }
 
 // Checks API key from header
 function checkApiKey(headerKey: string | undefined): void {
   const expectedKey = ingestApiKey();
-  if (!expectedKey) {
-    // If no key is configured, skip validation (for development)
-    return;
-  }
-  if (!headerKey || headerKey !== expectedKey) {
-    throw APIError.unauthenticated("missing or invalid x-do-intent-key header");
+  const isProduction = process.env.NODE_ENV === "production";
+
+  if (isProduction) {
+    if (!expectedKey) {
+      throw APIError.internal("IngestApiKey secret is required in production");
+    }
+    if (!headerKey || headerKey !== expectedKey) {
+      throw APIError.unauthenticated("missing or invalid x-do-intent-key header");
+    }
+  } else {
+    // In dev, enforce if secret is set, but allow if not set
+    if (expectedKey && (!headerKey || headerKey !== expectedKey)) {
+      throw APIError.unauthenticated("missing or invalid x-do-intent-key header");
+    }
   }
 }
 
-// POST endpoint for identifying anonymous users
+// Checks origin allowlist
+function checkOrigin(origin: string | undefined, referer: string | undefined): void {
+  const allowedOrigins = getAllowedOrigins();
+  if (allowedOrigins.length === 0) {
+    // If no allowlist configured, allow localhost in dev, otherwise allow all
+    if (process.env.NODE_ENV !== "production") {
+      return; // Allow all in dev if no allowlist
+    }
+    return; // In production without allowlist, allow all (admin's choice)
+  }
+
+  // Extract hostname from Origin or Referer
+  let hostname: string | null = null;
+  if (origin) {
+    try {
+      const url = new URL(origin);
+      hostname = url.hostname;
+    } catch {
+      // Invalid origin format, ignore
+    }
+  }
+  if (!hostname && referer) {
+    try {
+      const url = new URL(referer);
+      hostname = url.hostname;
+    } catch {
+      // Invalid referer format, ignore
+    }
+  }
+
+  if (!hostname) {
+    // No valid origin/referer, reject if allowlist is set
+    throw APIError.permissionDenied("origin or referer header required");
+  }
+
+  // Check if hostname matches any allowed origin
+  const isAllowed = allowedOrigins.some((allowed) => {
+    // Exact match or subdomain match
+    return hostname === allowed || hostname!.endsWith(`.${allowed}`);
+  });
+
+  if (!isAllowed) {
+    throw APIError.permissionDenied(`origin ${hostname} not in allowlist`);
+  }
+}
+
+// POST endpoint for identifying users (find-or-create lead by email)
 export const identify = api<IdentifyRequest, IdentifyResponse>(
   { expose: true, method: "POST", path: "/marketing/identify" },
   async (req) => {
     // Check API key
     checkApiKey(req["x-do-intent-key"]);
 
+    // Check origin allowlist
+    checkOrigin(req.origin, req.referer);
+
     // Validate inputs
     if (!req.anonymous_id || typeof req.anonymous_id !== "string") {
-      throw new Error("anonymous_id is required and must be a string");
+      throw APIError.invalidArgument("anonymous_id is required and must be a string");
     }
     if (!req.email || typeof req.email !== "string") {
-      throw new Error("email is required and must be a string");
+      throw APIError.invalidArgument("email is required and must be a string");
     }
 
     // Normalize email (lowercase, trim)
     const email = req.email.toLowerCase().trim();
     if (!email) {
-      throw new Error("email cannot be empty");
+      throw APIError.invalidArgument("email cannot be empty");
     }
 
-    // Find or create lead by email
+    // Find or create lead by email (following webhook_event.ts pattern)
     let lead = await db.queryRow<MarketingLead>`
       SELECT * FROM marketing_leads
       WHERE lower(email) = ${email}
@@ -62,7 +129,7 @@ export const identify = api<IdentifyRequest, IdentifyResponse>(
     let lead_created = false;
 
     if (!lead) {
-      // Create new lead
+      // Create new lead (following webhook_event.ts pattern)
       lead = await db.queryRow<MarketingLead>`
         INSERT INTO marketing_leads (
           company_name,
@@ -113,84 +180,9 @@ export const identify = api<IdentifyRequest, IdentifyResponse>(
       }
     }
 
-    // Find all events with this anonymous_id in metadata that don't have a lead_id yet
-    // Actually, since lead_id is NOT NULL, all events have a lead_id
-    // So we need to find events where metadata->>'anonymous_id' = req.anonymous_id
-    // and update their lead_id to the identified lead
-
-    // First, find events with this anonymous_id
-    const eventsToUpdate = await db.queryAll<{ id: string; lead_id: string }>`
-      SELECT id, lead_id FROM intent_events
-      WHERE metadata->>'anonymous_id' = ${req.anonymous_id}
-        AND lead_id != ${lead.id}
-    `;
-
-    let events_attached = 0;
-
-    if (eventsToUpdate.length > 0) {
-      // Update all matching events to point to the identified lead
-      for (const event of eventsToUpdate) {
-        await db.exec`
-          UPDATE intent_events
-          SET lead_id = ${lead.id}
-          WHERE id = ${event.id}
-        `;
-        events_attached++;
-      }
-
-      // Recompute rollups for the identified lead (since events were attached)
-      // We'll trigger a rollup update by calling the existing function
-      // Actually, we can just update the rollup directly
-      const now = new Date();
-      const date7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      const date30d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-
-      const score7dRow = await db.queryRow<{ total: number | null }>`
-        SELECT SUM(isc.score) as total
-        FROM intent_events ie
-        JOIN intent_scores isc ON isc.intent_event_id = ie.id
-        WHERE ie.lead_id = ${lead.id} AND ie.occurred_at >= ${date7d.toISOString()}
-      `;
-
-      const score30dRow = await db.queryRow<{ total: number | null }>`
-        SELECT SUM(isc.score) as total
-        FROM intent_events ie
-        JOIN intent_scores isc ON isc.intent_event_id = ie.id
-        WHERE ie.lead_id = ${lead.id} AND ie.occurred_at >= ${date30d.toISOString()}
-      `;
-
-      const lastEventRow = await db.queryRow<{ occurred_at: string }>`
-        SELECT occurred_at FROM intent_events
-        WHERE lead_id = ${lead.id}
-        ORDER BY occurred_at DESC LIMIT 1
-      `;
-
-      const score7d = score7dRow?.total || 0;
-      const score30d = score30dRow?.total || 0;
-      const lastEventAt = lastEventRow?.occurred_at || null;
-
-      const existing = await db.queryRow<{ lead_id: string }>`
-        SELECT lead_id FROM lead_intent_rollups WHERE lead_id = ${lead.id}
-      `;
-
-      if (existing) {
-        await db.exec`
-          UPDATE lead_intent_rollups
-          SET score_7d = ${score7d}, score_30d = ${score30d}, last_event_at = ${lastEventAt}, updated_at = now()
-          WHERE lead_id = ${lead.id}
-        `;
-      } else {
-        await db.exec`
-          INSERT INTO lead_intent_rollups (lead_id, score_7d, score_30d, last_event_at)
-          VALUES (${lead.id}, ${score7d}, ${score30d}, ${lastEventAt})
-        `;
-      }
-    }
-
     return {
       lead_id: lead.id,
       lead_created,
-      events_attached,
     };
   }
 );
