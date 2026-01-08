@@ -21,6 +21,12 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install deps (repo root)
+        run: npm ci
+
+      - name: Install deps (backend)
+        run: cd backend && npm ci
+
       - name: Install Encore
         run: |
           export ENCORE_INSTALL="$PWD/.encore"
