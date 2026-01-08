@@ -1,1 +1,1 @@
-{"id": "sales-crm-marketing-module-cia2", "lang": "typescript"}
+{"lang":"typescript"}
