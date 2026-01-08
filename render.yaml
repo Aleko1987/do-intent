@@ -3,6 +3,13 @@ services:
     name: do-intent
     env: node
     rootDir: .
-    buildCommand: npm ci
-    startCommand: bash -lc "cd /opt/render/project/src/backend && curl -L https://encore.dev/install.sh | bash && /opt/render/.encore/bin/encore run --listen 0.0.0.0:${PORT:-4000} --watch=false --browser=never"
+    buildCommand: >
+      npm ci &&
+      export ENCORE_INSTALL="$PWD/.encore" &&
+      curl -L https://encore.dev/install.sh | bash &&
+      ./.encore/bin/encore version
+    startCommand: >
+      bash -lc "set -euxo pipefail;
+      cd /opt/render/project/src/backend;
+      ../.encore/bin/encore run --listen 0.0.0.0:${PORT:-4000} --watch=false --browser=never"
 
