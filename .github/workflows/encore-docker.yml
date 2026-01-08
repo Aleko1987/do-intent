@@ -21,6 +21,14 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Set up Bun (required by Encore docker build)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Verify Bun
+        run: bun --version
+
       - name: Install deps (repo root)
         run: npm ci
 
