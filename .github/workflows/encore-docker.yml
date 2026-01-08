@@ -52,7 +52,6 @@ jobs:
           npm ci
           ../.encore/bin/encore build docker \
             --config infra-config.json \
-            --workdir . \
             "$IMAGE_NAME:$IMAGE_TAG"
 
       - name: Push Docker image (SHA tag)
