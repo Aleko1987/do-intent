@@ -1,12 +1,18 @@
 {
-  "databases": {
-    "db": {
-      "connection_string": "${DATABASE_URL}"
+  "sql_servers": [
+    {
+      "host": { "$env": "DATABASE_HOST" },
+      "tls_config": { "disabled": true },
+      "databases": {
+        "db": {
+          "username": { "$env": "DATABASE_USER" },
+          "password": { "$env": "DATABASE_PASSWORD" }
+        }
+      }
     }
-  },
+  ],
   "secrets": {
-    "ClerkSecretKey": "${CLERK_SECRET_KEY}",
-    "IngestApiKey": "${INGEST_API_KEY}"
+    "ClerkSecretKey": { "$env": "CLERK_SECRET_KEY" },
+    "IngestApiKey": { "$env": "INGEST_API_KEY" }
   }
 }
-
