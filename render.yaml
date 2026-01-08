@@ -1,3 +1,16 @@
+# ============================================================================
+# DEPRECATED: This service definition is no longer used.
+# 
+# The backend is now deployed as a Docker image from GitHub Container Registry.
+# See DEPLOY_RENDER_DOCKER.md for deployment instructions.
+#
+# To deploy:
+# 1. Create a new Web Service in Render UI
+# 2. Select "Deploy an existing image"
+# 3. Use image: ghcr.io/<YOUR_GITHUB_USERNAME>/do-intent:latest
+# 4. Configure environment variables as documented in DEPLOY_RENDER_DOCKER.md
+# ============================================================================
+
 services:
   - type: web
     name: do-intent

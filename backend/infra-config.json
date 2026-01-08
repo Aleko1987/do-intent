@@ -1,0 +1,12 @@
+{
+  "databases": {
+    "db": {
+      "connection_string": "${DATABASE_URL}"
+    }
+  },
+  "secrets": {
+    "ClerkSecretKey": "${CLERK_SECRET_KEY}",
+    "IngestApiKey": "${INGEST_API_KEY}"
+  }
+}
+

@@ -1,0 +1,64 @@
+name: Build and Push Encore Docker Image
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Encore
+        run: |
+          export ENCORE_INSTALL="$PWD/.encore"
+          curl -L https://encore.dev/install.sh | bash
+          ./.encore/bin/encore version
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker image
+        env:
+          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/do-intent
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          cd backend
+          ../.encore/bin/encore build docker \
+            --config infra-config.json \
+            "$IMAGE_NAME:$IMAGE_TAG"
+
+      - name: Push Docker image (SHA tag)
+        env:
+          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/do-intent
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker push "$IMAGE_NAME:$IMAGE_TAG"
+
+      - name: Tag and push as latest
+        env:
+          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/do-intent
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker tag "$IMAGE_NAME:$IMAGE_TAG" "$IMAGE_NAME:latest"
+          docker push "$IMAGE_NAME:latest"
+
