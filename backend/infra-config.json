@@ -1,7 +1,7 @@
 {
   "sql_servers": [
     {
-      "host": "${env:DATABASE_HOST}",
+      "host": "${env:DATABASE_HOSTPORT}",
       "tls_config": { "disabled": true },
       "databases": {
         "db": {
