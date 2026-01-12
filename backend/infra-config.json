@@ -1,17 +1,4 @@
 {
-  "sql_servers": [
-    {
-      "host": "${env:DATABASE_HOSTPORT}",
-      "tls_config": { "disabled": true },
-      "databases": {
-        "db": {
-          "username": "${env:DATABASE_USER}",
-          "password": "${env:DATABASE_PASSWORD}",
-          "database": "${env:DATABASE_NAME}"
-        }
-      }
-    }
-  ],
   "secrets": {
     "ClerkSecretKey": "${env:CLERK_SECRET_KEY}",
     "IngestApiKey": "${env:INGEST_API_KEY}"
