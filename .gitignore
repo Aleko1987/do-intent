@@ -6,3 +6,5 @@ node_modules
 /encore.gen
 backend/encore.gen/
 backend/encore.gen/
+.env.local
+frontend/.env.local
