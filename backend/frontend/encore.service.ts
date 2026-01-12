@@ -11,3 +11,20 @@ export const assets = api.static({
   notFound: "./dist/index.html",
   notFoundStatus: 200,
 });
+
+interface HealthResponse {
+  ok: boolean;
+  service: string;
+  ts: string;
+}
+
+export const health = api<void, HealthResponse>(
+  { expose: true, method: "GET", path: "/health" },
+  async (): Promise<HealthResponse> => {
+    return {
+      ok: true,
+      service: "do-intent",
+      ts: new Date().toISOString(),
+    };
+  }
+);
