@@ -3,8 +3,16 @@ import { Header, APIError, Gateway } from "encore.dev/api";
 import { authHandler } from "encore.dev/auth";
 import { secret } from "encore.dev/config";
 
-const clerkSecretKey = secret("ClerkSecretKey");
-const clerkClient = createClerkClient({ secretKey: clerkSecretKey() });
+export const ClerkSecretKey = secret("ClerkSecretKey");
+
+// Lazy initialization of Clerk client to avoid reading secret at import time
+let clerkClient: ReturnType<typeof createClerkClient> | null = null;
+function getClerkClient() {
+  if (!clerkClient) {
+    clerkClient = createClerkClient({ secretKey: ClerkSecretKey() });
+  }
+  return clerkClient;
+}
 
 interface AuthParams {
   authorization?: Header<"Authorization">;
@@ -25,10 +33,10 @@ export const auth = authHandler<AuthParams, AuthData>(
 
     try {
       const verifiedToken = await verifyToken(token, {
-        secretKey: clerkSecretKey(),
+        secretKey: ClerkSecretKey(),
       });
 
-      const user = await clerkClient.users.getUser(verifiedToken.sub);
+      const user = await getClerkClient().users.getUser(verifiedToken.sub);
       return {
         userID: user.id,
         imageUrl: user.imageUrl,

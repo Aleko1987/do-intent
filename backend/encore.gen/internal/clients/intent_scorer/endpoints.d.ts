@@ -17,6 +17,14 @@ import { getLeadTrend as getLeadTrend_handler } from "../../../../intent_scorer\
 declare const getLeadTrend: WithCallOpts<typeof getLeadTrend_handler>;
 export { getLeadTrend };
 
+import { health as health_handler } from "../../../../intent_scorer\\health.js";
+declare const health: WithCallOpts<typeof health_handler>;
+export { health };
+
+import { identify as identify_handler } from "../../../../intent_scorer\\identify.js";
+declare const identify: WithCallOpts<typeof identify_handler>;
+export { identify };
+
 import { listEvents as listEvents_handler } from "../../../../intent_scorer\\list_events.js";
 declare const listEvents: WithCallOpts<typeof listEvents_handler>;
 export { listEvents };
@@ -33,6 +41,10 @@ import { listRules as listRules_handler } from "../../../../intent_scorer\\list_
 declare const listRules: WithCallOpts<typeof listRules_handler>;
 export { listRules };
 
+import { ping as ping_handler } from "../../../../intent_scorer\\ping.js";
+declare const ping: WithCallOpts<typeof ping_handler>;
+export { ping };
+
 import { recomputeScores as recomputeScores_handler } from "../../../../intent_scorer\\recompute_scores.js";
 declare const recomputeScores: WithCallOpts<typeof recomputeScores_handler>;
 export { recomputeScores };
@@ -40,6 +52,10 @@ export { recomputeScores };
 import { seedDemo as seedDemo_handler } from "../../../../intent_scorer\\seed_demo.js";
 declare const seedDemo: WithCallOpts<typeof seedDemo_handler>;
 export { seedDemo };
+
+import { track as track_handler } from "../../../../intent_scorer\\track.js";
+declare const track: WithCallOpts<typeof track_handler>;
+export { track };
 
 import { updateRule as updateRule_handler } from "../../../../intent_scorer\\update_rule.js";
 declare const updateRule: WithCallOpts<typeof updateRule_handler>;

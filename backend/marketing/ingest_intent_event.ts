@@ -4,7 +4,7 @@ import db from "../db";
 import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
 
-const ingestApiKey = secret("IngestApiKey");
+export const IngestApiKey = secret("IngestApiKey");
 
 // Parse allowed origins from environment
 function getAllowedOrigins(): string[] {
@@ -134,7 +134,7 @@ function validateAndNormalize(req: IngestIntentEventRequest): {
 
 // Checks API key from header
 function checkApiKey(headerKey: string | undefined): void {
-  const expectedKey = ingestApiKey();
+  const expectedKey = IngestApiKey();
   const isProduction = process.env.NODE_ENV === "production";
 
   if (isProduction) {

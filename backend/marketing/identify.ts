@@ -3,7 +3,7 @@ import { secret } from "encore.dev/config";
 import db from "../db";
 import type { MarketingLead } from "./types";
 
-const ingestApiKey = secret("IngestApiKey");
+export const IngestApiKey = secret("IngestApiKey");
 
 // Parse allowed origins from environment
 function getAllowedOrigins(): string[] {
@@ -31,7 +31,7 @@ interface IdentifyResponse {
 
 // Checks API key from header
 function checkApiKey(headerKey: string | undefined): void {
-  const expectedKey = ingestApiKey();
+  const expectedKey = IngestApiKey();
   const isProduction = process.env.NODE_ENV === "production";
 
   if (isProduction) {

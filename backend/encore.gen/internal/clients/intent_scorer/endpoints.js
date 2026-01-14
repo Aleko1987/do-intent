@@ -25,6 +25,21 @@ export async function getLeadTrend(params, opts) {
 
     return apiCall("intent_scorer", "getLeadTrend", params, opts);
 }
+export async function health(opts) {
+    const params = undefined;
+    if (typeof ENCORE_DROP_TESTS === "undefined" && process.env.NODE_ENV === "test") {
+        return TEST_ENDPOINTS.health(params, opts);
+    }
+
+    return apiCall("intent_scorer", "health", params, opts);
+}
+export async function identify(params, opts) {
+    if (typeof ENCORE_DROP_TESTS === "undefined" && process.env.NODE_ENV === "test") {
+        return TEST_ENDPOINTS.identify(params, opts);
+    }
+
+    return apiCall("intent_scorer", "identify", params, opts);
+}
 export async function listEvents(params, opts) {
     if (typeof ENCORE_DROP_TESTS === "undefined" && process.env.NODE_ENV === "test") {
         return TEST_ENDPOINTS.listEvents(params, opts);
@@ -54,6 +69,14 @@ export async function listRules(opts) {
 
     return apiCall("intent_scorer", "listRules", params, opts);
 }
+export async function ping(opts) {
+    const params = undefined;
+    if (typeof ENCORE_DROP_TESTS === "undefined" && process.env.NODE_ENV === "test") {
+        return TEST_ENDPOINTS.ping(params, opts);
+    }
+
+    return apiCall("intent_scorer", "ping", params, opts);
+}
 export async function recomputeScores(params, opts) {
     if (typeof ENCORE_DROP_TESTS === "undefined" && process.env.NODE_ENV === "test") {
         return TEST_ENDPOINTS.recomputeScores(params, opts);
@@ -68,6 +91,13 @@ export async function seedDemo(opts) {
     }
 
     return apiCall("intent_scorer", "seedDemo", params, opts);
+}
+export async function track(params, opts) {
+    if (typeof ENCORE_DROP_TESTS === "undefined" && process.env.NODE_ENV === "test") {
+        return TEST_ENDPOINTS.track(params, opts);
+    }
+
+    return apiCall("intent_scorer", "track", params, opts);
 }
 export async function updateRule(params, opts) {
     if (typeof ENCORE_DROP_TESTS === "undefined" && process.env.NODE_ENV === "test") {

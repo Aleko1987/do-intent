@@ -1,6 +1,1 @@
-{
-  "secrets": {
-    "ClerkSecretKey": "${env:CLERK_SECRET_KEY}",
-    "IngestApiKey": "${env:INGEST_API_KEY}"
-  }
-}
+{}

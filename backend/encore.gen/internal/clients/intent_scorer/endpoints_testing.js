@@ -36,6 +36,28 @@ export async function getLeadTrend(params, opts) {
     return apiCall("intent_scorer", "getLeadTrend", params, opts);
 }
 
+export async function health(params, opts) {
+    const handler = (await import("../../../../intent_scorer\\health")).health;
+    registerTestHandler({
+        apiRoute: { service: "intent_scorer", name: "health", raw: false, handler, streamingRequest: false, streamingResponse: false },
+        middlewares: intent_scorer_service.default.cfg.middlewares || [],
+        endpointOptions: {"expose":true,"auth":false,"isRaw":false,"isStream":false,"tags":[]},
+    });
+
+    return apiCall("intent_scorer", "health", params, opts);
+}
+
+export async function identify(params, opts) {
+    const handler = (await import("../../../../intent_scorer\\identify")).identify;
+    registerTestHandler({
+        apiRoute: { service: "intent_scorer", name: "identify", raw: false, handler, streamingRequest: false, streamingResponse: false },
+        middlewares: intent_scorer_service.default.cfg.middlewares || [],
+        endpointOptions: {"expose":true,"auth":false,"isRaw":false,"isStream":false,"tags":[]},
+    });
+
+    return apiCall("intent_scorer", "identify", params, opts);
+}
+
 export async function listEvents(params, opts) {
     const handler = (await import("../../../../intent_scorer\\list_events")).listEvents;
     registerTestHandler({
@@ -80,6 +102,17 @@ export async function listRules(params, opts) {
     return apiCall("intent_scorer", "listRules", params, opts);
 }
 
+export async function ping(params, opts) {
+    const handler = (await import("../../../../intent_scorer\\ping")).ping;
+    registerTestHandler({
+        apiRoute: { service: "intent_scorer", name: "ping", raw: false, handler, streamingRequest: false, streamingResponse: false },
+        middlewares: intent_scorer_service.default.cfg.middlewares || [],
+        endpointOptions: {"expose":true,"auth":false,"isRaw":false,"isStream":false,"tags":[]},
+    });
+
+    return apiCall("intent_scorer", "ping", params, opts);
+}
+
 export async function recomputeScores(params, opts) {
     const handler = (await import("../../../../intent_scorer\\recompute_scores")).recomputeScores;
     registerTestHandler({
@@ -100,6 +133,17 @@ export async function seedDemo(params, opts) {
     });
 
     return apiCall("intent_scorer", "seedDemo", params, opts);
+}
+
+export async function track(params, opts) {
+    const handler = (await import("../../../../intent_scorer\\track")).track;
+    registerTestHandler({
+        apiRoute: { service: "intent_scorer", name: "track", raw: false, handler, streamingRequest: false, streamingResponse: false },
+        middlewares: intent_scorer_service.default.cfg.middlewares || [],
+        endpointOptions: {"expose":true,"auth":false,"isRaw":false,"isStream":false,"tags":[]},
+    });
+
+    return apiCall("intent_scorer", "track", params, opts);
 }
 
 export async function updateRule(params, opts) {
