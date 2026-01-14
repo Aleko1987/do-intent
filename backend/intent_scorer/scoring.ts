@@ -13,7 +13,7 @@ export const ALLOWED_EVENT_TYPES = [
   "form_submit",
 ] as const;
 
-export type EventType = typeof ALLOWED_EVENT_TYPES[number];
+export type EventType = "page_view" | "scroll_depth" | "time_on_page" | "click" | "form_start" | "form_submit";
 export type ThresholdBand = "cold" | "warm" | "hot" | "critical";
 
 /**
