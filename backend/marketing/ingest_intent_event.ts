@@ -34,8 +34,8 @@ interface IngestIntentEventRequest {
   event_source?: string;
   event_type: string;
   occurred_at?: string;
-  lead_id: string; // Required in identify-first flow
-  anonymous_id?: string; // Optional, stored in metadata only
+  lead_id?: string; // Optional; required if anonymous_id is not provided
+  anonymous_id?: string; // Optional; required if lead_id is not provided
   url?: string;
   path?: string;
   referrer?: string;
@@ -48,7 +48,7 @@ interface IngestIntentEventRequest {
 
 interface IngestIntentEventResponse {
   event_id: string;
-  lead_id: string;
+  lead_id: string | null;
   scored: boolean;
 }
 
@@ -57,12 +57,22 @@ function validateAndNormalize(req: IngestIntentEventRequest): {
   event_type: string;
   event_source: string;
   occurred_at: string;
-  lead_id: string;
+  lead_id: string | null;
   metadata: Record<string, any>;
 } {
-  // Validate lead_id is required
-  if (!req.lead_id || typeof req.lead_id !== "string") {
-    throw APIError.invalidArgument("lead_id is required and must be a UUID string");
+  // Validate that either lead_id or anonymous_id is provided
+  if (!req.lead_id && !req.anonymous_id) {
+    throw APIError.invalidArgument("either lead_id or anonymous_id is required");
+  }
+  
+  // Validate lead_id format if provided
+  if (req.lead_id && typeof req.lead_id !== "string") {
+    throw APIError.invalidArgument("lead_id must be a UUID string");
+  }
+  
+  // Validate anonymous_id format if provided
+  if (req.anonymous_id && typeof req.anonymous_id !== "string") {
+    throw APIError.invalidArgument("anonymous_id must be a string");
   }
 
   // Validate event_type
@@ -127,7 +137,7 @@ function validateAndNormalize(req: IngestIntentEventRequest): {
     event_type,
     event_source,
     occurred_at,
-    lead_id: req.lead_id,
+    lead_id: req.lead_id || null,
     metadata,
   };
 }
@@ -210,13 +220,15 @@ export const ingestIntentEvent = api<IngestIntentEventRequest, IngestIntentEvent
 
     const normalized = validateAndNormalize(req);
 
-    // Verify lead exists
-    const lead = await db.queryRow<{ id: string }>`
-      SELECT id FROM marketing_leads WHERE id = ${normalized.lead_id}
-    `;
+    // Verify lead exists if lead_id is provided
+    if (normalized.lead_id) {
+      const lead = await db.queryRow<{ id: string }>`
+        SELECT id FROM marketing_leads WHERE id = ${normalized.lead_id}
+      `;
 
-    if (!lead) {
-      throw APIError.notFound("lead not found");
+      if (!lead) {
+        throw APIError.notFound("lead not found");
+      }
     }
 
     // Get scoring rule for event_value (optional, for backward compatibility)
@@ -239,7 +251,7 @@ export const ingestIntentEvent = api<IngestIntentEventRequest, IngestIntentEvent
         occurred_at,
         created_at
       ) VALUES (
-        ${lead_id},
+        ${normalized.lead_id},
         ${normalized.event_type},
         ${normalized.event_source},
         ${eventValue},

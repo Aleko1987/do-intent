@@ -18,7 +18,7 @@ export interface MarketingLead {
 
 export interface IntentEvent {
   id: string;
-  lead_id: string;
+  lead_id: string | null;
   event_type: string;
   event_source: string;
   event_value: number;
