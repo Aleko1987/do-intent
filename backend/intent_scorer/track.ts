@@ -1,17 +1,15 @@
 import { api, APIError } from "encore.dev/api";
 import db from "../db";
-
-// Allowed event types from ARCHITECTURE.md
-const ALLOWED_EVENT_TYPES = [
-  "page_view",
-  "time_on_page",
-  "scroll_depth",
-  "click",
-  "form_start",
-  "form_submit",
-] as const;
-
-type EventType = typeof ALLOWED_EVENT_TYPES[number];
+import {
+  ALLOWED_EVENT_TYPES,
+  EventType,
+  ThresholdBand,
+  parseOccurredAt,
+  scoreDelta,
+  bandFromScore,
+  shouldEmitThreshold,
+  normalizeEventType,
+} from "./scoring";
 
 // Request shape (v1)
 interface TrackRequest {
@@ -36,84 +34,6 @@ interface TrackResponse {
   threshold_emitted: boolean;
 }
 
-// Threshold bands from ARCHITECTURE.md
-type ThresholdBand = "cold" | "warm" | "hot" | "critical";
-
-/**
- * Determines the threshold band from a score.
- * Bands: 0-9 cold, 10-19 warm, 20-29 hot, 30+ critical
- */
-function bandFromScore(score: number): ThresholdBand {
-  if (score >= 30) return "critical";
-  if (score >= 20) return "hot";
-  if (score >= 10) return "warm";
-  return "cold";
-}
-
-/**
- * Calculates score delta based on event type and value.
- * Scoring rules from ARCHITECTURE.md:
- * - page_view: +1
- * - time_on_page: +2 if value > 30 seconds
- * - scroll_depth: +2 if value > 60 (0-100)
- * - click: +3 (treat any click as CTA for v1)
- * - pricing_view: +4 derived if url contains '/pricing' (apply when event is page_view OR click)
- * - form_start: +6
- * - form_submit: +10
- */
-function calculateScoreDelta(
-  event: EventType,
-  url: string,
-  value?: number
-): number {
-  let delta = 0;
-
-  switch (event) {
-    case "page_view":
-      delta = 1;
-      // Check for pricing_view bonus
-      if (url.includes("/pricing")) {
-        delta += 4;
-      }
-      break;
-
-    case "time_on_page":
-      // value is assumed to be seconds
-      if (value !== undefined && value > 30) {
-        delta = 2;
-      }
-      break;
-
-    case "scroll_depth":
-      // value is 0-100 percentage
-      if (value !== undefined && value > 60) {
-        delta = 2;
-      }
-      break;
-
-    case "click":
-      delta = 3;
-      // Check for pricing_view bonus
-      if (url.includes("/pricing")) {
-        delta += 4;
-      }
-      break;
-
-    case "form_start":
-      delta = 6;
-      break;
-
-    case "form_submit":
-      delta = 10;
-      break;
-
-    default:
-      delta = 0;
-  }
-
-  return delta;
-}
-
 /**
  * Validates UUID format (simple check)
  */
@@ -121,22 +41,6 @@ function isValidUUID(uuid: string): boolean {
   const uuidRegex =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   return uuidRegex.test(uuid);
-}
-
-/**
- * Parses timestamp from unix seconds or ISO string to Date
- */
-function parseTimestamp(timestamp: number | string): Date {
-  if (typeof timestamp === "number") {
-    // Unix seconds
-    return new Date(timestamp * 1000);
-  }
-  // ISO string
-  const date = new Date(timestamp);
-  if (isNaN(date.getTime())) {
-    throw new Error("Invalid timestamp format");
-  }
-  return date;
 }
 
 /**
@@ -190,10 +94,12 @@ export const track = api<TrackRequest, TrackResponse>(
       );
     }
 
-    if (!req.event || !ALLOWED_EVENT_TYPES.includes(req.event)) {
-      throw APIError.invalidArgument(
-        `event is required and must be one of: ${ALLOWED_EVENT_TYPES.join(", ")}`
-      );
+    // Validate and normalize event type
+    let normalizedEvent: EventType;
+    try {
+      normalizedEvent = normalizeEventType(req.event);
+    } catch (e: any) {
+      throw APIError.invalidArgument(e.message);
     }
 
     if (!req.url || req.url.trim().length === 0) {
@@ -207,7 +113,7 @@ export const track = api<TrackRequest, TrackResponse>(
     // Parse timestamp
     let occurredAt: Date;
     try {
-      occurredAt = parseTimestamp(req.timestamp);
+      occurredAt = parseOccurredAt(req.timestamp);
     } catch (e) {
       throw APIError.invalidArgument("Invalid timestamp format");
     }
@@ -234,7 +140,7 @@ export const track = api<TrackRequest, TrackResponse>(
     }
 
     // Calculate score delta
-    const delta = calculateScoreDelta(req.event, req.url, req.value);
+    const delta = scoreDelta(normalizedEvent, req.url, req.value);
 
     // Upsert session
     // If session_id not found, insert with first_seen_at/last_seen_at = occurred_at
@@ -292,7 +198,7 @@ export const track = api<TrackRequest, TrackResponse>(
           ${req.session_id},
           ${req.anonymous_id},
           NULL,
-          ${req.event},
+          ${normalizedEvent},
           ${req.value ?? null},
           ${req.url},
           ${req.referrer ?? null},
@@ -386,28 +292,12 @@ export const track = api<TrackRequest, TrackResponse>(
     const newBand = bandFromScore(totalScore);
     const lastThresholdEmitted = scoreResult.last_threshold_emitted;
 
-    // Evaluate thresholds
-    // If last_threshold_emitted is NULL, set it to current band on first scoring
-    // If band changed upward and differs from last_threshold_emitted, update it
-    let thresholdEmitted = false;
-    let shouldUpdateThreshold = false;
-
-    if (lastThresholdEmitted === null) {
-      // First threshold emission
-      thresholdEmitted = true;
-      shouldUpdateThreshold = true;
-    } else {
-      // Check if band changed upward
-      const bandOrder: ThresholdBand[] = ["cold", "warm", "hot", "critical"];
-      const currentBandIndex = bandOrder.indexOf(newBand);
-      const lastBandIndex = bandOrder.indexOf(lastThresholdEmitted);
-
-      if (currentBandIndex > lastBandIndex) {
-        // Band increased
-        thresholdEmitted = true;
-        shouldUpdateThreshold = true;
-      }
-    }
+    // Evaluate thresholds using helper
+    const thresholdEmitted = shouldEmitThreshold(
+      lastThresholdEmitted,
+      newBand
+    );
+    const shouldUpdateThreshold = thresholdEmitted;
 
     // Update last_threshold_emitted if needed
     if (shouldUpdateThreshold) {
