@@ -18,7 +18,7 @@ Before making any changes:
 3. Scoring engine
 4. Threshold evaluator
 5. /identify endpoint
-6. Website tracker snippet
+6. Website tracker snippet ✅ (See [WEBSITE_TRACKER.md](./WEBSITE_TRACKER.md))
 7. Internal intent signal emitter
 
 Do not skip steps.

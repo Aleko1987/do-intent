@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { identifyLead, trackEvent, getLeadId } from "@/lib/doIntent";
+import { identify as identifyIntent } from "@/lib/doIntentTracker";
 
 export default function Contact() {
   const [email, setEmail] = useState("");
@@ -43,10 +44,16 @@ export default function Contact() {
     setSubmitting(true);
 
     try {
-      // Step 1: Identify the lead
+      // Step 1: Identify the lead (intent_scorer endpoint)
+      await identifyIntent(email, name).catch((error) => {
+        console.error("Intent tracker identify failed:", error);
+        // Don't block form submission
+      });
+
+      // Step 2: Identify the lead (marketing endpoint - existing)
       const { lead_id } = await identifyLead(email, company, name);
 
-      // Step 2: Track form submission
+      // Step 3: Track form submission
       await trackEvent(lead_id, "form_submit", {
         form: "contact",
       });
