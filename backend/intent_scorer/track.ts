@@ -1,332 +1,153 @@
 import { api, APIError } from "encore.dev/api";
 import { getAuthData } from "~encore/auth";
-import db from "../db";
-import {
-  ALLOWED_EVENT_TYPES,
-  EventType,
-  ThresholdBand,
-  parseOccurredAt,
-  scoreDelta,
-  bandFromScore,
-  shouldEmitThreshold,
-  normalizeEventType,
-} from "./scoring";
+import { Pool } from "pg";
 
-// Request shape (v1)
 interface TrackRequest {
-  event_id?: string; // Optional but recommended for idempotency
-  event: EventType;
+  event: string;
   session_id: string;
   anonymous_id: string;
   url: string;
   referrer?: string;
-  timestamp: number | string; // Unix seconds or ISO string
-  value?: number; // Optional numeric (0-100 for scroll_depth/time_on_page)
+  timestamp: string;
+  value?: number;
   metadata?: Record<string, any>;
 }
 
-// Response shape
 interface TrackResponse {
-  ok: boolean;
-  event_id: string;
-  delta: number;
-  total_score: number;
-  band: "cold" | "warm" | "hot" | "critical";
-  threshold_emitted: boolean;
+  ok: true;
 }
 
-/**
- * Validates UUID format (simple check)
- */
+interface ErrorResponse {
+  code: "invalid_argument" | "internal";
+  message: string;
+  details?: unknown;
+}
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
+
+let bootstrapPromise: Promise<void> | null = null;
+
 function isValidUUID(uuid: string): boolean {
   const uuidRegex =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   return uuidRegex.test(uuid);
 }
 
-/**
- * POST /track endpoint
- *
- * Validates incoming event payload, upserts session, inserts event,
- * updates intent score, and evaluates thresholds.
- *
- * Idempotency: If event_id is provided and conflicts (same PK), treat as success
- * and do not double-score. This is handled by catching the unique constraint violation
- * and returning the existing event's score delta.
- *
- * Scoring: Incremental scoring based on event type and conditions.
- * - page_view: +1 (+4 bonus if URL contains '/pricing')
- * - time_on_page: +2 if value > 30 seconds
- * - scroll_depth: +2 if value > 60 (0-100)
- * - click: +3 (+4 bonus if URL contains '/pricing')
- * - form_start: +6
- * - form_submit: +10
- *
- * Example request:
- * ```bash
- * curl -X POST http://localhost:4000/track \
- *   -H "Content-Type: application/json" \
- *   -d '{
- *     "event": "page_view",
- *     "session_id": "550e8400-e29b-41d4-a716-446655440000",
- *     "anonymous_id": "660e8400-e29b-41d4-a716-446655440001",
- *     "url": "/pricing",
- *     "timestamp": 1700000000,
- *     "metadata": {
- *       "device": "mobile",
- *       "country": "ZA"
- *     }
- *   }'
- * ```
- */
-export const track = api<TrackRequest, TrackResponse>(
+async function ensureIntentEventsTable(): Promise<void> {
+  if (!bootstrapPromise) {
+    bootstrapPromise = pool
+      .query(`
+        CREATE TABLE IF NOT EXISTS intent_events (
+          id bigserial primary key,
+          created_at timestamptz not null default now(),
+          event text not null,
+          session_id uuid not null,
+          anonymous_id uuid not null,
+          clerk_user_id text null,
+          url text not null,
+          referrer text null,
+          ts timestamptz null,
+          value double precision null,
+          metadata jsonb null
+        );
+      `)
+      .then(() => undefined);
+  }
+
+  await bootstrapPromise;
+}
+
+function requireNonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw APIError.invalidArgument(`${field} is required and must be a string`);
+  }
+  return value.trim();
+}
+
+function parseIsoTimestamp(value: unknown): Date {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw APIError.invalidArgument("timestamp is required and must be an ISO string");
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw APIError.invalidArgument("timestamp must be a valid ISO date string");
+  }
+
+  return parsed;
+}
+
+function invalidUuidError(field: string): never {
+  throw APIError.invalidArgument(`${field} is required and must be a valid UUID`);
+}
+
+export const track = api<TrackRequest, TrackResponse | ErrorResponse>(
   { expose: true, method: "POST", path: "/track" },
   async (req): Promise<TrackResponse> => {
-    // Validation
+    if (!process.env.DATABASE_URL) {
+      throw APIError.internal("DATABASE_URL is not configured");
+    }
+
+    const event = requireNonEmptyString(req.event, "event");
+
     if (!req.session_id || !isValidUUID(req.session_id)) {
-      throw APIError.invalidArgument(
-        "session_id is required and must be a valid UUID"
-      );
+      invalidUuidError("session_id");
     }
 
     if (!req.anonymous_id || !isValidUUID(req.anonymous_id)) {
-      throw APIError.invalidArgument(
-        "anonymous_id is required and must be a valid UUID"
-      );
+      invalidUuidError("anonymous_id");
     }
 
-    // Validate and normalize event type
-    let normalizedEvent: EventType;
-    try {
-      normalizedEvent = normalizeEventType(req.event);
-    } catch (e: any) {
-      throw APIError.invalidArgument(e.message);
-    }
+    const url = requireNonEmptyString(req.url, "url");
+    const occurredAt = parseIsoTimestamp(req.timestamp);
+    const referrer = typeof req.referrer === "string" ? req.referrer : null;
 
-    if (!req.url || req.url.trim().length === 0) {
-      throw APIError.invalidArgument("url is required and must be non-empty");
-    }
-
-    if (!req.timestamp) {
-      throw APIError.invalidArgument("timestamp is required");
-    }
-
-    // Parse timestamp
-    let occurredAt: Date;
-    try {
-      occurredAt = parseOccurredAt(req.timestamp);
-    } catch (e) {
-      throw APIError.invalidArgument("Invalid timestamp format");
-    }
-
-    // Normalize metadata (default to {})
-    const metadata = req.metadata || {};
-
-    // If request is authenticated, attach clerk userId to metadata
+    let clerkUserId: string | null = null;
     try {
       const authData = getAuthData();
       if (authData?.userID) {
-        metadata.clerk_user_id = authData.userID;
+        clerkUserId = authData.userID;
       }
     } catch {
-      // Not authenticated - continue without userId (public tracker)
+      clerkUserId = null;
     }
 
-    // Extract optional fields from metadata for session
-    const userAgent = metadata.user_agent || metadata.userAgent || null;
-    const device = metadata.device || null;
-    const country = metadata.country || null;
-    const ip = metadata.ip || null;
+    const metadata = req.metadata ?? null;
 
-    // Generate event_id if not provided
-    let eventId: string;
-    if (req.event_id && isValidUUID(req.event_id)) {
-      eventId = req.event_id;
-    } else {
-      // Generate UUID server-side
-      const genResult = await db.queryRow<{ id: string }>`
-        SELECT gen_random_uuid() as id
-      `;
-      eventId = genResult!.id;
-    }
-
-    // Calculate score delta
-    const delta = scoreDelta(normalizedEvent, req.url, req.value);
-
-    // Upsert session
-    // If session_id not found, insert with first_seen_at/last_seen_at = occurred_at
-    // Always update last_seen_at = occurred_at
-    await db.exec`
-      INSERT INTO sessions (
-        session_id,
-        anonymous_id,
-        first_seen_at,
-        last_seen_at,
-        user_agent,
-        device,
-        country,
-        ip,
-        metadata
-      ) VALUES (
-        ${req.session_id},
-        ${req.anonymous_id},
-        ${occurredAt.toISOString()},
-        ${occurredAt.toISOString()},
-        ${userAgent},
-        ${device},
-        ${country},
-        ${ip},
-        ${JSON.stringify(metadata)}
-      )
-      ON CONFLICT (session_id) DO UPDATE SET
-        last_seen_at = ${occurredAt.toISOString()},
-        user_agent = COALESCE(EXCLUDED.user_agent, sessions.user_agent),
-        device = COALESCE(EXCLUDED.device, sessions.device),
-        country = COALESCE(EXCLUDED.country, sessions.country),
-        ip = COALESCE(EXCLUDED.ip, sessions.ip),
-        metadata = EXCLUDED.metadata
-    `;
-
-    // Insert event (with idempotency handling)
-    // If event_id conflicts, we'll catch it and return existing event's score
-    let eventInserted = false;
     try {
-      await db.exec`
-        INSERT INTO events (
-          event_id,
-          session_id,
-          anonymous_id,
-          identity_id,
-          event_type,
-          event_value,
+      await ensureIntentEventsTable();
+      await pool.query(
+        `
+          INSERT INTO intent_events (
+            event,
+            session_id,
+            anonymous_id,
+            clerk_user_id,
+            url,
+            referrer,
+            ts,
+            value,
+            metadata
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `,
+        [
+          event,
+          req.session_id,
+          req.anonymous_id,
+          clerkUserId,
           url,
           referrer,
-          occurred_at,
-          received_at,
-          metadata
-        ) VALUES (
-          ${eventId},
-          ${req.session_id},
-          ${req.anonymous_id},
-          NULL,
-          ${normalizedEvent},
-          ${req.value ?? null},
-          ${req.url},
-          ${req.referrer ?? null},
-          ${occurredAt.toISOString()},
-          now(),
-          ${JSON.stringify(metadata)}
-        )
-      `;
-      eventInserted = true;
-    } catch (error: any) {
-      // If event_id conflicts (unique constraint violation), treat as success
-      // but we need to check if this event was already scored
-      if (error.code === "23505") {
-        // Unique violation - event already exists
-        // Check if this event was already processed
-        const existingEvent = await db.queryRow<{
-          event_id: string;
-          occurred_at: Date;
-        }>`
-          SELECT event_id, occurred_at
-          FROM events
-          WHERE event_id = ${eventId}
-        `;
-
-        if (existingEvent) {
-          // Event exists, return zero delta (idempotency)
-          // Get current score for the anonymous_id
-          const currentScore = await db.queryRow<{
-            total_score: number;
-            last_threshold_emitted: ThresholdBand | null;
-          }>`
-            SELECT total_score, last_threshold_emitted
-            FROM intent_scores
-            WHERE subject_type = 'anonymous' AND subject_id = ${req.anonymous_id}
-          `;
-
-          const totalScore = currentScore?.total_score ?? 0;
-          const band = bandFromScore(totalScore);
-
-          return {
-            ok: true,
-            event_id: eventId,
-            delta: 0, // No delta for duplicate event
-            total_score: totalScore,
-            band,
-            threshold_emitted: false, // No threshold emission for duplicate
-          };
-        }
-      }
-      // Re-throw if it's not a unique constraint violation
-      throw error;
+          occurredAt.toISOString(),
+          req.value ?? null,
+          metadata ? JSON.stringify(metadata) : null,
+        ]
+      );
+    } catch (error) {
+      throw APIError.internal("Failed to record intent event", error as Error);
     }
 
-    // Only proceed with scoring if event was successfully inserted
-    if (!eventInserted) {
-      throw new Error("Failed to insert event");
-    }
-
-    // Update intent_scores (anonymous subject)
-    // Create row if not exists with total_score=0
-    // Update total_score += delta, last_event_at = occurred_at, updated_at = now()
-    const scoreResult = await db.queryRow<{
-      total_score: number;
-      last_threshold_emitted: ThresholdBand | null;
-    }>`
-      INSERT INTO intent_scores (
-        subject_type,
-        subject_id,
-        total_score,
-        last_event_at,
-        updated_at
-      ) VALUES (
-        'anonymous',
-        ${req.anonymous_id},
-        ${delta},
-        ${occurredAt.toISOString()},
-        now()
-      )
-      ON CONFLICT (subject_type, subject_id) DO UPDATE SET
-        total_score = intent_scores.total_score + ${delta},
-        last_event_at = ${occurredAt.toISOString()},
-        updated_at = now()
-      RETURNING total_score, last_threshold_emitted
-    `;
-
-    if (!scoreResult) {
-      throw new Error("Failed to update intent score");
-    }
-
-    const totalScore = scoreResult.total_score;
-    const newBand = bandFromScore(totalScore);
-    const lastThresholdEmitted = scoreResult.last_threshold_emitted;
-
-    // Evaluate thresholds using helper
-    const thresholdEmitted = shouldEmitThreshold(
-      lastThresholdEmitted,
-      newBand
-    );
-    const shouldUpdateThreshold = thresholdEmitted;
-
-    // Update last_threshold_emitted if needed
-    if (shouldUpdateThreshold) {
-      await db.exec`
-        UPDATE intent_scores
-        SET last_threshold_emitted = ${newBand}
-        WHERE subject_type = 'anonymous' AND subject_id = ${req.anonymous_id}
-      `;
-    }
-
-    return {
-      ok: true,
-      event_id: eventId,
-      delta,
-      total_score: totalScore,
-      band: newBand,
-      threshold_emitted: thresholdEmitted,
-    };
+    return { ok: true };
   }
 );
-

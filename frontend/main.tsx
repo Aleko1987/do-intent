@@ -13,7 +13,7 @@ if (!PUBLISHABLE_KEY) {
 
 // Initialize DO-Intent tracker
 init({
-  apiBase: import.meta.env.VITE_DO_INTENT_API_BASE || '',
+  apiBase: import.meta.env.VITE_DO_INTENT_API_BASE_URL || '',
   debug: import.meta.env.DEV || false,
 });
 

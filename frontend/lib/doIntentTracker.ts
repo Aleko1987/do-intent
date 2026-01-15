@@ -41,12 +41,36 @@ let timeOnPageTracked = false;
 /**
  * Generate a UUID v4
  */
-function generateUUID(): string {
+function generateUUIDFallback(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
+}
+
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return generateUUIDFallback();
+}
+
+function getApiBaseUrl(): string {
+  if (config.apiBase && config.apiBase.trim().length > 0) {
+    return config.apiBase;
+  }
+
+  const envBase = import.meta.env?.VITE_DO_INTENT_API_BASE_URL;
+  if (envBase && envBase.trim().length > 0) {
+    return envBase;
+  }
+
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    return 'http://localhost:10000';
+  }
+
+  return '';
 }
 
 /**
@@ -151,7 +175,7 @@ async function sendTrackEvent(
 ): Promise<void> {
   const anonymousId = getAnonymousId();
   const sessionId = getSessionId();
-  const timestamp = Math.floor(Date.now() / 1000);
+  const timestamp = new Date().toISOString();
   
   const payload = {
     event: eventType,
@@ -164,11 +188,9 @@ async function sendTrackEvent(
     metadata: buildMetadata(metadata),
   };
   
-  // Use VITE_API_BASE_URL or default to localhost:4000 in dev
-  const apiBase = config.apiBase || 
-    import.meta.env?.VITE_API_BASE_URL || 
-    (import.meta.env?.DEV ? 'http://localhost:4000' : '');
-  const endpoint = `${apiBase}/track`;
+  const apiBase = getApiBaseUrl();
+  const trimmedBase = apiBase.replace(/\/$/, '');
+  const endpoint = trimmedBase ? `${trimmedBase}/track` : '/track';
   
   if (config.debug) {
     console.log('[DO-Intent] Tracking event:', eventType, payload);
@@ -186,9 +208,8 @@ async function sendTrackEvent(
     });
     
     if (!response.ok) {
-      if (config.debug) {
-        console.warn('[DO-Intent] Track failed:', response.status, await response.text());
-      }
+      const errorText = await response.text();
+      console.warn('[DO-Intent] Track failed:', response.status, errorText);
     } else {
       const result = await response.json();
       if (config.debug) {
@@ -196,9 +217,7 @@ async function sendTrackEvent(
       }
     }
   } catch (error) {
-    if (config.debug) {
-      console.error('[DO-Intent] Track error:', error);
-    }
+    console.warn('[DO-Intent] Track error:', error);
     // Silently fail - don't block UI
   }
 }
@@ -212,8 +231,8 @@ async function sendTrackEvent(
  */
 export function init(options: TrackerConfig = {}): void {
   config = {
-    apiBase: options.apiBase || import.meta.env?.VITE_DO_INTENT_API_BASE || '',
-    debug: options.debug || false,
+    apiBase: options.apiBase,
+    debug: options.debug ?? false,
   };
   
   if (config.debug) {
@@ -391,8 +410,9 @@ export async function identify(
   threshold_emitted: boolean;
 }> {
   const anonymousId = getAnonymousId();
-  const apiBase = config.apiBase || '';
-  const endpoint = `${apiBase}/identify`;
+  const apiBase = getApiBaseUrl();
+  const trimmedBase = apiBase.replace(/\/$/, '');
+  const endpoint = trimmedBase ? `${trimmedBase}/identify` : '/identify';
   
   const payload = {
     anonymous_id: anonymousId,
@@ -439,4 +459,3 @@ export async function identify(
 // Note: Auto-initialization is disabled by default.
 // Users should call init() explicitly in their app entry point.
 // Example: In main.tsx or App.tsx, call init({ apiBase: '...', debug: false })
-
