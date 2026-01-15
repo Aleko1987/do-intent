@@ -42,7 +42,7 @@ import { init, track, identify } from '@/lib/doIntentTracker';
 
 // Initialize once (e.g., in your app entry point)
 init({
-  apiBase: import.meta.env.VITE_DO_INTENT_API_BASE || '',
+  apiBase: import.meta.env.VITE_DO_INTENT_API_BASE_URL || '',
   debug: false,
 });
 
@@ -67,7 +67,7 @@ identify('user@example.com', 'John Doe')
 For module-based installations, set:
 
 ```bash
-VITE_DO_INTENT_API_BASE=https://api.example.com
+VITE_DO_INTENT_API_BASE_URL=https://api.example.com
 ```
 
 If `apiBase` is empty or not set, the tracker defaults to same-origin (useful when running through Encore gateway).
@@ -75,7 +75,7 @@ If `apiBase` is empty or not set, the tracker defaults to same-origin (useful wh
 ### API Base URL
 
 - **Production**: Set to your deployed API URL (e.g., `https://api.example.com`)
-- **Development**: Leave empty for same-origin, or use `http://localhost:4000`
+- **Development**: Leave empty for same-origin, or use `http://localhost:10000`
 - **Encore Gateway**: Leave empty to use same-origin routing
 
 ### Debug Mode
@@ -324,4 +324,3 @@ For issues or questions, see:
 - Architecture: `/docs/ARCHITECTURE.md`
 - Codex: `/docs/CODEX.md`
 - Backend endpoints: `backend/intent_scorer/track.ts`, `backend/intent_scorer/identify.ts`
-
