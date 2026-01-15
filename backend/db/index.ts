@@ -1,8 +1,5 @@
-// DB disabled on Render image deploy - Encore SQL proxy initialization removed
-const dbStub = new Proxy({} as any, {
-  get() {
-    throw new Error("DB disabled on Render image deploy");
-  },
-});
+import { SQLDatabase } from "encore.dev/storage/sqldb";
 
-export default dbStub;
+const db = new SQLDatabase("do_intent");
+
+export default db;
