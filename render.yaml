@@ -24,4 +24,4 @@ services:
     startCommand: >
       bash -lc "set -euxo pipefail;
       cd /opt/render/project/src/backend;
-      ../.encore/bin/encore run --listen 0.0.0.0:${PORT:-4000} --watch=false --browser=never"
+      ../.encore/bin/encore run --config ./infra-config.json --listen 0.0.0.0:${PORT:-4000} --watch=false --browser=never"

@@ -1,1 +1,26 @@
-{}
+{
+  "$schema": "https://encore.dev/schemas/infra.schema.json",
+  "metadata": {
+    "app_id": "do-intent",
+    "env_name": "production",
+    "env_type": "production",
+    "base_url": { "$env": "BASE_URL" }
+  },
+  "sql_servers": [
+    {
+      "host": { "$env": "DB_HOST" },
+      "tls_config": { "disabled": false },
+      "databases": {
+        "do_intent": {
+          "name": { "$env": "DB_NAME" },
+          "username": { "$env": "DB_USER" },
+          "password": { "$env": "DB_PASSWORD" }
+        }
+      }
+    }
+  ],
+  "secrets": {
+    "ClerkSecretKey": { "$env": "CLERK_SECRET_KEY" },
+    "IngestApiKey": { "$env": "INGEST_API_KEY" }
+  }
+}
