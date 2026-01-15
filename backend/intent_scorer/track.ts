@@ -1,4 +1,5 @@
 import { api, APIError } from "encore.dev/api";
+import { getAuthData } from "~encore/auth";
 import db from "../db";
 import {
   ALLOWED_EVENT_TYPES,
@@ -120,6 +121,16 @@ export const track = api<TrackRequest, TrackResponse>(
 
     // Normalize metadata (default to {})
     const metadata = req.metadata || {};
+
+    // If request is authenticated, attach clerk userId to metadata
+    try {
+      const authData = getAuthData();
+      if (authData?.userID) {
+        metadata.clerk_user_id = authData.userID;
+      }
+    } catch {
+      // Not authenticated - continue without userId (public tracker)
+    }
 
     // Extract optional fields from metadata for session
     const userAgent = metadata.user_agent || metadata.userAgent || null;

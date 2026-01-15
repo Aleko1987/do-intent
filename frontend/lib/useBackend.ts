@@ -32,6 +32,9 @@ export function useBackend<T>(
     return backend.with({
       auth: async () => {
         const token = await getToken();
+        if (!token) {
+          return undefined;
+        }
         return { authorization: `Bearer ${token}` };
       },
     });
@@ -49,6 +52,9 @@ export function useBackend<T>(
         ? backend.with({
             auth: async () => {
               const token = await getToken();
+              if (!token) {
+                return undefined;
+              }
               return { authorization: `Bearer ${token}` };
             },
           })

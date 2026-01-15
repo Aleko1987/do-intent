@@ -164,11 +164,15 @@ async function sendTrackEvent(
     metadata: buildMetadata(metadata),
   };
   
-  const apiBase = config.apiBase || '';
+  // Use VITE_API_BASE_URL or default to localhost:4000 in dev
+  const apiBase = config.apiBase || 
+    import.meta.env?.VITE_API_BASE_URL || 
+    (import.meta.env?.DEV ? 'http://localhost:4000' : '');
   const endpoint = `${apiBase}/track`;
   
   if (config.debug) {
     console.log('[DO-Intent] Tracking event:', eventType, payload);
+    console.log('[DO-Intent] API endpoint:', endpoint);
   }
   
   try {
