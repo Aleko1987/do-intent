@@ -1,6 +1,6 @@
 import { api, Header, APIError } from "encore.dev/api";
 import { secret } from "encore.dev/config";
-import db from "../db";
+import { db } from "../db/db";
 import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
 

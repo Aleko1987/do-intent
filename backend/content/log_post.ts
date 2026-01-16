@@ -1,6 +1,6 @@
 import { api } from "encore.dev/api";
 import { getAuthData } from "~encore/auth";
-import db from "../db";
+import { db } from "../db/db";
 import type { ContentPostLog, ContentItem } from "./types";
 
 interface LogPostRequest {

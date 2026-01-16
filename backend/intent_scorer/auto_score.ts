@@ -1,4 +1,4 @@
-import db from "../db";
+import { db } from "../db/db";
 import { computeScore } from "./engine";
 
 export async function autoScoreEvent(eventId: string): Promise<void> {

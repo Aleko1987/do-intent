@@ -1,5 +1,5 @@
 import { api } from "encore.dev/api";
-import db from "../db";
+import { db } from "../db/db";
 import type { IntentEvent, MarketingLead } from "./types";
 import { updateLeadScoring } from "./scoring";
 import { checkAndPushToSales } from "./auto_push";

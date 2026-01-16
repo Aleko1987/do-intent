@@ -1,4 +1,4 @@
-import db from "../db";
+import { db } from "../db/db";
 import type { MarketingLead } from "./types";
 
 interface AutoPushResult {
