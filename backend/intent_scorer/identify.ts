@@ -1,5 +1,5 @@
 import { api, APIError } from "encore.dev/api";
-import db from "../db";
+import { db } from "../db/db";
 import {
   ThresholdBand,
   bandFromScore,

@@ -1,5 +1,5 @@
 import { api } from "encore.dev/api";
-import db from "../db";
+import { db } from "../db/db";
 import { computeScore } from "./engine";
 import type { RecomputeScoresRequest } from "./types";
 

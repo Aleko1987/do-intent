@@ -1,5 +1,5 @@
 import { api } from "encore.dev/api";
-import db from "../db";
+import { db } from "../db/db";
 import type { LeadTopSignalsRequest, LeadTopSignalsResponse, TopSignalEvent } from "./types";
 
 export const getLeadTopSignals = api(
