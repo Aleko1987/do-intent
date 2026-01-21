@@ -17,6 +17,11 @@ interface TrackResponse {
   ok: true;
 }
 
+interface InfoResponse {
+  ok: true;
+  message: string;
+}
+
 interface ErrorResponse {
   code: "invalid_argument" | "internal";
   message: string;
@@ -148,7 +153,7 @@ function applyCorsHeaders(resp: RawResponse, req: RawRequest): void {
     "Access-Control-Allow-Headers",
     "content-type, x-do-intent-key, authorization"
   );
-  resp.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  resp.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS, GET");
   resp.setHeader("Vary", "Origin");
 }
 
@@ -168,7 +173,7 @@ async function readJsonBody(req: RawRequest): Promise<unknown> {
 function sendJson(
   resp: RawResponse,
   status: number,
-  payload: TrackResponse | ErrorResponse
+  payload: TrackResponse | InfoResponse | ErrorResponse
 ): void {
   resp.statusCode = status;
   resp.setHeader("Content-Type", "application/json");
@@ -287,6 +292,17 @@ export const trackOptions = api.raw(
     applyCorsHeaders(resp, req);
     resp.statusCode = 200;
     resp.end();
+  }
+);
+
+export const trackGet = api.raw(
+  { expose: true, method: "GET", path: "/track" },
+  (req, resp) => {
+    applyCorsHeaders(resp, req);
+    sendJson(resp, 200, {
+      ok: true,
+      message: "Use POST /track to submit intent events.",
+    });
   }
 );
 
