@@ -18,6 +18,7 @@ interface TrackResponse {
   ok: true;
   stored?: boolean;
   reason?: "db_disabled" | "db_error";
+  error_code?: string;
   request_id: string;
 }
 
@@ -174,25 +175,20 @@ function isDbEnabled(): boolean {
 function logDbError(
   message: string,
   request_id: string,
+  error_code: string,
   error?: unknown
 ): void {
-  const dbError = error instanceof Error ? error : new Error(String(error ?? ""));
   const pgError =
     error && typeof error === "object" && "code" in error
       ? {
           code: (error as any).code,
-          detail: (error as any).detail,
-          hint: (error as any).hint,
-          position: (error as any).position,
         }
       : null;
 
-  console.warn(message, {
+  console.error(message, {
     request_id,
+    error_code,
     error: {
-      name: dbError.name,
-      message: dbError.message,
-      stack: dbError.stack,
       pg: pgError,
     },
   });
@@ -204,6 +200,14 @@ function parseOptionalString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function getDbErrorCode(error?: unknown): string {
+  if (error && typeof error === "object" && "code" in error) {
+    const code = String((error as any).code);
+    return `pg_${code}`;
+  }
+  return "db_query_failed";
 }
 
 function ensureObject(value: unknown, field: string): Record<string, any> | null {
@@ -263,6 +267,17 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
   
   applyCorsHeaders(resp, req);
 
+  if (!isDbEnabled()) {
+    console.info("[track] DB disabled via ENABLE_DB flag.", { request_id });
+    sendJson(resp, 200, {
+      ok: true,
+      stored: false,
+      reason: "db_disabled",
+      request_id,
+    });
+    return;
+  }
+
   try {
     let payload: TrackRequest;
     try {
@@ -315,27 +330,20 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
       Object.keys(storedMetadata).length > 0 ? storedMetadata : {};
 
     let stored = false;
-    if (!isDbEnabled()) {
-      console.warn("DB disabled via ENABLE_DB flag", { request_id });
-      sendJson(resp, 200, {
-        ok: true,
-        stored,
-        reason: "db_disabled",
-        request_id,
-      });
-      return;
-    }
+    let errorCode: string | undefined;
 
     const activePool = getPool();
     if (!activePool) {
-      console.warn("[track] Database unavailable; skipping persistence.", {
+      errorCode = "db_unavailable";
+      console.error("[track] Database unavailable; skipping persistence.", {
         request_id,
-        hasDb: false,
+        error_code: errorCode,
       });
       sendJson(resp, 200, {
         ok: true,
         stored,
         reason: "db_error",
+        error_code: errorCode,
         request_id,
       });
       return;
@@ -384,18 +392,20 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
     } catch (error) {
       // DB errors are non-fatal - log but don't fail the request
       bootstrapPromise = null;
+      errorCode = getDbErrorCode(error);
       logDbError(
         "[track] Failed to record intent event (non-fatal).",
         request_id,
+        errorCode,
         error
       );
-      // Continue - return success but stored: false
     }
 
     sendJson(resp, 200, {
       ok: true,
       stored,
       reason: stored ? undefined : "db_error",
+      error_code: stored ? undefined : errorCode ?? "db_query_failed",
       request_id,
     });
   } catch (error) {
