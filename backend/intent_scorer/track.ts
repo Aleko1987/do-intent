@@ -19,7 +19,7 @@ interface TrackResponse {
 }
 
 interface InfoResponse {
-  ok: true;
+  ok?: true;
   message: string;
 }
 
@@ -40,7 +40,10 @@ function isValidUUID(uuid: string): boolean {
   return uuidRegex.test(uuid);
 }
 
-async function ensureIntentEventsTable(activePool: Pool): Promise<void> {
+async function ensureIntentEventsTable(activePool: Pool | null): Promise<void> {
+  if (!activePool) {
+    return;
+  }
   if (!bootstrapPromise) {
     bootstrapPromise = activePool
       .query(`
@@ -195,23 +198,20 @@ function sendJson(
 async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
   applyCorsHeaders(resp, req);
 
-  let payload: TrackRequest;
   try {
-    const body = await readJsonBody(req);
-    if (typeof body !== "object" || body === null) {
-      throw APIError.invalidArgument("body must be a JSON object");
+    let payload: TrackRequest;
+    try {
+      const body = await readJsonBody(req);
+      if (typeof body !== "object" || body === null) {
+        throw APIError.invalidArgument("body must be a JSON object");
+      }
+      payload = body as TrackRequest;
+    } catch (error) {
+      if (error instanceof APIError) {
+        throw error;
+      }
+      throw APIError.invalidArgument("body must be valid JSON");
     }
-    payload = body as TrackRequest;
-  } catch (error) {
-    sendJson(resp, 400, {
-      code: "invalid_argument",
-      message:
-        error instanceof APIError ? error.message : "body must be valid JSON",
-    });
-    return;
-  }
-
-  try {
     const event = requireNonEmptyString(payload.event, "event");
 
     if (!payload.session_id || !isValidUUID(payload.session_id)) {
@@ -246,51 +246,69 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
 
     let stored = false;
     const activePool = getPool();
-    if (activePool) {
-      try {
-        await ensureIntentEventsTable(activePool);
-        await activePool.query(
-          `
-            INSERT INTO intent_events (
-              event,
-              session_id,
-              anonymous_id,
-              clerk_user_id,
-              url,
-              referrer,
-              ts,
-              value,
-              metadata
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-          `,
-          [
+    if (!activePool) {
+      warnDatabaseIssue("[track] Database unavailable; skipping persistence.");
+      sendJson(resp, 200, { ok: true, stored });
+      return;
+    }
+
+    try {
+      await ensureIntentEventsTable(activePool);
+      await activePool.query(
+        `
+          INSERT INTO intent_events (
             event,
-            payload.session_id,
-            payload.anonymous_id ?? null,
-            clerkUserId,
+            session_id,
+            anonymous_id,
+            clerk_user_id,
             url,
             referrer,
-            occurredAt.toISOString(),
-            payload.value ?? null,
-            Object.keys(storedMetadata).length > 0
-              ? JSON.stringify(storedMetadata)
-              : null,
-          ]
-        );
-        stored = true;
-      } catch (error) {
-        bootstrapPromise = null;
-        warnDatabaseIssue("[track] Failed to record intent event.", error);
-      }
+            ts,
+            value,
+            metadata
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `,
+        [
+          event,
+          payload.session_id,
+          payload.anonymous_id ?? null,
+          clerkUserId,
+          url,
+          referrer,
+          occurredAt.toISOString(),
+          payload.value ?? null,
+          Object.keys(storedMetadata).length > 0
+            ? JSON.stringify(storedMetadata)
+            : null,
+        ]
+      );
+      stored = true;
+    } catch (error) {
+      bootstrapPromise = null;
+      warnDatabaseIssue("[track] Failed to record intent event.", error);
     }
 
     sendJson(resp, 200, { ok: true, stored });
   } catch (error) {
-    sendJson(resp, 400, {
-      code: "invalid_argument",
-      message:
-        error instanceof APIError ? error.message : "Invalid tracking payload",
+    if (error instanceof APIError && error.code === "invalid_argument") {
+      sendJson(resp, 400, {
+        code: "invalid_argument",
+        message: error.message,
+      });
+      return;
+    }
+
+    const fallbackError = error instanceof Error ? error : new Error(String(error));
+    console.error("[track] failed", {
+      message: fallbackError.message,
+      stack: fallbackError.stack,
+      hasDb: !!pool,
+      envKeys: Object.keys(process.env).filter(
+        (key) =>
+          key.includes("DATABASE") || key.includes("PG") || key.includes("ENCORE")
+      ),
     });
+    sendJson(resp, 200, { ok: true, stored: false });
   }
 }
 
@@ -315,8 +333,7 @@ export const trackGet = api.raw(
   (req, resp) => {
     applyCorsHeaders(resp, req);
     sendJson(resp, 200, {
-      ok: true,
-      message: "Use POST /track to submit intent events.",
+      message: "use POST /track",
     });
   }
 );
