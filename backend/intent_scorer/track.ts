@@ -15,6 +15,7 @@ interface TrackRequest {
 
 interface TrackResponse {
   ok: true;
+  stored?: boolean;
 }
 
 interface InfoResponse {
@@ -39,12 +40,7 @@ function isValidUUID(uuid: string): boolean {
   return uuidRegex.test(uuid);
 }
 
-async function ensureIntentEventsTable(): Promise<void> {
-  const activePool = getPool();
-  if (!activePool) {
-    return;
-  }
-
+async function ensureIntentEventsTable(activePool: Pool): Promise<void> {
   if (!bootstrapPromise) {
     bootstrapPromise = activePool
       .query(`
@@ -103,19 +99,35 @@ function invalidUuidError(field: string): never {
   throw APIError.invalidArgument(`${field} is required and must be a valid UUID`);
 }
 
+function warnDatabaseIssue(message: string, error?: unknown): void {
+  if (warnedNoDatabase) {
+    return;
+  }
+  warnedNoDatabase = true;
+  if (error) {
+    console.warn(message, error);
+  } else {
+    console.warn(message);
+  }
+}
+
 function getPool(): Pool | null {
   if (!process.env.DATABASE_URL) {
-    if (!warnedNoDatabase) {
-      console.warn("[track] DATABASE_URL is not configured; skipping persistence.");
-      warnedNoDatabase = true;
-    }
+    warnDatabaseIssue(
+      "[track] DATABASE_URL is not configured; skipping persistence."
+    );
     return null;
   }
 
   if (!pool) {
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-    });
+    try {
+      pool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+      });
+    } catch (error) {
+      warnDatabaseIssue("[track] Failed to initialize database pool.", error);
+      return null;
+    }
   }
 
   return pool;
@@ -232,10 +244,11 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
       storedMetadata.clerk_user_id = clerkUserId;
     }
 
+    let stored = false;
     const activePool = getPool();
     if (activePool) {
       try {
-        await ensureIntentEventsTable();
+        await ensureIntentEventsTable(activePool);
         await activePool.query(
           `
             INSERT INTO intent_events (
@@ -264,12 +277,14 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
               : null,
           ]
         );
+        stored = true;
       } catch (error) {
-        console.warn("[track] Failed to record intent event:", error);
+        bootstrapPromise = null;
+        warnDatabaseIssue("[track] Failed to record intent event.", error);
       }
     }
 
-    sendJson(resp, 200, { ok: true });
+    sendJson(resp, 200, { ok: true, stored });
   } catch (error) {
     sendJson(resp, 400, {
       code: "invalid_argument",
