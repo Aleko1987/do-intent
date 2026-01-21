@@ -289,3 +289,19 @@ export const trackOptions = api.raw(
     resp.end();
   }
 );
+
+export const trackV1 = api.raw(
+  { expose: true, method: "POST", path: "/api/v1/track" },
+  (req, resp) => {
+    void handleTrack(req, resp);
+  }
+);
+
+export const trackV1Options = api.raw(
+  { expose: true, method: "OPTIONS", path: "/api/v1/track" },
+  (req, resp) => {
+    applyCorsHeaders(resp, req);
+    resp.statusCode = 200;
+    resp.end();
+  }
+);
