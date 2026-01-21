@@ -1,6 +1,7 @@
 import { api, APIError, RawRequest, RawResponse } from "encore.dev/api";
 import { getAuthData } from "~encore/auth";
 import { Pool } from "pg";
+import { randomUUID } from "crypto";
 
 interface TrackRequest {
   event?: string;
@@ -27,6 +28,7 @@ interface ErrorResponse {
   code: "invalid_argument" | "internal";
   message: string;
   details?: unknown;
+  request_id?: string;
 }
 
 let pool: Pool | null = null;
@@ -196,6 +198,9 @@ function sendJson(
 }
 
 async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
+  // Generate request_id for correlation
+  const request_id = randomUUID();
+  
   applyCorsHeaders(resp, req);
 
   try {
@@ -212,10 +217,12 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
       }
       throw APIError.invalidArgument("body must be valid JSON");
     }
+    
+    // Validate required fields
     const event = requireNonEmptyString(payload.event, "event");
 
     if (!payload.session_id || !isValidUUID(payload.session_id)) {
-      invalidUuidError("session_id");
+      throw APIError.invalidArgument("session_id is required and must be a valid UUID");
     }
 
     if (payload.anonymous_id && !isValidUUID(payload.anonymous_id)) {
@@ -247,7 +254,10 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
     let stored = false;
     const activePool = getPool();
     if (!activePool) {
-      warnDatabaseIssue("[track] Database unavailable; skipping persistence.");
+      console.warn("[track] Database unavailable; skipping persistence.", {
+        request_id,
+        hasDb: false,
+      });
       sendJson(resp, 200, { ok: true, stored });
       return;
     }
@@ -284,31 +294,69 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
       );
       stored = true;
     } catch (error) {
+      // DB errors are non-fatal - log but don't fail the request
       bootstrapPromise = null;
-      warnDatabaseIssue("[track] Failed to record intent event.", error);
+      const dbError = error instanceof Error ? error : new Error(String(error));
+      const pgError = error && typeof error === "object" && "code" in error ? {
+        code: (error as any).code,
+        detail: (error as any).detail,
+        hint: (error as any).hint,
+        position: (error as any).position,
+      } : null;
+      
+      console.warn("[track] Failed to record intent event (non-fatal).", {
+        request_id,
+        error: {
+          name: dbError.name,
+          message: dbError.message,
+          stack: dbError.stack,
+          pg: pgError,
+        },
+      });
+      // Continue - return success but stored: false
     }
 
     sendJson(resp, 200, { ok: true, stored });
   } catch (error) {
+    // Handle validation errors (400)
     if (error instanceof APIError && error.code === "invalid_argument") {
       sendJson(resp, 400, {
         code: "invalid_argument",
         message: error.message,
+        request_id,
       });
       return;
     }
 
+    // Handle internal errors (500)
     const fallbackError = error instanceof Error ? error : new Error(String(error));
-    console.error("[track] failed", {
-      message: fallbackError.message,
-      stack: fallbackError.stack,
+    const pgError = error && typeof error === "object" && "code" in error ? {
+      code: (error as any).code,
+      detail: (error as any).detail,
+      hint: (error as any).hint,
+      position: (error as any).position,
+    } : null;
+    
+    console.error("[track] Internal error.", {
+      request_id,
+      error: {
+        name: fallbackError.name,
+        message: fallbackError.message,
+        stack: fallbackError.stack,
+        pg: pgError,
+      },
       hasDb: !!pool,
       envKeys: Object.keys(process.env).filter(
         (key) =>
           key.includes("DATABASE") || key.includes("PG") || key.includes("ENCORE")
       ),
     });
-    sendJson(resp, 200, { ok: true, stored: false });
+    
+    sendJson(resp, 500, {
+      code: "internal",
+      message: "An internal error occurred while processing the request",
+      request_id,
+    });
   }
 }
 
