@@ -167,6 +167,23 @@ POST /intent-scorer/rules/update
 }
 ```
 
+**PowerShell Manual Test (Tracking):**
+```powershell
+$payload = @{
+  event = "page_view"
+  session_id = "11111111-1111-4111-8111-111111111111"
+  anonymous_id = "22222222-2222-4222-8222-222222222222"
+  url = "/"
+  referrer = ""
+  timestamp = (Get-Date).ToUniversalTime().ToString("o")
+  value = 1
+  metadata = @{ source = "powershell_test" }
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method Post -Uri "https://do-intent-web.onrender.com/track" `
+  -ContentType "application/json" -Body $payload
+```
+
 ## Key Design Decisions
 
 1. **Deterministic & Explainable**: No LLM dependency in v1. Every score has traceable reasoning.

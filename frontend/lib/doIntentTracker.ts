@@ -29,6 +29,8 @@ interface TrackerConfig {
   debug?: boolean;
 }
 
+const DEFAULT_RENDER_BASE = 'https://do-intent-web.onrender.com';
+
 let config: TrackerConfig = {
   apiBase: '',
   debug: false,
@@ -73,7 +75,7 @@ function getApiBaseUrl(): string {
     }
   }
 
-  return '';
+  return DEFAULT_RENDER_BASE;
 }
 
 /**
@@ -130,6 +132,20 @@ function getTimezone(): string {
   }
 }
 
+function getClerkUserId(): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const clerk = (window as Window & { Clerk?: { user?: { id?: string } } }).Clerk;
+  const userId = clerk?.user?.id;
+  if (typeof userId === 'string' && userId.trim().length > 0) {
+    return userId;
+  }
+
+  return null;
+}
+
 /**
  * Extract UTM parameters from URL
  */
@@ -163,6 +179,11 @@ function buildMetadata(additional?: Record<string, any>): Record<string, any> {
     ...getUtmParams(),
     ...additional,
   };
+
+  const clerkUserId = getClerkUserId();
+  if (clerkUserId) {
+    metadata.clerk_user_id = clerkUserId;
+  }
   
   return metadata;
 }
