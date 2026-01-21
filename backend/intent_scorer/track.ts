@@ -18,6 +18,7 @@ interface TrackResponse {
   ok: true;
   stored?: boolean;
   reason?: "db_disabled" | "db_error";
+  request_id: string;
 }
 
 interface InfoResponse {
@@ -43,32 +44,58 @@ function isValidUUID(uuid: string): boolean {
   return uuidRegex.test(uuid);
 }
 
-async function ensureIntentEventsTable(activePool: Pool | null): Promise<void> {
+async function ensureTrackingTables(activePool: Pool | null): Promise<void> {
   if (!activePool) {
     return;
   }
   if (!bootstrapPromise) {
     bootstrapPromise = activePool
       .query(`
-        CREATE TABLE IF NOT EXISTS intent_events (
-          id bigserial primary key,
-          created_at timestamptz not null default now(),
-          event text not null,
-          session_id uuid not null,
-          anonymous_id uuid null,
-          clerk_user_id text null,
-          url text null,
-          referrer text null,
-          ts timestamptz null,
-          value double precision null,
-          metadata jsonb null
-        );
+        CREATE EXTENSION IF NOT EXISTS pgcrypto;
       `)
       .then(() =>
         activePool.query(`
-          ALTER TABLE intent_events
-          ALTER COLUMN anonymous_id DROP NOT NULL,
-          ALTER COLUMN url DROP NOT NULL;
+          CREATE TABLE IF NOT EXISTS sessions (
+            session_id UUID PRIMARY KEY,
+            anonymous_id UUID NOT NULL,
+            identity_id UUID NULL,
+            first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            user_agent TEXT NULL,
+            device TEXT NULL,
+            country TEXT NULL,
+            ip TEXT NULL,
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+          );
+        `)
+      )
+      .then(() =>
+        activePool.query(`
+          CREATE TABLE IF NOT EXISTS events (
+            event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            session_id UUID NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+            anonymous_id UUID NOT NULL,
+            identity_id UUID NULL,
+            event_type TEXT NOT NULL,
+            event_value NUMERIC NULL,
+            url TEXT NOT NULL,
+            referrer TEXT NULL,
+            occurred_at TIMESTAMPTZ NOT NULL,
+            received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+          );
+        `)
+      )
+      .then(() =>
+        activePool.query(`
+          CREATE INDEX IF NOT EXISTS idx_sessions_anonymous_id_last_seen
+          ON sessions (anonymous_id, last_seen_at DESC);
+        `)
+      )
+      .then(() =>
+        activePool.query(`
+          CREATE INDEX IF NOT EXISTS idx_events_anonymous_id_occurred
+          ON events (anonymous_id, occurred_at DESC);
         `)
       )
       .then(() => undefined);
@@ -142,6 +169,33 @@ function getPool(): Pool | null {
 function isDbEnabled(): boolean {
   // Render image deploy runs without local Encore SQL; gate DB writes explicitly.
   return process.env.ENABLE_DB === "true";
+}
+
+function logDbError(
+  message: string,
+  request_id: string,
+  error?: unknown
+): void {
+  const dbError = error instanceof Error ? error : new Error(String(error ?? ""));
+  const pgError =
+    error && typeof error === "object" && "code" in error
+      ? {
+          code: (error as any).code,
+          detail: (error as any).detail,
+          hint: (error as any).hint,
+          position: (error as any).position,
+        }
+      : null;
+
+  console.warn(message, {
+    request_id,
+    error: {
+      name: dbError.name,
+      message: dbError.message,
+      stack: dbError.stack,
+      pg: pgError,
+    },
+  });
 }
 
 function parseOptionalString(value: unknown): string | null {
@@ -237,10 +291,11 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
       );
     }
 
-    const url = parseOptionalString(payload.url);
+    const url = parseOptionalString(payload.url) ?? "";
     const referrer = parseOptionalString(payload.referrer);
     const occurredAt = parseIsoTimestamp(payload.timestamp) ?? new Date();
     const metadata = ensureObject(payload.metadata, "metadata");
+    const anonymousId = payload.anonymous_id ?? payload.session_id;
 
     let clerkUserId: string | null = null;
     try {
@@ -256,11 +311,18 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
     if (clerkUserId) {
       storedMetadata.clerk_user_id = clerkUserId;
     }
+    const metadataPayload =
+      Object.keys(storedMetadata).length > 0 ? storedMetadata : {};
 
     let stored = false;
     if (!isDbEnabled()) {
       console.warn("DB disabled via ENABLE_DB flag", { request_id });
-      sendJson(resp, 200, { ok: true, stored, reason: "db_disabled" });
+      sendJson(resp, 200, {
+        ok: true,
+        stored,
+        reason: "db_disabled",
+        request_id,
+      });
       return;
     }
 
@@ -270,61 +332,63 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
         request_id,
         hasDb: false,
       });
-      sendJson(resp, 200, { ok: true, stored, reason: "db_error" });
+      sendJson(resp, 200, {
+        ok: true,
+        stored,
+        reason: "db_error",
+        request_id,
+      });
       return;
     }
 
     try {
-      await ensureIntentEventsTable(activePool);
+      await ensureTrackingTables(activePool);
       await activePool.query(
         `
-          INSERT INTO intent_events (
-            event,
+          INSERT INTO sessions (
             session_id,
             anonymous_id,
-            clerk_user_id,
+            last_seen_at
+          ) VALUES ($1, $2, now())
+          ON CONFLICT (session_id) DO UPDATE
+          SET anonymous_id = EXCLUDED.anonymous_id,
+              last_seen_at = now()
+        `,
+        [payload.session_id, anonymousId]
+      );
+      await activePool.query(
+        `
+          INSERT INTO events (
+            event_type,
+            session_id,
+            anonymous_id,
             url,
             referrer,
-            ts,
-            value,
+            occurred_at,
+            event_value,
             metadata
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         `,
         [
           event,
           payload.session_id,
-          payload.anonymous_id ?? null,
-          clerkUserId,
+          anonymousId,
           url,
           referrer,
           occurredAt.toISOString(),
           payload.value ?? null,
-          Object.keys(storedMetadata).length > 0
-            ? JSON.stringify(storedMetadata)
-            : null,
+          JSON.stringify(metadataPayload),
         ]
       );
       stored = true;
     } catch (error) {
       // DB errors are non-fatal - log but don't fail the request
       bootstrapPromise = null;
-      const dbError = error instanceof Error ? error : new Error(String(error));
-      const pgError = error && typeof error === "object" && "code" in error ? {
-        code: (error as any).code,
-        detail: (error as any).detail,
-        hint: (error as any).hint,
-        position: (error as any).position,
-      } : null;
-      
-      console.warn("[track] Failed to record intent event (non-fatal).", {
+      logDbError(
+        "[track] Failed to record intent event (non-fatal).",
         request_id,
-        error: {
-          name: dbError.name,
-          message: dbError.message,
-          stack: dbError.stack,
-          pg: pgError,
-        },
-      });
+        error
+      );
       // Continue - return success but stored: false
     }
 
@@ -332,6 +396,7 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
       ok: true,
       stored,
       reason: stored ? undefined : "db_error",
+      request_id,
     });
   } catch (error) {
     // Handle validation errors (400)
