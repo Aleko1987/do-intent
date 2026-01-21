@@ -17,6 +17,7 @@ interface TrackRequest {
 interface TrackResponse {
   ok: true;
   stored?: boolean;
+  reason?: "db_disabled" | "db_error";
 }
 
 interface InfoResponse {
@@ -138,6 +139,11 @@ function getPool(): Pool | null {
   return pool;
 }
 
+function isDbEnabled(): boolean {
+  // Render image deploy runs without local Encore SQL; gate DB writes explicitly.
+  return process.env.ENABLE_DB === "true";
+}
+
 function parseOptionalString(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -252,13 +258,19 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
     }
 
     let stored = false;
+    if (!isDbEnabled()) {
+      console.warn("DB disabled via ENABLE_DB flag", { request_id });
+      sendJson(resp, 200, { ok: true, stored, reason: "db_disabled" });
+      return;
+    }
+
     const activePool = getPool();
     if (!activePool) {
       console.warn("[track] Database unavailable; skipping persistence.", {
         request_id,
         hasDb: false,
       });
-      sendJson(resp, 200, { ok: true, stored });
+      sendJson(resp, 200, { ok: true, stored, reason: "db_error" });
       return;
     }
 
@@ -316,7 +328,11 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
       // Continue - return success but stored: false
     }
 
-    sendJson(resp, 200, { ok: true, stored });
+    sendJson(resp, 200, {
+      ok: true,
+      stored,
+      reason: stored ? undefined : "db_error",
+    });
   } catch (error) {
     // Handle validation errors (400)
     if (error instanceof APIError && error.code === "invalid_argument") {
