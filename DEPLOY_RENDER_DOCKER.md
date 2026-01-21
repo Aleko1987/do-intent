@@ -48,6 +48,8 @@ Add the following environment variables in the Render dashboard:
   - Format: `postgresql://user:password@host:port/database`
   - You can find this in your Render Postgres service dashboard
 
+- `ENABLE_DB` - Set to `true` to enable `/track` writes to Postgres
+
 - `CLERK_SECRET_KEY` - Your Clerk secret key for authentication
 
 - `INGEST_API_KEY` - API key for website ingestion endpoints
@@ -73,6 +75,14 @@ If Encore requires separate database connection parts instead of `DATABASE_URL`,
 - `DATABASE_PORT` - Database port (usually `5432`)
 
 **Note**: The `infra-config.json` is configured to use `DATABASE_URL` by default. Only add split variables if you encounter issues with the connection string format.
+
+#### Intent Tracking Schema
+
+If you are enabling `/track` writes and the intent tracking tables do not exist yet, run:
+
+```bash
+psql "$DATABASE_URL" -f docs/intent-tracking-schema.sql
+```
 
 ### 5. Configure Health Check
 
@@ -129,4 +139,3 @@ To manually trigger a new deployment:
 1. Go to your Render service dashboard
 2. Click **Manual Deploy** → **Deploy latest image**
 3. Or update the image tag to a specific commit SHA: `ghcr.io/<OWNER>/do-intent:<SHA>`
-
