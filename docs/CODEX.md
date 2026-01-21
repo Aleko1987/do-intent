@@ -54,6 +54,19 @@ Rules:
 - Must be idempotent-safe
 - Must be fast (<50ms)
 
+PowerShell smoke test:
+```powershell
+Invoke-RestMethod -Method Post -Uri "https://do-intent-web.onrender.com/track" -ContentType "application/json" -Body (@{
+  event = "page_view"
+  session_id = "00000000-0000-0000-0000-000000000000"
+  anonymous_id = "11111111-1111-1111-1111-111111111111"
+  url = "/pricing"
+  referrer = "google"
+  timestamp = (Get-Date).ToString("o")
+  metadata = @{ source = "powershell" }
+} | ConvertTo-Json)
+```
+
 ---
 
 ### POST /identify
@@ -139,4 +152,3 @@ DO-Intent does NOT:
 
 If the website intent loop is solid,
 all other platforms become trivial to add.
-
