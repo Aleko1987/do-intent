@@ -1,4 +1,4 @@
-import { api, Header, APIError } from "encore.dev/api";
+import { api, Header, APIError, RawRequest, RawResponse } from "encore.dev/api";
 import { secret } from "encore.dev/config";
 import { db } from "../db/db";
 import type { IntentEvent } from "./types";
@@ -29,6 +29,8 @@ const ALLOWED_EVENT_TYPES = [
 
 interface IngestIntentEventRequest {
   "x-do-intent-key"?: Header<"x-do-intent-key">;
+  "x-ingest-api-key"?: Header<"x-ingest-api-key">;
+  "authorization"?: Header<"authorization">;
   "origin"?: Header<"origin">;
   "referer"?: Header<"referer">;
   event_source?: string;
@@ -143,9 +145,38 @@ function validateAndNormalize(req: IngestIntentEventRequest): {
 }
 
 // Checks API key from header
-function checkApiKey(headerKey: string | undefined): void {
+function parseBearerToken(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const [scheme, token] = value.split(" ");
+  if (scheme?.toLowerCase() !== "bearer" || !token) {
+    return null;
+  }
+  return token;
+}
+
+function getApiKeyFromHeaders(req: IngestIntentEventRequest): {
+  key: string | undefined;
+  source: "x-do-intent-key" | "x-ingest-api-key" | "authorization" | null;
+} {
+  if (req["x-do-intent-key"]) {
+    return { key: req["x-do-intent-key"], source: "x-do-intent-key" };
+  }
+  if (req["x-ingest-api-key"]) {
+    return { key: req["x-ingest-api-key"], source: "x-ingest-api-key" };
+  }
+  const bearer = parseBearerToken(req.authorization);
+  if (bearer) {
+    return { key: bearer, source: "authorization" };
+  }
+  return { key: undefined, source: null };
+}
+
+function checkApiKey(req: IngestIntentEventRequest): void {
   const expectedKey = IngestApiKey();
   const isProduction = process.env.NODE_ENV === "production";
+  const { key: headerKey, source } = getApiKeyFromHeaders(req);
 
   if (isProduction) {
     if (!expectedKey) {
@@ -154,10 +185,16 @@ function checkApiKey(headerKey: string | undefined): void {
     if (!headerKey || headerKey !== expectedKey) {
       throw APIError.unauthenticated("missing or invalid x-do-intent-key header");
     }
+    if (source) {
+      console.info(`[ingest] Authenticated via ${source} header`);
+    }
   } else {
     // In dev, enforce if secret is set, but allow if not set
     if (expectedKey && (!headerKey || headerKey !== expectedKey)) {
       throw APIError.unauthenticated("missing or invalid x-do-intent-key header");
+    }
+    if (expectedKey && source) {
+      console.info(`[ingest] Authenticated via ${source} header`);
     }
   }
 }
@@ -208,72 +245,116 @@ function checkOrigin(origin: string | undefined, referer: string | undefined): v
   }
 }
 
+function getCorsOrigin(req: RawRequest): string {
+  const origin = req.headers.origin;
+  if (Array.isArray(origin)) {
+    return origin[0] ?? "*";
+  }
+  return origin ?? "*";
+}
+
+function applyCorsHeaders(resp: RawResponse, req: RawRequest): void {
+  resp.setHeader("Access-Control-Allow-Origin", getCorsOrigin(req));
+  resp.setHeader(
+    "Access-Control-Allow-Headers",
+    "content-type, x-do-intent-key, x-ingest-api-key, authorization"
+  );
+  resp.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  resp.setHeader("Vary", "Origin");
+}
+
+async function handleIngestIntentEvent(
+  req: IngestIntentEventRequest
+): Promise<IngestIntentEventResponse> {
+  // Check API key
+  checkApiKey(req);
+
+  // Check origin allowlist
+  checkOrigin(req.origin, req.referer);
+
+  const normalized = validateAndNormalize(req);
+
+  // Verify lead exists if lead_id is provided
+  if (normalized.lead_id) {
+    const lead = await db.queryRow<{ id: string }>`
+      SELECT id FROM marketing_leads WHERE id = ${normalized.lead_id}
+    `;
+
+    if (!lead) {
+      throw APIError.notFound("lead not found");
+    }
+  }
+
+  // Get scoring rule for event_value (optional, for backward compatibility)
+  const rule = await db.queryRow<{ points: number }>`
+    SELECT points FROM scoring_rules
+    WHERE event_type = ${normalized.event_type} AND is_active = true
+    LIMIT 1
+  `;
+
+  const eventValue = rule?.points || 0;
+
+  // Insert event
+  const event = await db.queryRow<IntentEvent>`
+    INSERT INTO intent_events (
+      lead_id,
+      event_type,
+      event_source,
+      event_value,
+      metadata,
+      occurred_at,
+      created_at
+    ) VALUES (
+      ${normalized.lead_id},
+      ${normalized.event_type},
+      ${normalized.event_source},
+      ${eventValue},
+      ${JSON.stringify(normalized.metadata)},
+      ${normalized.occurred_at},
+      now()
+    )
+    RETURNING *
+  `;
+
+  if (!event) {
+    throw new Error("Failed to create event");
+  }
+
+  // Auto-score the event
+  await autoScoreEvent(event.id);
+
+  return {
+    event_id: event.id,
+    lead_id: event.lead_id,
+    scored: true,
+  };
+}
+
 // POST endpoint for ingesting intent events from website
 export const ingestIntentEvent = api<IngestIntentEventRequest, IngestIntentEventResponse>(
   { expose: true, method: "POST", path: "/marketing/ingest-intent-event" },
-  async (req) => {
-    // Check API key
-    checkApiKey(req["x-do-intent-key"]);
+  handleIngestIntentEvent
+);
 
-    // Check origin allowlist
-    checkOrigin(req.origin, req.referer);
+export const ingestIntentEventV1 = api<IngestIntentEventRequest, IngestIntentEventResponse>(
+  { expose: true, method: "POST", path: "/api/v1/ingest" },
+  handleIngestIntentEvent
+);
 
-    const normalized = validateAndNormalize(req);
-
-    // Verify lead exists if lead_id is provided
-    if (normalized.lead_id) {
-      const lead = await db.queryRow<{ id: string }>`
-        SELECT id FROM marketing_leads WHERE id = ${normalized.lead_id}
-      `;
-
-      if (!lead) {
-        throw APIError.notFound("lead not found");
-      }
-    }
-
-    // Get scoring rule for event_value (optional, for backward compatibility)
-    const rule = await db.queryRow<{ points: number }>`
-      SELECT points FROM scoring_rules
-      WHERE event_type = ${normalized.event_type} AND is_active = true
-      LIMIT 1
-    `;
-
-    const eventValue = rule?.points || 0;
-
-    // Insert event
-    const event = await db.queryRow<IntentEvent>`
-      INSERT INTO intent_events (
-        lead_id,
-        event_type,
-        event_source,
-        event_value,
-        metadata,
-        occurred_at,
-        created_at
-      ) VALUES (
-        ${normalized.lead_id},
-        ${normalized.event_type},
-        ${normalized.event_source},
-        ${eventValue},
-        ${JSON.stringify(normalized.metadata)},
-        ${normalized.occurred_at},
-        now()
-      )
-      RETURNING *
-    `;
-
-    if (!event) {
-      throw new Error("Failed to create event");
-    }
-
-    // Auto-score the event
-    await autoScoreEvent(event.id);
-
-    return {
-      event_id: event.id,
-      lead_id: event.lead_id,
-      scored: true,
-    };
+export const ingestIntentEventOptions = api.raw(
+  { expose: true, method: "OPTIONS", path: "/marketing/ingest-intent-event" },
+  (req, resp) => {
+    applyCorsHeaders(resp, req);
+    resp.statusCode = 200;
+    resp.end();
   }
 );
 
+export const ingestIntentEventV1Options = api.raw(
+  { expose: true, method: "OPTIONS", path: "/api/v1/ingest" },
+  (req, resp) => {
+    applyCorsHeaders(resp, req);
+    resp.statusCode = 200;
+    resp.end();
+  }
+);
