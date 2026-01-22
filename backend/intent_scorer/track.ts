@@ -173,6 +173,11 @@ function isDbEnabled(): boolean {
   return (process.env.ENABLE_DB || "").toLowerCase() === "true";
 }
 
+const dbEnabledAtStartup = isDbEnabled();
+console.info("[track] ENABLE_DB flag at startup.", {
+  enabled: dbEnabledAtStartup,
+});
+
 function logDbError(
   message: string,
   request_id: string,
