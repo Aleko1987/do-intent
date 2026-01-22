@@ -20,6 +20,13 @@ export const ready = api<void, HealthResponse>(
   }
 );
 
+export const readyV1 = api<void, HealthResponse>(
+  { expose: true, method: "GET", path: "/api/v1/ready" },
+  async (): Promise<HealthResponse> => {
+    return buildHealthResponse();
+  }
+);
+
 const buildHealthResponse = (): HealthResponse => {
   return {
     ok: true,
