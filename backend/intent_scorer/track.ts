@@ -19,6 +19,7 @@ interface TrackResponse {
   stored?: boolean;
   reason?: "db_disabled" | "db_error";
   error_code?: string;
+  error_message?: string;
   request_id: string;
 }
 
@@ -169,7 +170,7 @@ function getPool(): Pool | null {
 
 function isDbEnabled(): boolean {
   // Render image deploy runs without local Encore SQL; gate DB writes explicitly.
-  return process.env.ENABLE_DB === "true";
+  return (process.env.ENABLE_DB || "").toLowerCase() === "true";
 }
 
 function logDbError(
@@ -264,7 +265,7 @@ function sendJson(
 async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
   // Generate request_id for correlation
   const request_id = randomUUID();
-  
+
   applyCorsHeaders(resp, req);
 
   if (!isDbEnabled()) {
@@ -331,10 +332,12 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
 
     let stored = false;
     let errorCode: string | undefined;
+    let errorMessage: string | undefined;
 
     const activePool = getPool();
     if (!activePool) {
       errorCode = "db_unavailable";
+      errorMessage = "Database unavailable";
       console.error("[track] Database unavailable; skipping persistence.", {
         request_id,
         error_code: errorCode,
@@ -344,6 +347,7 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
         stored,
         reason: "db_error",
         error_code: errorCode,
+        error_message: errorMessage,
         request_id,
       });
       return;
@@ -393,6 +397,8 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
       // DB errors are non-fatal - log but don't fail the request
       bootstrapPromise = null;
       errorCode = getDbErrorCode(error);
+      errorMessage =
+        error instanceof Error ? error.message : "Database query failed";
       logDbError(
         "[track] Failed to record intent event (non-fatal).",
         request_id,
@@ -406,6 +412,7 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
       stored,
       reason: stored ? undefined : "db_error",
       error_code: stored ? undefined : errorCode ?? "db_query_failed",
+      error_message: stored ? undefined : errorMessage ?? "Database query failed",
       request_id,
     });
   } catch (error) {
@@ -442,10 +449,12 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
           key.includes("DATABASE") || key.includes("PG") || key.includes("ENCORE")
       ),
     });
-    
-    sendJson(resp, 500, {
-      code: "internal",
-      message: "An internal error occurred while processing the request",
+
+    sendJson(resp, 200, {
+      ok: true,
+      stored: false,
+      reason: "db_error",
+      error_message: fallbackError.message,
       request_id,
     });
   }

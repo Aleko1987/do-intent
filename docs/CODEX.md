@@ -67,6 +67,19 @@ Invoke-RestMethod -Method Post -Uri "https://do-intent-web.onrender.com/track" -
 } | ConvertTo-Json)
 ```
 
+DB gating smoke tests (curl):
+```bash
+# DB disabled => stored:false
+ENABLE_DB=false curl -sS -X POST "http://localhost:4000/track" \
+  -H "Content-Type: application/json" \
+  -d '{"event":"page_view","session_id":"00000000-0000-0000-0000-000000000000","anonymous_id":"11111111-1111-1111-1111-111111111111","url":"/pricing","timestamp":"2024-01-01T00:00:00Z"}'
+
+# DB enabled but bad creds => stored:false reason:"db_error"
+ENABLE_DB=true DATABASE_URL="postgres://bad:bad@127.0.0.1:5999/bad" curl -sS -X POST "http://localhost:4000/track" \
+  -H "Content-Type: application/json" \
+  -d '{"event":"page_view","session_id":"00000000-0000-0000-0000-000000000000","anonymous_id":"11111111-1111-1111-1111-111111111111","url":"/pricing","timestamp":"2024-01-01T00:00:00Z"}'
+```
+
 ---
 
 ### POST /identify
