@@ -9,11 +9,21 @@ interface HealthResponse {
 export const health = api<void, HealthResponse>(
   { expose: true, method: "GET", path: "/health" },
   async (): Promise<HealthResponse> => {
-    return {
-      ok: true,
-      service: "do-intent",
-      ts: new Date().toISOString(),
-    };
+    return buildHealthResponse();
   }
 );
 
+export const ready = api<void, HealthResponse>(
+  { expose: true, method: "GET", path: "/ready" },
+  async (): Promise<HealthResponse> => {
+    return buildHealthResponse();
+  }
+);
+
+const buildHealthResponse = (): HealthResponse => {
+  return {
+    ok: true,
+    service: "do-intent",
+    ts: new Date().toISOString(),
+  };
+};
