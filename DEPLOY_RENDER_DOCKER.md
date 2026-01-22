@@ -38,6 +38,10 @@ If this is the first time using GHCR for this repository:
 - **Branch**: Not applicable for image deployments
 - **Instance Type**: Select based on your needs (Free tier available)
 
+### Entrypoint Reminder (do-intent-web)
+
+`do-intent-web` should run the Docker image built by Encore (from `backend/`). The image already includes the correct entrypoint for the backend service graph, so do **not** set a custom start command or point it at a frontend server. If you see `/track` 404s, double-check that the Render service is using the GHCR image and not the deprecated `render.yaml` Node start command.
+
 ### 4. Set Environment Variables
 
 Add the following environment variables in the Render dashboard:
