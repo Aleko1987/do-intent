@@ -63,7 +63,7 @@ interface AcceptedResponse {
 }
 
 interface ErrorResponse {
-  code: "invalid_argument" | "unauthorized" | "internal";
+  code: "invalid_argument" | "unauthorized" | "internal" | "missing_secret";
   message: string;
   details?: Record<string, string>;
   request_id: string;
@@ -79,6 +79,11 @@ interface NormalizedPayload {
 
 function makeRequestId(): string {
   return uuidv4();
+}
+
+function getRequestId(req: RawRequest): string {
+  const headerId = getHeader(req, "x-request-id");
+  return headerId && headerId.trim().length > 0 ? headerId : makeRequestId();
 }
 
 function isDbEnabled(): boolean {
@@ -135,11 +140,39 @@ function getApiKeyFromHeaders(req: RawRequest): {
   return { key: null, source: null };
 }
 
-function checkApiKey(req: RawRequest): { ok: true; source: string | null } | {
+function resolveIngestApiKey(): {
+  value: string | null;
+  source: "encore" | "env" | null;
+  hadSecretError: boolean;
+} {
+  let encoreKey: string | null = null;
+  let hadSecretError = false;
+
+  try {
+    encoreKey = IngestApiKey();
+  } catch {
+    hadSecretError = true;
+  }
+
+  if (encoreKey) {
+    return { value: encoreKey, source: "encore", hadSecretError };
+  }
+
+  const envKey = process.env.INGEST_API_KEY || process.env.IngestApiKey || null;
+  if (envKey) {
+    return { value: envKey, source: "env", hadSecretError };
+  }
+
+  return { value: null, source: null, hadSecretError };
+}
+
+function checkApiKey(
+  req: RawRequest,
+  expectedKey: string | null
+): { ok: true; source: string | null } | {
   ok: false;
   message: string;
 } {
-  const expectedKey = IngestApiKey();
   const { key: headerKey, source } = getApiKeyFromHeaders(req);
 
   if (!headerKey) {
@@ -373,187 +406,230 @@ async function handleIngestIntentEvent(
   req: RawRequest,
   resp: RawResponse
 ): Promise<void> {
-  const request_id = makeRequestId();
-  const envFlags = {
-    enable_db: isDbEnabled(),
-    has_database_url: hasDatabaseConfig(),
-    has_ingest_key: Boolean(IngestApiKey()),
-  };
+  const request_id = getRequestId(req);
+  const envKeys = [
+    "ENCORE_SECRET_IngestApiKey",
+    "INGEST_API_KEY",
+    "IngestApiKey",
+    "ENCORE_SECRET_ClerkSecretKey",
+    "CLERK_SECRET_KEY",
+    "ClerkSecretKey",
+  ];
+  const presentEnvKeys = envKeys.filter((key) => Boolean(process.env[key]));
 
   applyCorsHeaders(resp, req);
-  console.info("[ingest] request received", {
-    request_id,
-    env: envFlags,
-  });
 
-  const authCheck = checkApiKey(req);
-  if (!authCheck.ok) {
-    console.info("[ingest] unauthorized", {
-      request_id,
-      db_write_attempted: false,
-    });
-    sendJson(resp, 401, {
-      code: "unauthorized",
-      message: authCheck.message,
-      request_id,
-    });
-    return;
-  }
-
-  if (authCheck.source) {
-    console.info(`[ingest] authenticated via ${authCheck.source} header`, {
-      request_id,
-    });
-  }
-
-  const originCheck = checkOrigin(getHeader(req, "origin"), getHeader(req, "referer"));
-  if (!originCheck.ok) {
-    console.info("[ingest] unauthorized origin", {
-      request_id,
-      db_write_attempted: false,
-    });
-    sendJson(resp, 401, {
-      code: "unauthorized",
-      message: originCheck.message,
-      request_id,
-    });
-    return;
-  }
-
-  let payload: IngestIntentEventPayload;
   try {
-    const body = await readJsonBody(req);
-    if (typeof body !== "object" || body === null) {
-      sendJson(resp, 400, {
-        code: "invalid_argument",
-        message: "body must be a JSON object",
-        details: { body: "body must be a JSON object" },
+    const ingestKey = resolveIngestApiKey();
+    const envFlags = {
+      enable_db: isDbEnabled(),
+      has_database_url: hasDatabaseConfig(),
+      has_ingest_key: Boolean(ingestKey.value),
+      ingest_secret_error: ingestKey.hadSecretError,
+      ingest_key_source: ingestKey.source,
+    };
+
+    console.info("[ingest] request received", {
+      request_id,
+      method: req.method,
+      path: req.url,
+      env: envFlags,
+      env_keys_present: presentEnvKeys,
+    });
+
+    if (!ingestKey.value) {
+      console.error("[ingest] ingest api key not configured", {
+        request_id,
+        had_secret_error: ingestKey.hadSecretError,
+        env_keys_present: presentEnvKeys,
+      });
+      sendJson(resp, 500, {
+        code: "missing_secret",
+        message: "Ingest API key is not configured",
         request_id,
       });
       return;
     }
-    payload = body as IngestIntentEventPayload;
-  } catch (error) {
-    sendJson(resp, 400, {
-      code: "invalid_argument",
-      message: "body must be valid JSON",
-      details: { body: "invalid JSON" },
-      request_id,
-    });
-    return;
-  }
 
-  const { normalized, errors } = validatePayload(payload);
-  if (Object.keys(errors).length > 0) {
-    console.info("[ingest] validation failed", {
-      request_id,
-      db_write_attempted: false,
-    });
-    sendJson(resp, 400, {
-      code: "invalid_argument",
-      message: "invalid request payload",
-      details: errors,
-      request_id,
-    });
-    return;
-  }
+    const authCheck = checkApiKey(req, ingestKey.value);
+    if (!authCheck.ok) {
+      console.info("[ingest] unauthorized", {
+        request_id,
+        db_write_attempted: false,
+      });
+      sendJson(resp, authCheck.message.includes("missing") ? 401 : 403, {
+        code: "unauthorized",
+        message: authCheck.message,
+        request_id,
+      });
+      return;
+    }
 
-  if (!envFlags.enable_db || !envFlags.has_database_url) {
-    console.info("[ingest] DB disabled; accepted without persistence", {
-      request_id,
-      db_write_attempted: false,
-    });
-    sendJson(resp, 202, {
-      ok: true,
-      stored: false,
-      reason: "db_disabled",
-      message: "event accepted but not persisted",
-      request_id,
-    });
-    return;
-  }
+    if (authCheck.source) {
+      console.info(`[ingest] authenticated via ${authCheck.source} header`, {
+        request_id,
+      });
+    }
 
-  let dbWriteAttempted = false;
-  try {
-    dbWriteAttempted = true;
+    const originCheck = checkOrigin(getHeader(req, "origin"), getHeader(req, "referer"));
+    if (!originCheck.ok) {
+      console.info("[ingest] unauthorized origin", {
+        request_id,
+        db_write_attempted: false,
+      });
+      sendJson(resp, 401, {
+        code: "unauthorized",
+        message: originCheck.message,
+        request_id,
+      });
+      return;
+    }
 
-    if (normalized.lead_id) {
-      const lead = await db.queryRow<{ id: string }>`
-        SELECT id FROM marketing_leads WHERE id = ${normalized.lead_id}
-      `;
-
-      if (!lead) {
+    let payload: IngestIntentEventPayload;
+    try {
+      const body = await readJsonBody(req);
+      if (typeof body !== "object" || body === null) {
         sendJson(resp, 400, {
           code: "invalid_argument",
-          message: "lead not found",
-          details: { lead_id: "lead not found" },
+          message: "body must be a JSON object",
+          details: { body: "body must be a JSON object" },
           request_id,
         });
         return;
       }
+      payload = body as IngestIntentEventPayload;
+    } catch (error) {
+      sendJson(resp, 400, {
+        code: "invalid_argument",
+        message: "body must be valid JSON",
+        details: { body: "invalid JSON" },
+        request_id,
+      });
+      return;
     }
 
-    const rule = await db.queryRow<{ points: number }>`
-      SELECT points FROM scoring_rules
-      WHERE event_type = ${normalized.event_type} AND is_active = true
-      LIMIT 1
-    `;
+    const { normalized, errors } = validatePayload(payload);
+    if (Object.keys(errors).length > 0) {
+      console.info("[ingest] validation failed", {
+        request_id,
+        db_write_attempted: false,
+      });
+      sendJson(resp, 400, {
+        code: "invalid_argument",
+        message: "invalid request payload",
+        details: errors,
+        request_id,
+      });
+      return;
+    }
 
-    const eventValue = rule?.points || 0;
+    if (!envFlags.enable_db || !envFlags.has_database_url) {
+      console.info("[ingest] DB disabled; accepted without persistence", {
+        request_id,
+        db_write_attempted: false,
+      });
+      sendJson(resp, 202, {
+        ok: true,
+        stored: false,
+        reason: "db_disabled",
+        message: "event accepted but not persisted",
+        request_id,
+      });
+      return;
+    }
 
-    const event = await db.queryRow<IntentEvent>`
-      INSERT INTO intent_events (
-        lead_id,
-        event_type,
-        event_source,
-        event_value,
-        metadata,
-        occurred_at,
-        created_at
-      ) VALUES (
-        ${normalized.lead_id},
-        ${normalized.event_type},
-        ${normalized.event_source},
-        ${eventValue},
-        ${JSON.stringify(normalized.metadata)},
-        ${normalized.occurred_at},
-        now()
-      )
-      RETURNING *
-    `;
+    let dbWriteAttempted = false;
+    try {
+      dbWriteAttempted = true;
 
-    if (!event) {
-      console.error("[ingest] Failed to create event", { request_id });
+      if (normalized.lead_id) {
+        const lead = await db.queryRow<{ id: string }>`
+          SELECT id FROM marketing_leads WHERE id = ${normalized.lead_id}
+        `;
+
+        if (!lead) {
+          sendJson(resp, 400, {
+            code: "invalid_argument",
+            message: "lead not found",
+            details: { lead_id: "lead not found" },
+            request_id,
+          });
+          return;
+        }
+      }
+
+      const rule = await db.queryRow<{ points: number }>`
+        SELECT points FROM scoring_rules
+        WHERE event_type = ${normalized.event_type} AND is_active = true
+        LIMIT 1
+      `;
+
+      const eventValue = rule?.points || 0;
+
+      const event = await db.queryRow<IntentEvent>`
+        INSERT INTO intent_events (
+          lead_id,
+          event_type,
+          event_source,
+          event_value,
+          metadata,
+          occurred_at,
+          created_at
+        ) VALUES (
+          ${normalized.lead_id},
+          ${normalized.event_type},
+          ${normalized.event_source},
+          ${eventValue},
+          ${JSON.stringify(normalized.metadata)},
+          ${normalized.occurred_at},
+          now()
+        )
+        RETURNING *
+      `;
+
+      if (!event) {
+        console.error("[ingest] Failed to create event", { request_id });
+        sendJson(resp, 500, {
+          code: "internal",
+          message: "db_error",
+          request_id,
+        });
+        return;
+      }
+
+      await autoScoreEvent(event.id);
+
+      console.info("[ingest] event stored", {
+        request_id,
+        db_write_attempted: dbWriteAttempted,
+      });
+
+      sendJson(resp, 200, {
+        event_id: event.id,
+        lead_id: event.lead_id,
+        scored: true,
+        request_id,
+      });
+    } catch (error) {
+      console.error("[ingest] db error", {
+        request_id,
+        db_write_attempted: dbWriteAttempted,
+        error,
+      });
       sendJson(resp, 500, {
         code: "internal",
         message: "db_error",
         request_id,
       });
-      return;
     }
-
-    await autoScoreEvent(event.id);
-
-    console.info("[ingest] event stored", {
-      request_id,
-      db_write_attempted: dbWriteAttempted,
-    });
-
-    sendJson(resp, 200, {
-      event_id: event.id,
-      lead_id: event.lead_id,
-      scored: true,
-      request_id,
-    });
   } catch (error) {
-    console.error("[ingest] db error", {
+    console.error("[ingest] unexpected error", {
       request_id,
-      db_write_attempted: dbWriteAttempted,
       error,
     });
     sendJson(resp, 500, {
       code: "internal",
-      message: "db_error",
+      message: "an internal error occurred",
       request_id,
     });
   }
