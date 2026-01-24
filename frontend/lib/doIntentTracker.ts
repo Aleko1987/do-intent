@@ -29,8 +29,6 @@ interface TrackerConfig {
   debug?: boolean;
 }
 
-const DEFAULT_RENDER_BASE = 'https://do-intent-web.onrender.com';
-
 let config: TrackerConfig = {
   apiBase: '',
   debug: false,
@@ -75,7 +73,7 @@ function getApiBaseUrl(): string {
     }
   }
 
-  return DEFAULT_RENDER_BASE;
+  return '';
 }
 
 /**
