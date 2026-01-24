@@ -1,11 +1,8 @@
 import { api, RawRequest, RawResponse } from "encore.dev/api";
-import { secret } from "encore.dev/config";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/db";
 import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
-
-export const IngestApiKey = secret("IngestApiKey");
 
 // Parse allowed origins from environment
 function getAllowedOrigins(): string[] {
@@ -123,12 +120,8 @@ function parseBearerToken(value: string | undefined): string | null {
 
 function getApiKeyFromHeaders(req: RawRequest): {
   key: string | null;
-  source: "x-do-intent-key" | "x-ingest-api-key" | "authorization" | null;
+  source: "x-ingest-api-key" | "authorization" | null;
 } {
-  const doIntentKey = getHeader(req, "x-do-intent-key");
-  if (doIntentKey) {
-    return { key: doIntentKey, source: "x-do-intent-key" };
-  }
   const ingestKey = getHeader(req, "x-ingest-api-key");
   if (ingestKey) {
     return { key: ingestKey, source: "x-ingest-api-key" };
@@ -142,43 +135,64 @@ function getApiKeyFromHeaders(req: RawRequest): {
 
 function resolveIngestApiKey(): {
   value: string | null;
+  hasSecret: boolean;
+  hasEnvFallback: boolean;
   source: "encore" | "env" | null;
-  hadSecretError: boolean;
 } {
-  let encoreKey: string | null = null;
-  let hadSecretError = false;
-
-  try {
-    encoreKey = IngestApiKey();
-  } catch {
-    hadSecretError = true;
-  }
-
+  const encoreKey = process.env.ENCORE_SECRET_IngestApiKey || null;
   if (encoreKey) {
-    return { value: encoreKey, source: "encore", hadSecretError };
+    return {
+      value: encoreKey,
+      hasSecret: true,
+      hasEnvFallback: Boolean(process.env.INGEST_API_KEY),
+      source: "encore",
+    };
   }
 
-  const envKey = process.env.INGEST_API_KEY || process.env.IngestApiKey || null;
+  const envKey = process.env.INGEST_API_KEY || null;
   if (envKey) {
-    return { value: envKey, source: "env", hadSecretError };
+    return {
+      value: envKey,
+      hasSecret: false,
+      hasEnvFallback: true,
+      source: "env",
+    };
   }
 
-  return { value: null, source: null, hadSecretError };
+  return {
+    value: null,
+    hasSecret: Boolean(process.env.ENCORE_SECRET_IngestApiKey),
+    hasEnvFallback: Boolean(process.env.INGEST_API_KEY),
+    source: null,
+  };
 }
 
 function checkApiKey(
   req: RawRequest,
   expectedKey: string | null
-): { ok: true; source: string | null } | {
+): {
+  ok: true;
+  source: string | null;
+  headerReceived: boolean;
+} | {
   ok: false;
   message: string;
+  headerReceived: boolean;
+  details: Record<string, string>;
 } {
   const { key: headerKey, source } = getApiKeyFromHeaders(req);
+  const headerReceived = Boolean(headerKey);
 
   if (!headerKey) {
     return {
       ok: false,
-      message: "missing x-do-intent-key or x-ingest-api-key header",
+      message:
+        "missing x-ingest-api-key header or Authorization bearer token",
+      headerReceived,
+      details: {
+        header: "x-ingest-api-key",
+        authorization: "Bearer <key>",
+      },
     };
   }
 
@@ -186,10 +200,15 @@ function checkApiKey(
     return {
       ok: false,
       message: "invalid ingest api key",
+      headerReceived,
+      details: {
+        header: "x-ingest-api-key",
+        authorization: "Bearer <key>",
+      },
     };
   }
 
-  return { ok: true, source };
+  return { ok: true, source, headerReceived };
 }
 
 // Checks origin allowlist
@@ -251,7 +270,7 @@ function applyCorsHeaders(resp: RawResponse, req: RawRequest): void {
   resp.setHeader("Access-Control-Allow-Origin", getCorsOrigin(req));
   resp.setHeader(
     "Access-Control-Allow-Headers",
-    "content-type, x-do-intent-key, x-ingest-api-key, authorization"
+    "content-type, x-ingest-api-key, authorization"
   );
   resp.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   resp.setHeader("Vary", "Origin");
@@ -407,41 +426,34 @@ async function handleIngestIntentEvent(
   resp: RawResponse
 ): Promise<void> {
   const request_id = getRequestId(req);
-  const envKeys = [
-    "ENCORE_SECRET_IngestApiKey",
-    "INGEST_API_KEY",
-    "IngestApiKey",
-    "ENCORE_SECRET_ClerkSecretKey",
-    "CLERK_SECRET_KEY",
-    "ClerkSecretKey",
-  ];
-  const presentEnvKeys = envKeys.filter((key) => Boolean(process.env[key]));
-
   applyCorsHeaders(resp, req);
 
   try {
     const ingestKey = resolveIngestApiKey();
+    const authProbe = getApiKeyFromHeaders(req);
     const envFlags = {
       enable_db: isDbEnabled(),
       has_database_url: hasDatabaseConfig(),
-      has_ingest_key: Boolean(ingestKey.value),
-      ingest_secret_error: ingestKey.hadSecretError,
       ingest_key_source: ingestKey.source,
     };
+
+    console.info("[ingest] auth config", {
+      request_id,
+      has_ingest_secret: ingestKey.hasSecret,
+      has_ingest_env_fallback: ingestKey.hasEnvFallback,
+      header_received: Boolean(authProbe.key),
+    });
 
     console.info("[ingest] request received", {
       request_id,
       method: req.method,
       path: req.url,
       env: envFlags,
-      env_keys_present: presentEnvKeys,
     });
 
     if (!ingestKey.value) {
       console.error("[ingest] ingest api key not configured", {
         request_id,
-        had_secret_error: ingestKey.hadSecretError,
-        env_keys_present: presentEnvKeys,
       });
       sendJson(resp, 500, {
         code: "missing_secret",
@@ -457,9 +469,10 @@ async function handleIngestIntentEvent(
         request_id,
         db_write_attempted: false,
       });
-      sendJson(resp, authCheck.message.includes("missing") ? 401 : 403, {
+      sendJson(resp, 401, {
         code: "unauthorized",
         message: authCheck.message,
+        details: authCheck.details,
         request_id,
       });
       return;
