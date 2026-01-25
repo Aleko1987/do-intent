@@ -22,6 +22,7 @@ export function resolveIngestApiKey(): string | null {
     "ENCORE_SECRET_IngestApiKey",
     "ENCORE_SECRET_INGEST_API_KEY",
     "INGEST_API_KEY",
+    "IngestApiKey",
   ]);
 }
 
