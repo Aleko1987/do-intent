@@ -139,17 +139,38 @@ function resolveIngestApiKey(): {
   hasEnvFallback: boolean;
   source: "encore" | "env" | null;
 } {
-  const encoreKey = process.env.ENCORE_SECRET_IngestApiKey || null;
-  if (encoreKey) {
+  // Helper to safely get and trim env var, treating empty/whitespace as missing
+  const getEnvVar = (key: string): string | null => {
+    const value = process.env[key];
+    if (!value) {
+      return null;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+
+  // Check in order: camel case Encore secret, all caps Encore secret, then env fallback
+  const encoreKeyCamel = getEnvVar("ENCORE_SECRET_IngestApiKey");
+  if (encoreKeyCamel) {
     return {
-      value: encoreKey,
+      value: encoreKeyCamel,
       hasSecret: true,
-      hasEnvFallback: Boolean(process.env.INGEST_API_KEY),
+      hasEnvFallback: Boolean(getEnvVar("INGEST_API_KEY")),
       source: "encore",
     };
   }
 
-  const envKey = process.env.INGEST_API_KEY || null;
+  const encoreKeyCaps = getEnvVar("ENCORE_SECRET_INGEST_API_KEY");
+  if (encoreKeyCaps) {
+    return {
+      value: encoreKeyCaps,
+      hasSecret: true,
+      hasEnvFallback: Boolean(getEnvVar("INGEST_API_KEY")),
+      source: "encore",
+    };
+  }
+
+  const envKey = getEnvVar("INGEST_API_KEY");
   if (envKey) {
     return {
       value: envKey,
@@ -159,10 +180,15 @@ function resolveIngestApiKey(): {
     };
   }
 
+  // No key found - check if any Encore secret variant exists for diagnostics
+  const hasAnyEncoreSecret = Boolean(
+    getEnvVar("ENCORE_SECRET_IngestApiKey") || getEnvVar("ENCORE_SECRET_INGEST_API_KEY")
+  );
+
   return {
     value: null,
-    hasSecret: Boolean(process.env.ENCORE_SECRET_IngestApiKey),
-    hasEnvFallback: Boolean(process.env.INGEST_API_KEY),
+    hasSecret: hasAnyEncoreSecret,
+    hasEnvFallback: Boolean(getEnvVar("INGEST_API_KEY")),
     source: null,
   };
 }
