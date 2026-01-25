@@ -109,14 +109,6 @@ function getHeader(req: RawRequest, name: string): string | undefined {
   return value;
 }
 
-function getApiKeyFromHeaders(req: RawRequest): {
-  key: string | null;
-  source: "x-ingest-api-key" | null;
-} {
-  const ingestKey = parseOptionalString(getHeader(req, "x-ingest-api-key"));
-  return ingestKey ? { key: ingestKey, source: "x-ingest-api-key" } : { key: null, source: null };
-}
-
 function constantTimeEquals(a: string, b: string): boolean {
   const aBuf = Buffer.from(a);
   const bBuf = Buffer.from(b);
@@ -132,7 +124,7 @@ function constantTimeEquals(a: string, b: string): boolean {
 
 function checkApiKey(
   req: RawRequest,
-  expectedKey: string | null
+  expectedKey: string
 ): {
   ok: true;
   source: string | null;
@@ -143,10 +135,11 @@ function checkApiKey(
   headerReceived: boolean;
   details: Record<string, string>;
 } {
-  const { key: headerKey, source } = getApiKeyFromHeaders(req);
-  const headerReceived = Boolean(headerKey);
+  const incomingHeader = getHeader(req, "x-ingest-api-key");
+  const headerKey = (incomingHeader ?? "").trim();
+  const headerReceived = headerKey.length > 0;
 
-  if (!headerKey) {
+  if (!headerReceived) {
     return {
       ok: false,
       message: "missing x-ingest-api-key header",
@@ -157,7 +150,7 @@ function checkApiKey(
     };
   }
 
-  if (expectedKey && !constantTimeEquals(headerKey.trim(), expectedKey.trim())) {
+  if (!constantTimeEquals(headerKey, expectedKey)) {
     return {
       ok: false,
       message: "invalid ingest api key",
@@ -168,7 +161,7 @@ function checkApiKey(
     };
   }
 
-  return { ok: true, source, headerReceived };
+  return { ok: true, source: "x-ingest-api-key", headerReceived };
 }
 
 // Checks origin allowlist
@@ -390,9 +383,11 @@ async function handleIngestIntentEvent(
 
   try {
     const ingestKey = resolveIngestApiKey();
+    const isProduction = process.env.NODE_ENV === "production";
     const envFlags = {
       enable_db: isDbEnabled(),
       has_database_url: hasDatabaseConfig(),
+      is_production: isProduction,
     };
 
     console.info("[ingest] request received", {
@@ -402,7 +397,7 @@ async function handleIngestIntentEvent(
       env: envFlags,
     });
 
-    if (!ingestKey) {
+    if (isProduction && !ingestKey) {
       console.error("[ingest] ingest api key not configured", {
         request_id,
       });
@@ -414,25 +409,27 @@ async function handleIngestIntentEvent(
       return;
     }
 
-    const authCheck = checkApiKey(req, ingestKey);
-    if (!authCheck.ok) {
-      console.info("[ingest] unauthorized", {
-        request_id,
-        db_write_attempted: false,
-      });
-      sendJson(resp, 401, {
-        code: "unauthorized",
-        message: authCheck.message,
-        details: authCheck.details,
-        request_id,
-      });
-      return;
-    }
+    if (ingestKey) {
+      const authCheck = checkApiKey(req, ingestKey);
+      if (!authCheck.ok) {
+        console.info("[ingest] unauthorized", {
+          request_id,
+          db_write_attempted: false,
+        });
+        sendJson(resp, 401, {
+          code: "unauthorized",
+          message: authCheck.message,
+          details: authCheck.details,
+          request_id,
+        });
+        return;
+      }
 
-    if (authCheck.source) {
-      console.info(`[ingest] authenticated via ${authCheck.source} header`, {
-        request_id,
-      });
+      if (authCheck.source) {
+        console.info(`[ingest] authenticated via ${authCheck.source} header`, {
+          request_id,
+        });
+      }
     }
 
     const originCheck = checkOrigin(getHeader(req, "origin"), getHeader(req, "referer"));
