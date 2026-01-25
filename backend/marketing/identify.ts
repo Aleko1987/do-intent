@@ -1,9 +1,7 @@
 import { api, Header, APIError } from "encore.dev/api";
-import { secret } from "encore.dev/config";
 import { db } from "../db/db";
+import { resolveIngestApiKey } from "../internal/env_secrets";
 import type { MarketingLead } from "./types";
-
-export const IngestApiKey = secret("IngestApiKey");
 
 // Parse allowed origins from environment
 function getAllowedOrigins(): string[] {
@@ -31,19 +29,19 @@ interface IdentifyResponse {
 
 // Checks API key from header
 function checkApiKey(headerKey: string | undefined): void {
-  const expectedKey = IngestApiKey();
+  const expectedKey = resolveIngestApiKey();
   const isProduction = process.env.NODE_ENV === "production";
 
   if (isProduction) {
     if (!expectedKey) {
-      throw APIError.internal("IngestApiKey secret is required in production");
+      throw APIError.internal("Ingest API key is required in production");
     }
-    if (!headerKey || headerKey !== expectedKey) {
+    if (!headerKey || headerKey.trim() !== expectedKey) {
       throw APIError.unauthenticated("missing or invalid x-do-intent-key header");
     }
   } else {
     // In dev, enforce if secret is set, but allow if not set
-    if (expectedKey && (!headerKey || headerKey !== expectedKey)) {
+    if (expectedKey && (!headerKey || headerKey.trim() !== expectedKey)) {
       throw APIError.unauthenticated("missing or invalid x-do-intent-key header");
     }
   }
@@ -186,4 +184,3 @@ export const identify = api<IdentifyRequest, IdentifyResponse>(
     };
   }
 );
-

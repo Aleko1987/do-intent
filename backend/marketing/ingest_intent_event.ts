@@ -1,12 +1,10 @@
 import { api, RawRequest, RawResponse } from "encore.dev/api";
-import { secret } from "encore.dev/config";
 import { timingSafeEqual } from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/db";
+import { resolveIngestApiKey } from "../internal/env_secrets";
 import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
-
-const IngestApiKeySecret = secret("IngestApiKey");
 
 // Parse allowed origins from environment
 function getAllowedOrigins(): string[] {
@@ -117,68 +115,6 @@ function getApiKeyFromHeaders(req: RawRequest): {
 } {
   const ingestKey = parseOptionalString(getHeader(req, "x-ingest-api-key"));
   return ingestKey ? { key: ingestKey, source: "x-ingest-api-key" } : { key: null, source: null };
-}
-
-function resolveIngestApiKey(): {
-  value: string | null;
-  hasSecret: boolean;
-  hasEnvFallback: boolean;
-  hasLocalSecret: boolean;
-  source: "encore" | "env" | "local_secret" | null;
-} {
-  // Helper to safely get and trim env var, treating empty/whitespace as missing
-  const getEnvVar = (key: string): string | null => {
-    const value = process.env[key];
-    if (!value) {
-      return null;
-    }
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  };
-
-  const isLocalEncoreDev = process.env.ENCORE_RUNTIME === "local";
-
-  // Check in order: Encore secret, legacy env fallback, then local Encore secret
-  const encoreKeyCamel = getEnvVar("ENCORE_SECRET_IngestApiKey");
-  if (encoreKeyCamel) {
-    return {
-      value: encoreKeyCamel,
-      hasSecret: true,
-      hasEnvFallback: Boolean(getEnvVar("INGEST_API_KEY")),
-      hasLocalSecret: Boolean(isLocalEncoreDev && IngestApiKeySecret()),
-      source: "encore",
-    };
-  }
-
-  const envKey = getEnvVar("INGEST_API_KEY");
-  if (envKey) {
-    return {
-      value: envKey,
-      hasSecret: false,
-      hasEnvFallback: true,
-      hasLocalSecret: Boolean(isLocalEncoreDev && IngestApiKeySecret()),
-      source: "env",
-    };
-  }
-
-  const localSecretValue = isLocalEncoreDev ? IngestApiKeySecret() : null;
-  if (localSecretValue) {
-    return {
-      value: localSecretValue,
-      hasSecret: false,
-      hasEnvFallback: false,
-      hasLocalSecret: true,
-      source: "local_secret",
-    };
-  }
-
-  return {
-    value: null,
-    hasSecret: Boolean(getEnvVar("ENCORE_SECRET_IngestApiKey")),
-    hasEnvFallback: Boolean(getEnvVar("INGEST_API_KEY")),
-    hasLocalSecret: Boolean(localSecretValue),
-    source: null,
-  };
 }
 
 function constantTimeEquals(a: string, b: string): boolean {
@@ -454,20 +390,10 @@ async function handleIngestIntentEvent(
 
   try {
     const ingestKey = resolveIngestApiKey();
-    const authProbe = getApiKeyFromHeaders(req);
     const envFlags = {
       enable_db: isDbEnabled(),
       has_database_url: hasDatabaseConfig(),
-      ingest_key_source: ingestKey.source,
     };
-
-    console.info("[ingest] auth config", {
-      request_id,
-      has_ingest_secret: ingestKey.hasSecret,
-      has_ingest_env_fallback: ingestKey.hasEnvFallback,
-      has_ingest_local_secret: ingestKey.hasLocalSecret,
-      header_received: Boolean(authProbe.key),
-    });
 
     console.info("[ingest] request received", {
       request_id,
@@ -476,24 +402,19 @@ async function handleIngestIntentEvent(
       env: envFlags,
     });
 
-    if (!ingestKey.value) {
+    if (!ingestKey) {
       console.error("[ingest] ingest api key not configured", {
         request_id,
       });
       sendJson(resp, 500, {
         code: "missing_secret",
         message: "Ingest API key is not configured",
-        details: {
-          checked_env_vars: "ENCORE_SECRET_IngestApiKey, INGEST_API_KEY",
-          checked_local_secret: "secret(IngestApiKey) (local Encore dev only)",
-          local_encore_dev: String(process.env.ENCORE_RUNTIME === "local"),
-        },
         request_id,
       });
       return;
     }
 
-    const authCheck = checkApiKey(req, ingestKey.value);
+    const authCheck = checkApiKey(req, ingestKey);
     if (!authCheck.ok) {
       console.info("[ingest] unauthorized", {
         request_id,
