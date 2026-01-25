@@ -1,17 +1,8 @@
-import { api, Header, APIError, RawRequest, RawResponse } from "encore.dev/api";
-import { secret } from "encore.dev/config";
+import { api, RawRequest, RawResponse } from "encore.dev/api";
+import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/db";
 import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
-
-export const IngestApiKey = secret("IngestApiKey");
-
-// Log required environment variable keys presence in production
-if (process.env.NODE_ENV === "production") {
-  const requiredKeys = ["ENCORE_SECRET_INGEST_API_KEY"];
-  const presentKeys = requiredKeys.filter(key => !!process.env[key]);
-  console.log(`[ingest] Required env keys present: ${presentKeys.join(", ")}`);
-}
 
 // Parse allowed origins from environment
 function getAllowedOrigins(): string[] {
@@ -19,7 +10,10 @@ function getAllowedOrigins(): string[] {
   if (!origins) {
     return [];
   }
-  return origins.split(",").map((o) => o.trim()).filter((o) => o.length > 0);
+  return origins
+    .split(",")
+    .map((o) => o.trim())
+    .filter((o) => o.length > 0);
 }
 
 // Whitelist of allowed event types
@@ -34,17 +28,12 @@ const ALLOWED_EVENT_TYPES = [
   "identify",
 ];
 
-interface IngestIntentEventRequest {
-  "x-do-intent-key"?: Header<"x-do-intent-key">;
-  "x-ingest-api-key"?: Header<"x-ingest-api-key">;
-  "authorization"?: Header<"authorization">;
-  "origin"?: Header<"origin">;
-  "referer"?: Header<"referer">;
+interface IngestIntentEventPayload {
   event_source?: string;
-  event_type: string;
+  event_type?: string;
   occurred_at?: string;
-  lead_id?: string; // Optional; required if anonymous_id is not provided
-  anonymous_id?: string; // Optional; required if lead_id is not provided
+  lead_id?: string;
+  anonymous_id?: string;
   url?: string;
   path?: string;
   referrer?: string;
@@ -59,99 +48,65 @@ interface IngestIntentEventResponse {
   event_id: string;
   lead_id: string | null;
   scored: boolean;
+  request_id: string;
 }
 
-// Validates and normalizes the request
-function validateAndNormalize(req: IngestIntentEventRequest): {
+interface AcceptedResponse {
+  ok: true;
+  stored: false;
+  reason: "db_disabled";
+  message: string;
+  request_id: string;
+}
+
+interface ErrorResponse {
+  code: "invalid_argument" | "unauthorized" | "internal" | "missing_secret";
+  message: string;
+  details?: Record<string, string>;
+  request_id: string;
+}
+
+interface NormalizedPayload {
   event_type: string;
   event_source: string;
   occurred_at: string;
   lead_id: string | null;
   metadata: Record<string, any>;
-} {
-  // Validate that either lead_id or anonymous_id is provided
-  if (!req.lead_id && !req.anonymous_id) {
-    throw APIError.invalidArgument("either lead_id or anonymous_id is required");
-  }
-  
-  // Validate lead_id format if provided
-  if (req.lead_id && typeof req.lead_id !== "string") {
-    throw APIError.invalidArgument("lead_id must be a UUID string");
-  }
-  
-  // Validate anonymous_id format if provided
-  if (req.anonymous_id && typeof req.anonymous_id !== "string") {
-    throw APIError.invalidArgument("anonymous_id must be a string");
-  }
-
-  // Validate event_type
-  if (!req.event_type || typeof req.event_type !== "string") {
-    throw new Error("event_type is required and must be a string");
-  }
-  if (!ALLOWED_EVENT_TYPES.includes(req.event_type)) {
-    throw new Error(`event_type must be one of: ${ALLOWED_EVENT_TYPES.join(", ")}`);
-  }
-
-  // Normalize event_source (default to "website")
-  const event_source = req.event_source || "website";
-
-  // Normalize occurred_at (default to now)
-  const occurred_at = req.occurred_at || new Date().toISOString();
-
-  // Build metadata object
-  const metadata: Record<string, any> = {
-    ...(req.metadata || {}),
-  };
-
-  // Add optional fields to metadata if provided
-  if (req.anonymous_id) {
-    metadata.anonymous_id = req.anonymous_id;
-  }
-  if (req.url) {
-    metadata.url = req.url;
-  }
-  if (req.path) {
-    metadata.path = req.path;
-  }
-  if (req.referrer) {
-    metadata.referrer = req.referrer;
-  }
-  if (req.utm_source) {
-    metadata.utm_source = req.utm_source;
-  }
-  if (req.utm_medium) {
-    metadata.utm_medium = req.utm_medium;
-  }
-  if (req.utm_campaign) {
-    metadata.utm_campaign = req.utm_campaign;
-  }
-  if (req.utm_content) {
-    metadata.utm_content = req.utm_content;
-  }
-
-  // Normalize empty strings to null in metadata
-  for (const key in metadata) {
-    if (metadata[key] === "") {
-      metadata[key] = null;
-    }
-  }
-
-  // Clamp metadata size (16kb limit)
-  const metadataStr = JSON.stringify(metadata);
-  if (metadataStr.length > 16 * 1024) {
-    throw new Error("metadata exceeds 16kb limit");
-  }
-
-  return {
-    event_type,
-    event_source,
-    occurred_at,
-    lead_id: req.lead_id || null,
-    metadata,
-  };
 }
 
-// Checks API key from header
+function makeRequestId(): string {
+  return uuidv4();
+}
+
+function getRequestId(req: RawRequest): string {
+  const headerId = getHeader(req, "x-request-id");
+  return headerId && headerId.trim().length > 0 ? headerId : makeRequestId();
+}
+
+function isDbEnabled(): boolean {
+  return (process.env.ENABLE_DB || "").toLowerCase() === "true";
+}
+
+function hasDatabaseConfig(): boolean {
+  if (process.env.DATABASE_URL) {
+    return true;
+  }
+  return Boolean(
+    process.env.DATABASE_USER &&
+      process.env.DATABASE_PASSWORD &&
+      process.env.DATABASE_HOSTPORT &&
+      process.env.DATABASE_NAME
+  );
+}
+
+function getHeader(req: RawRequest, name: string): string | undefined {
+  const value = req.headers[name.toLowerCase()];
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+  return value;
+}
+
 function parseBearerToken(value: string | undefined): string | null {
   if (!value) {
     return null;
@@ -163,58 +118,109 @@ function parseBearerToken(value: string | undefined): string | null {
   return token;
 }
 
-function getApiKeyFromHeaders(req: IngestIntentEventRequest): {
-  key: string | undefined;
-  source: "x-do-intent-key" | "x-ingest-api-key" | "authorization" | null;
+function getApiKeyFromHeaders(req: RawRequest): {
+  key: string | null;
+  source: "x-ingest-api-key" | "authorization" | null;
 } {
-  if (req["x-do-intent-key"]) {
-    return { key: req["x-do-intent-key"], source: "x-do-intent-key" };
+  const ingestKey = getHeader(req, "x-ingest-api-key");
+  if (ingestKey) {
+    return { key: ingestKey, source: "x-ingest-api-key" };
   }
-  if (req["x-ingest-api-key"]) {
-    return { key: req["x-ingest-api-key"], source: "x-ingest-api-key" };
-  }
-  const bearer = parseBearerToken(req.authorization);
+  const bearer = parseBearerToken(getHeader(req, "authorization"));
   if (bearer) {
     return { key: bearer, source: "authorization" };
   }
-  return { key: undefined, source: null };
+  return { key: null, source: null };
 }
 
-function checkApiKey(req: IngestIntentEventRequest): void {
-  const expectedKey = IngestApiKey();
-  const isProduction = process.env.NODE_ENV === "production";
-  const { key: headerKey, source } = getApiKeyFromHeaders(req);
-
-  if (isProduction) {
-    if (!expectedKey) {
-      throw APIError.internal("IngestApiKey secret is required in production");
-    }
-    if (!headerKey || headerKey !== expectedKey) {
-      throw APIError.unauthenticated("missing or invalid API key - expected x-do-intent-key, x-ingest-api-key, or Authorization Bearer header");
-    }
-    if (source) {
-      console.info(`[ingest] Authenticated via ${source} header`);
-    }
-  } else {
-    // In dev, enforce if secret is set, but allow if not set
-    if (expectedKey && (!headerKey || headerKey !== expectedKey)) {
-      throw APIError.unauthenticated("missing or invalid API key - expected x-do-intent-key, x-ingest-api-key, or Authorization Bearer header");
-    }
-    if (expectedKey && source) {
-      console.info(`[ingest] Authenticated via ${source} header`);
-    }
+function resolveIngestApiKey(): {
+  value: string | null;
+  hasSecret: boolean;
+  hasEnvFallback: boolean;
+  source: "encore" | "env" | null;
+} {
+  const encoreKey = process.env.ENCORE_SECRET_IngestApiKey || null;
+  if (encoreKey) {
+    return {
+      value: encoreKey,
+      hasSecret: true,
+      hasEnvFallback: Boolean(process.env.INGEST_API_KEY),
+      source: "encore",
+    };
   }
+
+  const envKey = process.env.INGEST_API_KEY || null;
+  if (envKey) {
+    return {
+      value: envKey,
+      hasSecret: false,
+      hasEnvFallback: true,
+      source: "env",
+    };
+  }
+
+  return {
+    value: null,
+    hasSecret: Boolean(process.env.ENCORE_SECRET_IngestApiKey),
+    hasEnvFallback: Boolean(process.env.INGEST_API_KEY),
+    source: null,
+  };
+}
+
+function checkApiKey(
+  req: RawRequest,
+  expectedKey: string | null
+): {
+  ok: true;
+  source: string | null;
+  headerReceived: boolean;
+} | {
+  ok: false;
+  message: string;
+  headerReceived: boolean;
+  details: Record<string, string>;
+} {
+  const { key: headerKey, source } = getApiKeyFromHeaders(req);
+  const headerReceived = Boolean(headerKey);
+
+  if (!headerKey) {
+    return {
+      ok: false,
+      message:
+        "missing x-ingest-api-key header or Authorization bearer token",
+      headerReceived,
+      details: {
+        header: "x-ingest-api-key",
+        authorization: "Bearer <key>",
+      },
+    };
+  }
+
+  if (expectedKey && headerKey !== expectedKey) {
+    return {
+      ok: false,
+      message: "invalid ingest api key",
+      headerReceived,
+      details: {
+        header: "x-ingest-api-key",
+        authorization: "Bearer <key>",
+      },
+    };
+  }
+
+  return { ok: true, source, headerReceived };
 }
 
 // Checks origin allowlist
-function checkOrigin(origin: string | undefined, referer: string | undefined): void {
+function checkOrigin(origin: string | undefined, referer: string | undefined): {
+  ok: true;
+} | {
+  ok: false;
+  message: string;
+} {
   const allowedOrigins = getAllowedOrigins();
   if (allowedOrigins.length === 0) {
-    // If no allowlist configured, allow localhost in dev, otherwise allow all
-    if (process.env.NODE_ENV !== "production") {
-      return; // Allow all in dev if no allowlist
-    }
-    return; // In production without allowlist, allow all (admin's choice)
+    return { ok: true };
   }
 
   // Extract hostname from Origin or Referer
@@ -237,19 +243,19 @@ function checkOrigin(origin: string | undefined, referer: string | undefined): v
   }
 
   if (!hostname) {
-    // No valid origin/referer, reject if allowlist is set
-    throw APIError.permissionDenied("origin or referer header required");
+    return { ok: false, message: "origin or referer header required" };
   }
 
   // Check if hostname matches any allowed origin
   const isAllowed = allowedOrigins.some((allowed) => {
-    // Exact match or subdomain match
-    return hostname === allowed || hostname!.endsWith(`.${allowed}`);
+    return hostname === allowed || hostname.endsWith(`.${allowed}`);
   });
 
   if (!isAllowed) {
-    throw APIError.permissionDenied(`origin ${hostname} not in allowlist`);
+    return { ok: false, message: `origin ${hostname} not in allowlist` };
   }
+
+  return { ok: true };
 }
 
 function getCorsOrigin(req: RawRequest): string {
@@ -264,103 +270,404 @@ function applyCorsHeaders(resp: RawResponse, req: RawRequest): void {
   resp.setHeader("Access-Control-Allow-Origin", getCorsOrigin(req));
   resp.setHeader(
     "Access-Control-Allow-Headers",
-    "content-type, x-do-intent-key, x-ingest-api-key, authorization"
+    "content-type, x-ingest-api-key, authorization"
   );
   resp.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   resp.setHeader("Vary", "Origin");
 }
 
-async function handleIngestIntentEvent(
-  req: IngestIntentEventRequest
-): Promise<IngestIntentEventResponse> {
-  // Check API key
-  checkApiKey(req);
+async function readJsonBody(req: RawRequest): Promise<unknown> {
+  let raw = "";
+  for await (const chunk of req) {
+    raw += chunk.toString();
+  }
 
-  // Check origin allowlist
-  checkOrigin(req.origin, req.referer);
+  if (!raw) {
+    return {};
+  }
 
-  const normalized = validateAndNormalize(req);
+  return JSON.parse(raw);
+}
 
-  // Verify lead exists if lead_id is provided
-  if (normalized.lead_id) {
-    const lead = await db.queryRow<{ id: string }>`
-      SELECT id FROM marketing_leads WHERE id = ${normalized.lead_id}
-    `;
+function sendJson(
+  resp: RawResponse,
+  status: number,
+  payload: IngestIntentEventResponse | AcceptedResponse | ErrorResponse
+): void {
+  resp.statusCode = status;
+  resp.setHeader("Content-Type", "application/json");
+  resp.end(JSON.stringify(payload));
+}
 
-    if (!lead) {
-      throw APIError.notFound("lead not found");
+function parseOptionalString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function validatePayload(
+  payload: IngestIntentEventPayload
+): { normalized: NormalizedPayload; errors: Record<string, string> } {
+  const errors: Record<string, string> = {};
+
+  const eventType = parseOptionalString(payload.event_type);
+  if (!eventType) {
+    errors.event_type = "event_type is required";
+  } else if (!ALLOWED_EVENT_TYPES.includes(eventType)) {
+    errors.event_type = `event_type must be one of: ${ALLOWED_EVENT_TYPES.join(", ")}`;
+  }
+
+  const eventSource = parseOptionalString(payload.event_source) ?? "website";
+
+  let occurredAt = payload.occurred_at ?? null;
+  if (occurredAt === "") {
+    occurredAt = null;
+  }
+  if (occurredAt !== null && typeof occurredAt !== "string") {
+    errors.occurred_at = "occurred_at must be an ISO string";
+  } else if (typeof occurredAt === "string") {
+    const parsed = new Date(occurredAt);
+    if (Number.isNaN(parsed.getTime())) {
+      errors.occurred_at = "occurred_at must be a valid ISO string";
     }
   }
 
-  // Get scoring rule for event_value (optional, for backward compatibility)
-  const rule = await db.queryRow<{ points: number }>`
-    SELECT points FROM scoring_rules
-    WHERE event_type = ${normalized.event_type} AND is_active = true
-    LIMIT 1
-  `;
-
-  const eventValue = rule?.points || 0;
-
-  // Insert event
-  const event = await db.queryRow<IntentEvent>`
-    INSERT INTO intent_events (
-      lead_id,
-      event_type,
-      event_source,
-      event_value,
-      metadata,
-      occurred_at,
-      created_at
-    ) VALUES (
-      ${normalized.lead_id},
-      ${normalized.event_type},
-      ${normalized.event_source},
-      ${eventValue},
-      ${JSON.stringify(normalized.metadata)},
-      ${normalized.occurred_at},
-      now()
-    )
-    RETURNING *
-  `;
-
-  if (!event) {
-    throw new Error("Failed to create event");
+  const leadId = parseOptionalString(payload.lead_id);
+  const anonymousId = parseOptionalString(payload.anonymous_id);
+  if (!leadId && !anonymousId) {
+    errors.lead_id = "lead_id or anonymous_id is required";
   }
 
-  // Auto-score the event
-  try {
-    await autoScoreEvent(event.id);
-  } catch (error) {
-    console.error("[ingest] autoscore failed (non-fatal)", {
-      request_id: undefined,
-      event_id: event.id,
-      error,
-    });
+  if (payload.lead_id && typeof payload.lead_id !== "string") {
+    errors.lead_id = "lead_id must be a string";
+  }
+  if (payload.anonymous_id && typeof payload.anonymous_id !== "string") {
+    errors.anonymous_id = "anonymous_id must be a string";
+  }
+
+  const url = parseOptionalString(payload.url);
+  const path = parseOptionalString(payload.path);
+  if (!url && !path) {
+    errors.url = "url or path is required";
+  }
+
+  if (payload.url && typeof payload.url !== "string") {
+    errors.url = "url must be a string";
+  }
+  if (payload.path && typeof payload.path !== "string") {
+    errors.path = "path must be a string";
+  }
+
+  if (payload.event_source && typeof payload.event_source !== "string") {
+    errors.event_source = "event_source must be a string";
+  }
+
+  let metadata: Record<string, any> = {};
+  if (payload.metadata !== undefined) {
+    if (payload.metadata && typeof payload.metadata === "object") {
+      metadata = { ...payload.metadata };
+    } else {
+      errors.metadata = "metadata must be an object";
+    }
+  }
+
+  if (payload.anonymous_id) {
+    metadata.anonymous_id = payload.anonymous_id;
+  }
+  if (payload.url) {
+    metadata.url = payload.url;
+  }
+  if (payload.path) {
+    metadata.path = payload.path;
+  }
+  if (payload.referrer) {
+    metadata.referrer = payload.referrer;
+  }
+  if (payload.utm_source) {
+    metadata.utm_source = payload.utm_source;
+  }
+  if (payload.utm_medium) {
+    metadata.utm_medium = payload.utm_medium;
+  }
+  if (payload.utm_campaign) {
+    metadata.utm_campaign = payload.utm_campaign;
+  }
+  if (payload.utm_content) {
+    metadata.utm_content = payload.utm_content;
+  }
+
+  for (const key of Object.keys(metadata)) {
+    if (metadata[key] === "") {
+      metadata[key] = null;
+    }
+  }
+
+  const metadataStr = JSON.stringify(metadata);
+  if (metadataStr.length > 16 * 1024) {
+    errors.metadata = "metadata exceeds 16kb limit";
   }
 
   return {
-    event_id: event.id,
-    lead_id: event.lead_id,
-    scored: true,
+    normalized: {
+      event_type: eventType ?? "",
+      event_source: eventSource,
+      occurred_at: occurredAt ?? new Date().toISOString(),
+      lead_id: leadId ?? null,
+      metadata,
+    },
+    errors,
   };
 }
 
+async function handleIngestIntentEvent(
+  req: RawRequest,
+  resp: RawResponse
+): Promise<void> {
+  const request_id = getRequestId(req);
+  applyCorsHeaders(resp, req);
+
+  try {
+    const ingestKey = resolveIngestApiKey();
+    const authProbe = getApiKeyFromHeaders(req);
+    const envFlags = {
+      enable_db: isDbEnabled(),
+      has_database_url: hasDatabaseConfig(),
+      ingest_key_source: ingestKey.source,
+    };
+
+    console.info("[ingest] auth config", {
+      request_id,
+      has_ingest_secret: ingestKey.hasSecret,
+      has_ingest_env_fallback: ingestKey.hasEnvFallback,
+      header_received: Boolean(authProbe.key),
+    });
+
+    console.info("[ingest] request received", {
+      request_id,
+      method: req.method,
+      path: req.url,
+      env: envFlags,
+    });
+
+    if (!ingestKey.value) {
+      console.error("[ingest] ingest api key not configured", {
+        request_id,
+      });
+      sendJson(resp, 500, {
+        code: "missing_secret",
+        message: "Ingest API key is not configured",
+        request_id,
+      });
+      return;
+    }
+
+    const authCheck = checkApiKey(req, ingestKey.value);
+    if (!authCheck.ok) {
+      console.info("[ingest] unauthorized", {
+        request_id,
+        db_write_attempted: false,
+      });
+      sendJson(resp, 401, {
+        code: "unauthorized",
+        message: authCheck.message,
+        details: authCheck.details,
+        request_id,
+      });
+      return;
+    }
+
+    if (authCheck.source) {
+      console.info(`[ingest] authenticated via ${authCheck.source} header`, {
+        request_id,
+      });
+    }
+
+    const originCheck = checkOrigin(getHeader(req, "origin"), getHeader(req, "referer"));
+    if (!originCheck.ok) {
+      console.info("[ingest] unauthorized origin", {
+        request_id,
+        db_write_attempted: false,
+      });
+      sendJson(resp, 401, {
+        code: "unauthorized",
+        message: originCheck.message,
+        request_id,
+      });
+      return;
+    }
+
+    let payload: IngestIntentEventPayload;
+    try {
+      const body = await readJsonBody(req);
+      if (typeof body !== "object" || body === null) {
+        sendJson(resp, 400, {
+          code: "invalid_argument",
+          message: "body must be a JSON object",
+          details: { body: "body must be a JSON object" },
+          request_id,
+        });
+        return;
+      }
+      payload = body as IngestIntentEventPayload;
+    } catch (error) {
+      sendJson(resp, 400, {
+        code: "invalid_argument",
+        message: "body must be valid JSON",
+        details: { body: "invalid JSON" },
+        request_id,
+      });
+      return;
+    }
+
+    const { normalized, errors } = validatePayload(payload);
+    if (Object.keys(errors).length > 0) {
+      console.info("[ingest] validation failed", {
+        request_id,
+        db_write_attempted: false,
+      });
+      sendJson(resp, 400, {
+        code: "invalid_argument",
+        message: "invalid request payload",
+        details: errors,
+        request_id,
+      });
+      return;
+    }
+
+    if (!envFlags.enable_db || !envFlags.has_database_url) {
+      console.info("[ingest] DB disabled; accepted without persistence", {
+        request_id,
+        db_write_attempted: false,
+      });
+      sendJson(resp, 202, {
+        ok: true,
+        stored: false,
+        reason: "db_disabled",
+        message: "event accepted but not persisted",
+        request_id,
+      });
+      return;
+    }
+
+    let dbWriteAttempted = false;
+    try {
+      dbWriteAttempted = true;
+
+      if (normalized.lead_id) {
+        const lead = await db.queryRow<{ id: string }>`
+          SELECT id FROM marketing_leads WHERE id = ${normalized.lead_id}
+        `;
+
+        if (!lead) {
+          sendJson(resp, 400, {
+            code: "invalid_argument",
+            message: "lead not found",
+            details: { lead_id: "lead not found" },
+            request_id,
+          });
+          return;
+        }
+      }
+
+      const rule = await db.queryRow<{ points: number }>`
+        SELECT points FROM scoring_rules
+        WHERE event_type = ${normalized.event_type} AND is_active = true
+        LIMIT 1
+      `;
+
+      const eventValue = rule?.points || 0;
+
+      const event = await db.queryRow<IntentEvent>`
+        INSERT INTO intent_events (
+          lead_id,
+          event_type,
+          event_source,
+          event_value,
+          metadata,
+          occurred_at,
+          created_at
+        ) VALUES (
+          ${normalized.lead_id},
+          ${normalized.event_type},
+          ${normalized.event_source},
+          ${eventValue},
+          ${JSON.stringify(normalized.metadata)},
+          ${normalized.occurred_at},
+          now()
+        )
+        RETURNING *
+      `;
+
+      if (!event) {
+        console.error("[ingest] Failed to create event", { request_id });
+        sendJson(resp, 500, {
+          code: "internal",
+          message: "db_error",
+          request_id,
+        });
+        return;
+      }
+
+      await autoScoreEvent(event.id);
+
+      console.info("[ingest] event stored", {
+        request_id,
+        db_write_attempted: dbWriteAttempted,
+      });
+
+      sendJson(resp, 200, {
+        event_id: event.id,
+        lead_id: event.lead_id,
+        scored: true,
+        request_id,
+      });
+    } catch (error) {
+      console.error("[ingest] db error", {
+        request_id,
+        db_write_attempted: dbWriteAttempted,
+        error,
+      });
+      sendJson(resp, 500, {
+        code: "internal",
+        message: "db_error",
+        request_id,
+      });
+    }
+  } catch (error) {
+    console.error("[ingest] unexpected error", {
+      request_id,
+      error,
+    });
+    sendJson(resp, 500, {
+      code: "internal",
+      message: "an internal error occurred",
+      request_id,
+    });
+  }
+}
+
 // POST endpoint for ingesting intent events from website
-export const ingestIntentEvent = api<IngestIntentEventRequest, IngestIntentEventResponse>(
+export const ingestIntentEvent = api.raw(
   { expose: true, method: "POST", path: "/marketing/ingest-intent-event" },
-  handleIngestIntentEvent
+  (req, resp) => {
+    void handleIngestIntentEvent(req, resp);
+  }
 );
 
-export const ingestIntentEventV1 = api<IngestIntentEventRequest, IngestIntentEventResponse>(
+export const ingestIntentEventV1 = api.raw(
   { expose: true, method: "POST", path: "/api/v1/ingest" },
-  handleIngestIntentEvent
+  (req, resp) => {
+    void handleIngestIntentEvent(req, resp);
+  }
 );
 
 export const ingestIntentEventOptions = api.raw(
   { expose: true, method: "OPTIONS", path: "/marketing/ingest-intent-event" },
   (req, resp) => {
     applyCorsHeaders(resp, req);
-    resp.statusCode = 200;
+    resp.statusCode = 204;
     resp.end();
   }
 );
@@ -369,7 +676,7 @@ export const ingestIntentEventV1Options = api.raw(
   { expose: true, method: "OPTIONS", path: "/api/v1/ingest" },
   (req, resp) => {
     applyCorsHeaders(resp, req);
-    resp.statusCode = 200;
+    resp.statusCode = 204;
     resp.end();
   }
 );
