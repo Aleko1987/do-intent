@@ -76,6 +76,16 @@ interface NormalizedPayload {
   metadata: Record<string, any>;
 }
 
+interface NormalizedDbError {
+  name?: string;
+  message?: string;
+  code?: string;
+  detail?: string;
+  constraint?: string;
+  table?: string;
+  column?: string;
+}
+
 function makeRequestId(): string {
   return uuidv4();
 }
@@ -258,6 +268,48 @@ function parseOptionalString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeDbError(error: unknown): NormalizedDbError {
+  if (!error || typeof error !== "object") {
+    return {};
+  }
+  const err = error as {
+    name?: string;
+    message?: string;
+    code?: string;
+    detail?: string;
+    constraint?: string;
+    table?: string;
+    column?: string;
+  };
+
+  return {
+    name: typeof err.name === "string" ? err.name : undefined,
+    message: typeof err.message === "string" ? err.message : undefined,
+    code: typeof err.code === "string" ? err.code : undefined,
+    detail: typeof err.detail === "string" ? err.detail : undefined,
+    constraint: typeof err.constraint === "string" ? err.constraint : undefined,
+    table: typeof err.table === "string" ? err.table : undefined,
+    column: typeof err.column === "string" ? err.column : undefined,
+  };
+}
+
+async function withDbOperation<T>(
+  operation: string,
+  request_id: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    console.error("[ingest] db operation failed", {
+      request_id,
+      operation,
+      error: normalizeDbError(error),
+    });
+    throw error;
+  }
 }
 
 function validatePayload(
@@ -504,9 +556,11 @@ async function handleIngestIntentEvent(
       dbWriteAttempted = true;
 
       if (normalized.lead_id) {
-        const lead = await db.queryRow<{ id: string }>`
-          SELECT id FROM marketing_leads WHERE id = ${normalized.lead_id}
-        `;
+        const lead = await withDbOperation("lookup_lead", request_id, () =>
+          db.queryRow<{ id: string }>`
+            SELECT id FROM marketing_leads WHERE id = ${normalized.lead_id}
+          `
+        );
 
         if (!lead) {
           sendJson(resp, 400, {
@@ -519,34 +573,42 @@ async function handleIngestIntentEvent(
         }
       }
 
-      const rule = await db.queryRow<{ points: number }>`
-        SELECT points FROM scoring_rules
-        WHERE event_type = ${normalized.event_type} AND is_active = true
-        LIMIT 1
-      `;
+      const rule = await withDbOperation(
+        "lookup_scoring_rule",
+        request_id,
+        () => db.queryRow<{ points: number }>`
+          SELECT points FROM scoring_rules
+          WHERE event_type = ${normalized.event_type} AND is_active = true
+          LIMIT 1
+        `
+      );
 
       const eventValue = rule?.points || 0;
 
-      const event = await db.queryRow<IntentEvent>`
-        INSERT INTO intent_events (
-          lead_id,
-          event_type,
-          event_source,
-          event_value,
-          metadata,
-          occurred_at,
-          created_at
-        ) VALUES (
-          ${normalized.lead_id},
-          ${normalized.event_type},
-          ${normalized.event_source},
-          ${eventValue},
-          ${JSON.stringify(normalized.metadata)},
-          ${normalized.occurred_at},
-          now()
-        )
-        RETURNING *
-      `;
+      const event = await withDbOperation(
+        "insert_intent_event",
+        request_id,
+        () => db.queryRow<IntentEvent>`
+          INSERT INTO intent_events (
+            lead_id,
+            event_type,
+            event_source,
+            event_value,
+            metadata,
+            occurred_at,
+            created_at
+          ) VALUES (
+            ${normalized.lead_id},
+            ${normalized.event_type},
+            ${normalized.event_source},
+            ${eventValue},
+            ${JSON.stringify(normalized.metadata)},
+            ${normalized.occurred_at},
+            now()
+          )
+          RETURNING *
+        `
+      );
 
       if (!event) {
         console.error("[ingest] Failed to create event", { request_id });
@@ -558,7 +620,9 @@ async function handleIngestIntentEvent(
         return;
       }
 
-      await autoScoreEvent(event.id);
+      await withDbOperation("auto_score_event", request_id, () =>
+        autoScoreEvent(event.id)
+      );
 
       console.info("[ingest] event stored", {
         request_id,
@@ -575,7 +639,7 @@ async function handleIngestIntentEvent(
       console.error("[ingest] db error", {
         request_id,
         db_write_attempted: dbWriteAttempted,
-        error,
+        error: normalizeDbError(error),
       });
       sendJson(resp, 500, {
         code: "internal",
@@ -595,6 +659,11 @@ async function handleIngestIntentEvent(
     });
   }
 }
+
+// Sanity check (curl):
+// curl -i -X POST "$BASE_URL/api/v1/ingest" -H "content-type: application/json" \
+//   -H "x-ingest-api-key: $INGEST_API_KEY" \
+//   -d '{"event_type":"page_view","event_source":"website","lead_id":"<lead-id>","url":"https://example.com"}'
 
 // POST endpoint for ingesting intent events from website
 export const ingestIntentEvent = api.raw(
