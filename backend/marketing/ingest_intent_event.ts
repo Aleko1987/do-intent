@@ -1,8 +1,12 @@
 import { api, RawRequest, RawResponse } from "encore.dev/api";
+import { secret } from "encore.dev/config";
+import { timingSafeEqual } from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/db";
 import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
+
+const IngestApiKeySecret = secret("IngestApiKey");
 
 // Parse allowed origins from environment
 function getAllowedOrigins(): string[] {
@@ -107,37 +111,20 @@ function getHeader(req: RawRequest, name: string): string | undefined {
   return value;
 }
 
-function parseBearerToken(value: string | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-  const [scheme, token] = value.split(" ");
-  if (scheme?.toLowerCase() !== "bearer" || !token) {
-    return null;
-  }
-  return token;
-}
-
 function getApiKeyFromHeaders(req: RawRequest): {
   key: string | null;
-  source: "x-ingest-api-key" | "authorization" | null;
+  source: "x-ingest-api-key" | null;
 } {
-  const ingestKey = getHeader(req, "x-ingest-api-key");
-  if (ingestKey) {
-    return { key: ingestKey, source: "x-ingest-api-key" };
-  }
-  const bearer = parseBearerToken(getHeader(req, "authorization"));
-  if (bearer) {
-    return { key: bearer, source: "authorization" };
-  }
-  return { key: null, source: null };
+  const ingestKey = parseOptionalString(getHeader(req, "x-ingest-api-key"));
+  return ingestKey ? { key: ingestKey, source: "x-ingest-api-key" } : { key: null, source: null };
 }
 
 function resolveIngestApiKey(): {
   value: string | null;
   hasSecret: boolean;
   hasEnvFallback: boolean;
-  source: "encore" | "env" | null;
+  hasLocalSecret: boolean;
+  source: "encore" | "env" | "local_secret" | null;
 } {
   // Helper to safely get and trim env var, treating empty/whitespace as missing
   const getEnvVar = (key: string): string | null => {
@@ -149,23 +136,16 @@ function resolveIngestApiKey(): {
     return trimmed.length > 0 ? trimmed : null;
   };
 
-  // Check in order: camel case Encore secret, all caps Encore secret, then env fallback
+  const isLocalEncoreDev = process.env.ENCORE_RUNTIME === "local";
+
+  // Check in order: Encore secret, legacy env fallback, then local Encore secret
   const encoreKeyCamel = getEnvVar("ENCORE_SECRET_IngestApiKey");
   if (encoreKeyCamel) {
     return {
       value: encoreKeyCamel,
       hasSecret: true,
       hasEnvFallback: Boolean(getEnvVar("INGEST_API_KEY")),
-      source: "encore",
-    };
-  }
-
-  const encoreKeyCaps = getEnvVar("ENCORE_SECRET_INGEST_API_KEY");
-  if (encoreKeyCaps) {
-    return {
-      value: encoreKeyCaps,
-      hasSecret: true,
-      hasEnvFallback: Boolean(getEnvVar("INGEST_API_KEY")),
+      hasLocalSecret: Boolean(isLocalEncoreDev && IngestApiKeySecret()),
       source: "encore",
     };
   }
@@ -176,21 +156,42 @@ function resolveIngestApiKey(): {
       value: envKey,
       hasSecret: false,
       hasEnvFallback: true,
+      hasLocalSecret: Boolean(isLocalEncoreDev && IngestApiKeySecret()),
       source: "env",
     };
   }
 
-  // No key found - check if any Encore secret variant exists for diagnostics
-  const hasAnyEncoreSecret = Boolean(
-    getEnvVar("ENCORE_SECRET_IngestApiKey") || getEnvVar("ENCORE_SECRET_INGEST_API_KEY")
-  );
+  const localSecretValue = isLocalEncoreDev ? IngestApiKeySecret() : null;
+  if (localSecretValue) {
+    return {
+      value: localSecretValue,
+      hasSecret: false,
+      hasEnvFallback: false,
+      hasLocalSecret: true,
+      source: "local_secret",
+    };
+  }
 
   return {
     value: null,
-    hasSecret: hasAnyEncoreSecret,
+    hasSecret: Boolean(getEnvVar("ENCORE_SECRET_IngestApiKey")),
     hasEnvFallback: Boolean(getEnvVar("INGEST_API_KEY")),
+    hasLocalSecret: Boolean(localSecretValue),
     source: null,
   };
+}
+
+function constantTimeEquals(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a);
+  const bBuf = Buffer.from(b);
+  if (aBuf.length !== bBuf.length) {
+    const max = Math.max(aBuf.length, bBuf.length);
+    const paddedA = Buffer.concat([aBuf, Buffer.alloc(max - aBuf.length)]);
+    const paddedB = Buffer.concat([bBuf, Buffer.alloc(max - bBuf.length)]);
+    timingSafeEqual(paddedA, paddedB);
+    return false;
+  }
+  return timingSafeEqual(aBuf, bBuf);
 }
 
 function checkApiKey(
@@ -212,24 +213,21 @@ function checkApiKey(
   if (!headerKey) {
     return {
       ok: false,
-      message:
-        "missing x-ingest-api-key header or Authorization bearer token",
+      message: "missing x-ingest-api-key header",
       headerReceived,
       details: {
         header: "x-ingest-api-key",
-        authorization: "Bearer <key>",
       },
     };
   }
 
-  if (expectedKey && headerKey !== expectedKey) {
+  if (expectedKey && !constantTimeEquals(headerKey.trim(), expectedKey.trim())) {
     return {
       ok: false,
       message: "invalid ingest api key",
       headerReceived,
       details: {
         header: "x-ingest-api-key",
-        authorization: "Bearer <key>",
       },
     };
   }
@@ -296,7 +294,7 @@ function applyCorsHeaders(resp: RawResponse, req: RawRequest): void {
   resp.setHeader("Access-Control-Allow-Origin", getCorsOrigin(req));
   resp.setHeader(
     "Access-Control-Allow-Headers",
-    "content-type, x-ingest-api-key, authorization"
+    "content-type, x-ingest-api-key"
   );
   resp.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   resp.setHeader("Vary", "Origin");
@@ -467,6 +465,7 @@ async function handleIngestIntentEvent(
       request_id,
       has_ingest_secret: ingestKey.hasSecret,
       has_ingest_env_fallback: ingestKey.hasEnvFallback,
+      has_ingest_local_secret: ingestKey.hasLocalSecret,
       header_received: Boolean(authProbe.key),
     });
 
@@ -484,6 +483,11 @@ async function handleIngestIntentEvent(
       sendJson(resp, 500, {
         code: "missing_secret",
         message: "Ingest API key is not configured",
+        details: {
+          checked_env_vars: "ENCORE_SECRET_IngestApiKey, INGEST_API_KEY",
+          checked_local_secret: "secret(IngestApiKey) (local Encore dev only)",
+          local_encore_dev: String(process.env.ENCORE_RUNTIME === "local"),
+        },
         request_id,
       });
       return;
