@@ -1,15 +1,17 @@
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import { Header, APIError, Gateway } from "encore.dev/api";
 import { authHandler } from "encore.dev/auth";
-import { secret } from "encore.dev/config";
-
-export const ClerkSecretKey = secret("ClerkSecretKey");
+import { resolveClerkSecretKey } from "../internal/env_secrets";
 
 // Lazy initialization of Clerk client to avoid reading secret at import time
 let clerkClient: ReturnType<typeof createClerkClient> | null = null;
 function getClerkClient() {
   if (!clerkClient) {
-    clerkClient = createClerkClient({ secretKey: ClerkSecretKey() });
+    const secretKey = resolveClerkSecretKey();
+    if (!secretKey) {
+      throw APIError.internal("Clerk secret key is not configured");
+    }
+    clerkClient = createClerkClient({ secretKey });
   }
   return clerkClient;
 }
@@ -32,8 +34,12 @@ export const auth = authHandler<AuthParams, AuthData>(
     }
 
     try {
+      const secretKey = resolveClerkSecretKey();
+      if (!secretKey) {
+        throw APIError.internal("Clerk secret key is not configured");
+      }
       const verifiedToken = await verifyToken(token, {
-        secretKey: ClerkSecretKey(),
+        secretKey,
       });
 
       const user = await getClerkClient().users.getUser(verifiedToken.sub);
