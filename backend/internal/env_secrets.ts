@@ -34,3 +34,12 @@ export function resolveClerkSecretKey(): string | null {
     "ClerkSecretKey",
   ]);
 }
+
+export function resolveDebugKey(): string | null {
+  return resolveFirstEnv([
+    "ENCORE_SECRET_DebugKey",
+    "ENCORE_SECRET_DEBUG_KEY",
+    "DEBUG_KEY",
+    "DebugKey",
+  ]);
+}
