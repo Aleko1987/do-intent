@@ -8,6 +8,12 @@
 - **Purpose**: Health check endpoint guaranteed to be in deployed service graph
 - **No DB dependency**: Returns simple JSON response
 
+### 1.1 Added Healthz Service Endpoint
+- **File**: `backend/health/health.ts`
+- **Path**: `GET /healthz`
+- **Purpose**: Dedicated public health check endpoint for Render/Cloudflare routing
+- **No DB dependency**: Returns simple JSON response
+
 ### 2. Added Ping Endpoint to intent_scorer Service  
 - **File**: `backend/intent_scorer/ping.ts`
 - **Path**: `GET /intent-scorer/ping`
@@ -74,4 +80,3 @@ Once correct base path is determined, test:
 - Both new endpoints (`/health` and `/intent-scorer/ping`) have no database dependencies
 - Encore's internal logging already shows `endpoint="listRules"`, confirming the service is handling requests
 - The 404 errors suggest a path prefix or routing issue, not a service availability issue
-
