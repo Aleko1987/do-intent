@@ -187,5 +187,29 @@ curl -X POST http://localhost:4000/marketing/ingest-intent-event \
 - [GitHub Integration](https://encore.dev/docs/platform/integrations/github)
 - [Encore Cloud Dashboard](https://app.encore.dev)
 
+## PowerShell Smoke Test (Ingest + Events)
+
+```powershell
+$BASE_URL = "http://localhost:4000"
+$INGEST_API_KEY = "your-api-key"
+
+# 1) Health check
+curl "$BASE_URL/healthz"
+
+# 2) Ingest an intent event
+curl "$BASE_URL/api/v1/ingest" `
+  -H "Content-Type: application/json" `
+  -H "x-ingest-api-key: $INGEST_API_KEY" `
+  -d '{
+    "event_type": "page_view",
+    "event_source": "website",
+    "dedupe_key": "ps_smoke_1",
+    "occurred_at": "2024-01-01T00:00:00.000Z",
+    "metadata": { "anonymous_id": "anon-ps-smoke" }
+  }'
+
+# 3) Read events back
+curl "$BASE_URL/api/v1/events?dedupe_key=ps_smoke_1&limit=5"
+```
 
 
