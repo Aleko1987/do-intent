@@ -25,6 +25,18 @@ import { ingestIntentEvent as ingestIntentEvent_handler } from "../../../../mark
 declare const ingestIntentEvent: WithCallOpts<typeof ingestIntentEvent_handler>;
 export { ingestIntentEvent };
 
+import { ingestIntentEventV1 as ingestIntentEventV1_handler } from "../../../../marketing\\ingest_intent_event.js";
+declare const ingestIntentEventV1: WithCallOpts<typeof ingestIntentEventV1_handler>;
+export { ingestIntentEventV1 };
+
+import { ingestIntentEventOptions as ingestIntentEventOptions_handler } from "../../../../marketing\\ingest_intent_event.js";
+declare const ingestIntentEventOptions: WithCallOpts<typeof ingestIntentEventOptions_handler>;
+export { ingestIntentEventOptions };
+
+import { ingestIntentEventV1Options as ingestIntentEventV1Options_handler } from "../../../../marketing\\ingest_intent_event.js";
+declare const ingestIntentEventV1Options: WithCallOpts<typeof ingestIntentEventV1Options_handler>;
+export { ingestIntentEventV1Options };
+
 import { list as list_handler } from "../../../../marketing\\list_leads.js";
 declare const list: WithCallOpts<typeof list_handler>;
 export { list };

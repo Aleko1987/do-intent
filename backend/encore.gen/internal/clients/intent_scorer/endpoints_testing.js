@@ -47,6 +47,28 @@ export async function health(params, opts) {
     return apiCall("intent_scorer", "health", params, opts);
 }
 
+export async function ready(params, opts) {
+    const handler = (await import("../../../../intent_scorer\\health")).ready;
+    registerTestHandler({
+        apiRoute: { service: "intent_scorer", name: "ready", raw: false, handler, streamingRequest: false, streamingResponse: false },
+        middlewares: intent_scorer_service.default.cfg.middlewares || [],
+        endpointOptions: {"expose":true,"auth":false,"isRaw":false,"isStream":false,"tags":[]},
+    });
+
+    return apiCall("intent_scorer", "ready", params, opts);
+}
+
+export async function readyV1(params, opts) {
+    const handler = (await import("../../../../intent_scorer\\health")).readyV1;
+    registerTestHandler({
+        apiRoute: { service: "intent_scorer", name: "readyV1", raw: false, handler, streamingRequest: false, streamingResponse: false },
+        middlewares: intent_scorer_service.default.cfg.middlewares || [],
+        endpointOptions: {"expose":true,"auth":false,"isRaw":false,"isStream":false,"tags":[]},
+    });
+
+    return apiCall("intent_scorer", "readyV1", params, opts);
+}
+
 export async function identify(params, opts) {
     const handler = (await import("../../../../intent_scorer\\identify")).identify;
     registerTestHandler({
@@ -138,12 +160,56 @@ export async function seedDemo(params, opts) {
 export async function track(params, opts) {
     const handler = (await import("../../../../intent_scorer\\track")).track;
     registerTestHandler({
-        apiRoute: { service: "intent_scorer", name: "track", raw: false, handler, streamingRequest: false, streamingResponse: false },
+        apiRoute: { service: "intent_scorer", name: "track", raw: true, handler, streamingRequest: false, streamingResponse: false },
         middlewares: intent_scorer_service.default.cfg.middlewares || [],
-        endpointOptions: {"expose":true,"auth":false,"isRaw":false,"isStream":false,"tags":[]},
+        endpointOptions: {"expose":true,"auth":false,"isRaw":true,"isStream":false,"tags":[]},
     });
 
     return apiCall("intent_scorer", "track", params, opts);
+}
+
+export async function trackOptions(params, opts) {
+    const handler = (await import("../../../../intent_scorer\\track")).trackOptions;
+    registerTestHandler({
+        apiRoute: { service: "intent_scorer", name: "trackOptions", raw: true, handler, streamingRequest: false, streamingResponse: false },
+        middlewares: intent_scorer_service.default.cfg.middlewares || [],
+        endpointOptions: {"expose":true,"auth":false,"isRaw":true,"isStream":false,"tags":[]},
+    });
+
+    return apiCall("intent_scorer", "trackOptions", params, opts);
+}
+
+export async function trackGet(params, opts) {
+    const handler = (await import("../../../../intent_scorer\\track")).trackGet;
+    registerTestHandler({
+        apiRoute: { service: "intent_scorer", name: "trackGet", raw: true, handler, streamingRequest: false, streamingResponse: false },
+        middlewares: intent_scorer_service.default.cfg.middlewares || [],
+        endpointOptions: {"expose":true,"auth":false,"isRaw":true,"isStream":false,"tags":[]},
+    });
+
+    return apiCall("intent_scorer", "trackGet", params, opts);
+}
+
+export async function trackV1(params, opts) {
+    const handler = (await import("../../../../intent_scorer\\track")).trackV1;
+    registerTestHandler({
+        apiRoute: { service: "intent_scorer", name: "trackV1", raw: true, handler, streamingRequest: false, streamingResponse: false },
+        middlewares: intent_scorer_service.default.cfg.middlewares || [],
+        endpointOptions: {"expose":true,"auth":false,"isRaw":true,"isStream":false,"tags":[]},
+    });
+
+    return apiCall("intent_scorer", "trackV1", params, opts);
+}
+
+export async function trackV1Options(params, opts) {
+    const handler = (await import("../../../../intent_scorer\\track")).trackV1Options;
+    registerTestHandler({
+        apiRoute: { service: "intent_scorer", name: "trackV1Options", raw: true, handler, streamingRequest: false, streamingResponse: false },
+        middlewares: intent_scorer_service.default.cfg.middlewares || [],
+        endpointOptions: {"expose":true,"auth":false,"isRaw":true,"isStream":false,"tags":[]},
+    });
+
+    return apiCall("intent_scorer", "trackV1Options", params, opts);
 }
 
 export async function updateRule(params, opts) {

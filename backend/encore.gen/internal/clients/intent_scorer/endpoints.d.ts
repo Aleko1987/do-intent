@@ -21,6 +21,14 @@ import { health as health_handler } from "../../../../intent_scorer\\health.js";
 declare const health: WithCallOpts<typeof health_handler>;
 export { health };
 
+import { ready as ready_handler } from "../../../../intent_scorer\\health.js";
+declare const ready: WithCallOpts<typeof ready_handler>;
+export { ready };
+
+import { readyV1 as readyV1_handler } from "../../../../intent_scorer\\health.js";
+declare const readyV1: WithCallOpts<typeof readyV1_handler>;
+export { readyV1 };
+
 import { identify as identify_handler } from "../../../../intent_scorer\\identify.js";
 declare const identify: WithCallOpts<typeof identify_handler>;
 export { identify };
@@ -56,6 +64,22 @@ export { seedDemo };
 import { track as track_handler } from "../../../../intent_scorer\\track.js";
 declare const track: WithCallOpts<typeof track_handler>;
 export { track };
+
+import { trackOptions as trackOptions_handler } from "../../../../intent_scorer\\track.js";
+declare const trackOptions: WithCallOpts<typeof trackOptions_handler>;
+export { trackOptions };
+
+import { trackGet as trackGet_handler } from "../../../../intent_scorer\\track.js";
+declare const trackGet: WithCallOpts<typeof trackGet_handler>;
+export { trackGet };
+
+import { trackV1 as trackV1_handler } from "../../../../intent_scorer\\track.js";
+declare const trackV1: WithCallOpts<typeof trackV1_handler>;
+export { trackV1 };
+
+import { trackV1Options as trackV1Options_handler } from "../../../../intent_scorer\\track.js";
+declare const trackV1Options: WithCallOpts<typeof trackV1Options_handler>;
+export { trackV1Options };
 
 import { updateRule as updateRule_handler } from "../../../../intent_scorer\\update_rule.js";
 declare const updateRule: WithCallOpts<typeof updateRule_handler>;

@@ -50,12 +50,45 @@ export async function identify(params, opts) {
 export async function ingestIntentEvent(params, opts) {
     const handler = (await import("../../../../marketing\\ingest_intent_event")).ingestIntentEvent;
     registerTestHandler({
-        apiRoute: { service: "marketing", name: "ingestIntentEvent", raw: false, handler, streamingRequest: false, streamingResponse: false },
+        apiRoute: { service: "marketing", name: "ingestIntentEvent", raw: true, handler, streamingRequest: false, streamingResponse: false },
         middlewares: marketing_service.default.cfg.middlewares || [],
-        endpointOptions: {"expose":true,"auth":false,"isRaw":false,"isStream":false,"tags":[]},
+        endpointOptions: {"expose":true,"auth":false,"isRaw":true,"isStream":false,"tags":[]},
     });
 
     return apiCall("marketing", "ingestIntentEvent", params, opts);
+}
+
+export async function ingestIntentEventV1(params, opts) {
+    const handler = (await import("../../../../marketing\\ingest_intent_event")).ingestIntentEventV1;
+    registerTestHandler({
+        apiRoute: { service: "marketing", name: "ingestIntentEventV1", raw: true, handler, streamingRequest: false, streamingResponse: false },
+        middlewares: marketing_service.default.cfg.middlewares || [],
+        endpointOptions: {"expose":true,"auth":false,"isRaw":true,"isStream":false,"tags":[]},
+    });
+
+    return apiCall("marketing", "ingestIntentEventV1", params, opts);
+}
+
+export async function ingestIntentEventOptions(params, opts) {
+    const handler = (await import("../../../../marketing\\ingest_intent_event")).ingestIntentEventOptions;
+    registerTestHandler({
+        apiRoute: { service: "marketing", name: "ingestIntentEventOptions", raw: true, handler, streamingRequest: false, streamingResponse: false },
+        middlewares: marketing_service.default.cfg.middlewares || [],
+        endpointOptions: {"expose":true,"auth":false,"isRaw":true,"isStream":false,"tags":[]},
+    });
+
+    return apiCall("marketing", "ingestIntentEventOptions", params, opts);
+}
+
+export async function ingestIntentEventV1Options(params, opts) {
+    const handler = (await import("../../../../marketing\\ingest_intent_event")).ingestIntentEventV1Options;
+    registerTestHandler({
+        apiRoute: { service: "marketing", name: "ingestIntentEventV1Options", raw: true, handler, streamingRequest: false, streamingResponse: false },
+        middlewares: marketing_service.default.cfg.middlewares || [],
+        endpointOptions: {"expose":true,"auth":false,"isRaw":true,"isStream":false,"tags":[]},
+    });
+
+    return apiCall("marketing", "ingestIntentEventV1Options", params, opts);
 }
 
 export async function list(params, opts) {
