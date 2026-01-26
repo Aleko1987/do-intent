@@ -5,6 +5,8 @@ import { db } from "../db/db";
 import { resolveIngestApiKey } from "../internal/env_secrets";
 import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
+import { updateLeadScoring } from "./scoring";
+import { checkAndPushToSales } from "./auto_push";
 
 // Parse allowed origins from environment
 function getAllowedOrigins(): string[] {
@@ -293,6 +295,39 @@ function normalizeDbError(error: unknown): NormalizedDbError {
     table: typeof err.table === "string" ? err.table : undefined,
     column: typeof err.column === "string" ? err.column : undefined,
   };
+}
+
+function isMissingTableError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const err = error as { code?: string };
+  return err.code === "42P01";
+}
+
+async function runOptionalScoringStep<T>(
+  operation: string,
+  request_id: string,
+  fn: () => Promise<T>
+): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (isMissingTableError(error)) {
+      console.info("[ingest] scoring skipped: missing table", {
+        request_id,
+        operation,
+        error: normalizeDbError(error),
+      });
+      return null;
+    }
+    console.error("[ingest] scoring step failed", {
+      request_id,
+      operation,
+      error: normalizeDbError(error),
+    });
+    throw error;
+  }
 }
 
 async function withDbOperation<T>(
@@ -622,12 +657,27 @@ async function handleIngestIntentEvent(
 
       let scored = true;
       try {
-        await withDbOperation("auto_score_event", request_id, () =>
-          autoScoreEvent(event.id)
+        const autoScoreResult = await runOptionalScoringStep(
+          "auto_score_event",
+          request_id,
+          () => autoScoreEvent(event.id)
         );
+        scored = autoScoreResult ?? false;
+        if (event.lead_id) {
+          await runOptionalScoringStep(
+            "update_lead_scoring",
+            request_id,
+            () => updateLeadScoring(event.lead_id)
+          );
+          await runOptionalScoringStep(
+            "check_and_push_to_sales",
+            request_id,
+            () => checkAndPushToSales(event.lead_id)
+          );
+        }
       } catch (error) {
         scored = false;
-        console.error("[ingest] auto score failed", {
+        console.error("[ingest] scoring pipeline failed", {
           request_id,
           error: normalizeDbError(error),
         });

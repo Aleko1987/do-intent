@@ -1,7 +1,16 @@
 import { db } from "../db/db";
+import { tableExists } from "../internal/db";
 import { computeScore } from "./engine";
 
-export async function autoScoreEvent(eventId: string): Promise<void> {
+export async function autoScoreEvent(eventId: string): Promise<boolean> {
+  const hasRulesTable = await tableExists("intent_rules");
+  if (!hasRulesTable) {
+    console.info("[autoscore] skipped: missing table intent_rules", {
+      table: "intent_rules",
+    });
+    return false;
+  }
+
   const event = await db.queryRow<{
     id: string;
     event_type: string;
@@ -15,7 +24,7 @@ export async function autoScoreEvent(eventId: string): Promise<void> {
   `;
 
   if (!event) {
-    return;
+    return false;
   }
 
   const scoreResult = await computeScore({
@@ -47,6 +56,8 @@ export async function autoScoreEvent(eventId: string): Promise<void> {
   if (event.lead_id) {
     await updateLeadRollup(event.lead_id);
   }
+
+  return true;
 }
 
 async function updateLeadRollup(leadId: string): Promise<void> {
