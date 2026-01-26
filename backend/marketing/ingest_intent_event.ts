@@ -620,9 +620,18 @@ async function handleIngestIntentEvent(
         return;
       }
 
-      await withDbOperation("auto_score_event", request_id, () =>
-        autoScoreEvent(event.id)
-      );
+      let scored = true;
+      try {
+        await withDbOperation("auto_score_event", request_id, () =>
+          autoScoreEvent(event.id)
+        );
+      } catch (error) {
+        scored = false;
+        console.error("[ingest] auto score failed", {
+          request_id,
+          error: normalizeDbError(error),
+        });
+      }
 
       console.info("[ingest] event stored", {
         request_id,
@@ -632,7 +641,7 @@ async function handleIngestIntentEvent(
       sendJson(resp, 200, {
         event_id: event.id,
         lead_id: event.lead_id,
-        scored: true,
+        scored,
         request_id,
       });
     } catch (error) {
