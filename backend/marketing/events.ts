@@ -1,6 +1,5 @@
-import { api } from "encore.dev/api";
+import { api, APIError } from "encore.dev/api";
 import { db } from "../db/db";
-import type { IntentEvent } from "./types";
 
 interface EventsQuery {
   limit?: number | string;
@@ -10,12 +9,18 @@ interface EventsQuery {
   since?: string;
 }
 
+interface EventItem {
+  id: string;
+  event_type: string;
+  event_source: string;
+  dedupe_key: string | null;
+  occurred_at: string;
+  metadata: Record<string, unknown>;
+}
+
 interface EventsResponse {
-  items: IntentEvent[];
+  items: EventItem[];
   count: number;
-  limit: number;
-  cursor?: string | null;
-  timing_ms?: number;
 }
 
 function clampLimit(rawLimit: number | string | undefined): number {
@@ -33,29 +38,26 @@ function parseSince(value: string | undefined): string | null {
   }
   const parsed = new Date(value);
   if (Number.isNaN(parsed.valueOf())) {
-    throw new Error("Invalid since timestamp");
+    throw APIError.invalidArgument("since must be a valid ISO timestamp");
   }
   return parsed.toISOString();
 }
 
+// Debug-only verification endpoint for ingest -> DB -> read path.
 export const listEvents = api<EventsQuery, EventsResponse>(
   { expose: true, method: "GET", path: "/api/v1/events" },
   async (params) => {
-    const start = Date.now();
     const limit = clampLimit(params.limit);
     const since = parseSince(params.since);
 
     let query = `
       SELECT
         id,
-        lead_id,
         event_type,
         event_source,
-        event_value,
         dedupe_key,
         metadata,
-        occurred_at,
-        created_at
+        occurred_at
       FROM intent_events
       WHERE 1=1
     `;
@@ -77,8 +79,6 @@ export const listEvents = api<EventsQuery, EventsResponse>(
       const anonIndex = queryParams.length;
       query += ` AND (
         metadata->>'anonymous_id' = $${anonIndex}
-        OR metadata->>'anonymousId' = $${anonIndex}
-        OR metadata->>'anon_id' = $${anonIndex}
       )`;
     }
 
@@ -87,18 +87,15 @@ export const listEvents = api<EventsQuery, EventsResponse>(
       query += ` AND occurred_at >= $${queryParams.length}`;
     }
 
-    query += ` ORDER BY created_at DESC, id DESC`;
+    query += ` ORDER BY occurred_at DESC, id DESC`;
     queryParams.push(limit);
     query += ` LIMIT $${queryParams.length}`;
 
-    const items = await db.rawQueryAll<IntentEvent>(query, ...queryParams);
+    const items = await db.rawQueryAll<EventItem>(query, ...queryParams);
 
     return {
       items,
       count: items.length,
-      limit,
-      cursor: null,
-      timing_ms: Date.now() - start,
     };
   }
 );
