@@ -1,4 +1,4 @@
 import { Service } from "encore.dev/service";
-import "./events";
+import "./list_events";
 
 export default new Service("marketing");
