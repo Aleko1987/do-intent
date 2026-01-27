@@ -38,6 +38,7 @@ interface IngestIntentEventPayload {
   occurred_at?: string;
   lead_id?: string;
   anonymous_id?: string;
+  dedupe_key?: string;
   url?: string;
   path?: string;
   referrer?: string;
@@ -75,6 +76,8 @@ interface NormalizedPayload {
   event_source: string;
   occurred_at: string;
   lead_id: string | null;
+  anonymous_id: string | null;
+  dedupe_key: string | null;
   metadata: Record<string, any>;
 }
 
@@ -375,7 +378,14 @@ function validatePayload(
   }
 
   const leadId = parseOptionalString(payload.lead_id);
-  const anonymousId = parseOptionalString(payload.anonymous_id);
+  const metadataAnonymousId =
+    payload.metadata && typeof payload.metadata === "object"
+      ? parseOptionalString(
+          (payload.metadata as Record<string, unknown>).anonymous_id
+        )
+      : null;
+  const anonymousId =
+    parseOptionalString(payload.anonymous_id) ?? metadataAnonymousId;
   if (!leadId && !anonymousId) {
     errors.lead_id = "lead_id or anonymous_id is required";
   }
@@ -385,6 +395,10 @@ function validatePayload(
   }
   if (payload.anonymous_id && typeof payload.anonymous_id !== "string") {
     errors.anonymous_id = "anonymous_id must be a string";
+  }
+
+  if (payload.dedupe_key && typeof payload.dedupe_key !== "string") {
+    errors.dedupe_key = "dedupe_key must be a string";
   }
 
   const url = parseOptionalString(payload.url);
@@ -413,8 +427,8 @@ function validatePayload(
     }
   }
 
-  if (payload.anonymous_id) {
-    metadata.anonymous_id = payload.anonymous_id;
+  if (anonymousId) {
+    metadata.anonymous_id = anonymousId;
   }
   if (payload.url) {
     metadata.url = payload.url;
@@ -455,6 +469,8 @@ function validatePayload(
       event_source: eventSource,
       occurred_at: occurredAt ?? new Date().toISOString(),
       lead_id: leadId ?? null,
+      anonymous_id: anonymousId,
+      dedupe_key: parseOptionalString(payload.dedupe_key),
       metadata,
     },
     errors,
@@ -626,17 +642,21 @@ async function handleIngestIntentEvent(
         () => db.queryRow<IntentEvent>`
           INSERT INTO intent_events (
             lead_id,
+            anonymous_id,
             event_type,
             event_source,
             event_value,
+            dedupe_key,
             metadata,
             occurred_at,
             created_at
           ) VALUES (
             ${normalized.lead_id},
+            ${normalized.anonymous_id},
             ${normalized.event_type},
             ${normalized.event_source},
             ${eventValue},
+            ${normalized.dedupe_key},
             ${JSON.stringify(normalized.metadata)},
             ${normalized.occurred_at},
             now()
