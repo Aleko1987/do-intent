@@ -13,6 +13,7 @@ interface EventItem {
   id: string;
   event_type: string;
   event_source: string;
+  anonymous_id: string | null;
   dedupe_key: string | null;
   occurred_at: string;
   metadata: Record<string, unknown>;
@@ -55,6 +56,7 @@ export const listEvents = api<EventsQuery, EventsResponse>(
         id,
         event_type,
         event_source,
+        anonymous_id,
         dedupe_key,
         metadata,
         occurred_at
@@ -82,7 +84,8 @@ export const listEvents = api<EventsQuery, EventsResponse>(
       queryParams.push(params.anonymous_id);
       const anonIndex = queryParams.length;
       query += ` AND (
-        metadata->>'anonymous_id' = $${anonIndex}
+        anonymous_id = $${anonIndex}
+        OR metadata->>'anonymous_id' = $${anonIndex}
       )`;
     }
 

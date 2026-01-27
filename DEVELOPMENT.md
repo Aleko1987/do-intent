@@ -32,6 +32,29 @@ npm install -g bun
 
 The backend will be available at the URL shown in your terminal (typically `http://localhost:4000`).
 
+### Database Configuration & Migrations
+
+The backend reads Postgres settings from `DATABASE_URL` (recommended) or the `DATABASE_*` components. For local development, set:
+
+```bash
+export ENABLE_DB=true
+export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/do_intent"
+```
+
+If you point to a remote Postgres (Render/Encore/Neon), ensure SSL is enabled (the backend auto-enables `sslmode=require` for non-local hosts, but you can add it explicitly):
+
+```bash
+export DATABASE_URL="postgresql://user:password@host:5432/dbname?sslmode=require"
+```
+
+Apply SQL migrations to the actual database backing your environment (Render/Encore Postgres for production):
+
+```bash
+for file in backend/db/migrations/*.up.sql; do
+  psql "$DATABASE_URL" -f "$file"
+done
+```
+
 
 
 ### Frontend Setup
@@ -120,8 +143,6 @@ git commit -m "Deploy via GitHub"
 git push origin main
 ```
 
-<<<<<<< HEAD
-=======
 ## Environment Variables
 
 ### Backend
@@ -179,13 +200,34 @@ curl -X POST http://localhost:4000/marketing/ingest-intent-event \
   }'
 ```
 
->>>>>>> 12a6029 (Harden website ingest: identify-first + API key + origin allowlist)
 ## Additional Resources
 
 - [Encore Documentation](https://encore.dev/docs)
 - [Deployment Guide](https://encore.dev/docs/platform/deploy/deploying)
 - [GitHub Integration](https://encore.dev/docs/platform/integrations/github)
 - [Encore Cloud Dashboard](https://app.encore.dev)
+
+## Verification (Ingest + Events)
+
+```bash
+BASE_URL="http://localhost:4000"
+INGEST_API_KEY="your-api-key"
+
+curl "$BASE_URL/api/v1/ingest" \
+  -H "Content-Type: application/json" \
+  -H "x-ingest-api-key: $INGEST_API_KEY" \
+  -d '{
+    "event_type": "page_view",
+    "event_source": "website",
+    "anonymous_id": "anon-dev-smoke",
+    "dedupe_key": "dev_smoke_1",
+    "occurred_at": "2024-01-01T00:00:00.000Z",
+    "metadata": { "page": "pricing" }
+  }'
+
+curl "$BASE_URL/api/v1/events?dedupe_key=dev_smoke_1&limit=5"
+# Expect: count >= 1 and items[0].dedupe_key == "dev_smoke_1" (non-null)
+```
 
 ## PowerShell Smoke Test (Ingest + Events)
 

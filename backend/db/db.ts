@@ -5,6 +5,40 @@ type SqlQuery = { text: string; values: unknown[] };
 let pool: Pool | null = null;
 let warnedMissingConfig = false;
 
+function isLocalHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
+function ensureSslMode(connectionString: string): string {
+  try {
+    const url = new URL(connectionString);
+    const sslmode = url.searchParams.get("sslmode");
+    if (sslmode) {
+      return connectionString;
+    }
+    if (isLocalHostname(url.hostname)) {
+      return connectionString;
+    }
+    url.searchParams.set("sslmode", "require");
+    return url.toString();
+  } catch {
+    return connectionString;
+  }
+}
+
+function shouldUseSsl(connectionString: string): boolean {
+  try {
+    const url = new URL(connectionString);
+    const sslmode = url.searchParams.get("sslmode");
+    if (!sslmode) {
+      return false;
+    }
+    return ["require", "verify-full", "verify-ca"].includes(sslmode);
+  } catch {
+    return false;
+  }
+}
+
 function buildQuery(
   strings: TemplateStringsArray,
   values: unknown[]
@@ -53,7 +87,13 @@ function getPool(): Pool {
       }
       throw new Error("Database not configured");
     }
-    pool = new Pool({ connectionString });
+    const normalizedConnectionString = ensureSslMode(connectionString);
+    pool = new Pool({
+      connectionString: normalizedConnectionString,
+      ssl: shouldUseSsl(normalizedConnectionString)
+        ? { rejectUnauthorized: false }
+        : undefined,
+    });
   }
   return pool;
 }
