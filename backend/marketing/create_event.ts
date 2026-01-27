@@ -10,6 +10,8 @@ interface CreateEventRequest {
   id: string;
   event_type: string;
   event_source: string;
+  anonymous_id?: string;
+  dedupe_key?: string;
   metadata?: Record<string, any>;
   occurred_at?: string;
 }
@@ -20,11 +22,26 @@ interface CreateEventResponse {
   auto_pushed: boolean;
 }
 
+function parseOptionalString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 // Creates an intent event for a lead and triggers scoring.
 export const createEvent = api<CreateEventRequest, CreateEventResponse>(
   { expose: true, method: "POST", path: "/marketing/leads/:id/events", auth: true },
   async (req) => {
     const authData = getAuthData()!;
+    const metadata = { ...(req.metadata ?? {}) };
+    const metadataAnonymousId = parseOptionalString(metadata.anonymous_id);
+    const anonymousId = parseOptionalString(req.anonymous_id) ?? metadataAnonymousId;
+    if (anonymousId) {
+      metadata.anonymous_id = anonymousId;
+    }
+    const dedupeKey = parseOptionalString(req.dedupe_key);
     
     const lead = await db.queryRow<MarketingLead>`
       SELECT * FROM marketing_leads WHERE id = ${req.id} AND owner_user_id = ${authData.userID}
@@ -45,18 +62,22 @@ export const createEvent = api<CreateEventRequest, CreateEventResponse>(
     const event = await db.queryRow<IntentEvent>`
       INSERT INTO intent_events (
         lead_id,
+        anonymous_id,
         event_type,
         event_source,
         event_value,
+        dedupe_key,
         metadata,
         occurred_at,
         created_at
       ) VALUES (
         ${req.id},
+        ${anonymousId},
         ${req.event_type},
         ${req.event_source},
         ${eventValue},
-        ${JSON.stringify(req.metadata || {})},
+        ${dedupeKey},
+        ${JSON.stringify(metadata)},
         ${req.occurred_at || new Date().toISOString()},
         now()
       )

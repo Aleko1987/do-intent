@@ -15,6 +15,7 @@ interface WebhookEventRequest {
   metadata?: Record<string, any>;
   occurred_at?: string;
   dedupe_key?: string;
+  anonymous_id?: string;
 }
 
 interface WebhookEventResponse {
@@ -56,11 +57,25 @@ function normalizeMetadata(metadata: Record<string, any>): Record<string, any> {
   return normalized;
 }
 
+function parseOptionalString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 export const webhookEvent = api<WebhookEventRequest, WebhookEventResponse>(
   { expose: true, method: "POST", path: "/marketing/events" },
   async (req) => {
     const normalizedEventType = normalizeEventType(req.event_type);
     const normalizedMetadata = normalizeMetadata(req.metadata || {});
+    const metadataAnonymousId = parseOptionalString(normalizedMetadata.anonymous_id);
+    const anonymousId =
+      parseOptionalString(req.anonymous_id) ?? metadataAnonymousId;
+    if (anonymousId) {
+      normalizedMetadata.anonymous_id = anonymousId;
+    }
     const eventSource = req.event_source || "webhook";
     
     let lead: MarketingLead | null = null;
@@ -130,6 +145,7 @@ export const webhookEvent = api<WebhookEventRequest, WebhookEventResponse>(
         event = await db.queryRow<IntentEvent>`
           INSERT INTO intent_events (
             lead_id,
+            anonymous_id,
             event_type,
             event_source,
             event_value,
@@ -139,6 +155,7 @@ export const webhookEvent = api<WebhookEventRequest, WebhookEventResponse>(
             created_at
           ) VALUES (
             ${lead.id},
+            ${anonymousId},
             ${normalizedEventType},
             ${eventSource},
             ${eventValue},

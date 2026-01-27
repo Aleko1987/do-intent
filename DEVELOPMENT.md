@@ -210,6 +210,5 @@ curl "$BASE_URL/api/v1/ingest" `
 
 # 3) Read events back
 curl "$BASE_URL/api/v1/events?dedupe_key=ps_smoke_1&limit=5"
-# Expect: count >= 1 and items[0].dedupe_key == "ps_smoke_1"
+# Expect: count >= 1 and items[0].dedupe_key == "ps_smoke_1" (non-null)
 ```
-
