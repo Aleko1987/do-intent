@@ -71,7 +71,11 @@ export const listEvents = api<EventsQuery, EventsResponse>(
 
     if (params.dedupe_key) {
       queryParams.push(params.dedupe_key);
-      query += ` AND dedupe_key = $${queryParams.length}`;
+      const dedupeIndex = queryParams.length;
+      query += ` AND (
+        dedupe_key = $${dedupeIndex}
+        OR metadata->>'dedupe_key' = $${dedupeIndex}
+      )`;
     }
 
     if (params.anonymous_id) {

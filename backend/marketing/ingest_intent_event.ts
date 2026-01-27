@@ -378,18 +378,20 @@ function validatePayload(
   }
 
   const leadId = parseOptionalString(payload.lead_id);
+  const payloadAnonymousId = parseOptionalString(payload.anonymous_id);
   const metadataAnonymousId =
     payload.metadata && typeof payload.metadata === "object"
       ? parseOptionalString(
           (payload.metadata as Record<string, unknown>).anonymous_id
         )
       : null;
+  const payloadDedupeKey = parseOptionalString(payload.dedupe_key);
   const metadataDedupeKey =
     payload.metadata && typeof payload.metadata === "object"
       ? parseOptionalString((payload.metadata as Record<string, unknown>).dedupe_key)
       : null;
-  const anonymousId =
-    parseOptionalString(payload.anonymous_id) ?? metadataAnonymousId;
+  const anonymousId = payloadAnonymousId ?? metadataAnonymousId ?? null;
+  const dedupeKey = payloadDedupeKey ?? metadataDedupeKey ?? null;
   if (!leadId && !anonymousId) {
     errors.lead_id = "lead_id or anonymous_id is required";
   }
@@ -474,7 +476,7 @@ function validatePayload(
       occurred_at: occurredAt ?? new Date().toISOString(),
       lead_id: leadId ?? null,
       anonymous_id: anonymousId,
-      dedupe_key: parseOptionalString(payload.dedupe_key) ?? metadataDedupeKey,
+      dedupe_key: dedupeKey,
       metadata,
     },
     errors,
