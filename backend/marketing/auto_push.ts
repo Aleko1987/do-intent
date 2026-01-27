@@ -91,16 +91,20 @@ export async function checkAndPushToSales(leadId: string): Promise<AutoPushResul
   await db.exec`
     INSERT INTO intent_events (
       lead_id,
+      anonymous_id,
       event_type,
       event_source,
       event_value,
+      dedupe_key,
       metadata,
       occurred_at
     ) VALUES (
       ${leadId},
+      ${null},
       'auto_pushed_to_sales',
       'system',
       0,
+      ${null},
       ${JSON.stringify({ customer_id: customerId.id })},
       now()
     )
