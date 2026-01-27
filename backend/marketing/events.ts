@@ -1,4 +1,5 @@
 import { api, APIError } from "encore.dev/api";
+import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/db";
 
 interface EventsQuery {
@@ -60,6 +61,7 @@ function clampOffset(rawOffset: number | string | undefined): number {
 export const listEvents = api<EventsQuery, EventsResponse>(
   { expose: true, method: "GET", path: "/api/v1/events" },
   async (params) => {
+    const request_id = uuidv4();
     const limit = clampLimit(params.limit);
     const offset = clampOffset(params.offset);
     const since = parseSince(params.since);
@@ -123,11 +125,22 @@ export const listEvents = api<EventsQuery, EventsResponse>(
     queryParams.push(limit);
     query += ` LIMIT $${queryParams.length}`;
 
-    const rows = await db.rawQueryAll<EventItem>(query, ...queryParams);
+    try {
+      const rows = await db.rawQueryAll<EventItem>(query, ...queryParams);
 
-    return {
-      items: rows,
-      count: rows.length,
-    };
+      return {
+        items: rows,
+        count: rows.length,
+      };
+    } catch (err: any) {
+      const errCode = err?.code || "unknown";
+      const errMessage = err?.message || String(err);
+      console.error(`[events] Error in /api/v1/events handler`, {
+        request_id,
+        err_code: errCode,
+        err_message: errMessage,
+      });
+      throw err;
+    }
   }
 );
