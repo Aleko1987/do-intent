@@ -203,9 +203,10 @@ curl "$BASE_URL/api/v1/ingest" `
   -d '{
     "event_type": "page_view",
     "event_source": "website",
+    "anonymous_id": "anon-ps-smoke",
     "dedupe_key": "ps_smoke_1",
     "occurred_at": "2024-01-01T00:00:00.000Z",
-    "metadata": { "anonymous_id": "anon-ps-smoke" }
+    "metadata": { "page": "pricing" }
   }'
 
 # 3) Read events back
