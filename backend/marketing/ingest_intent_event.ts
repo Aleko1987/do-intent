@@ -652,6 +652,7 @@ async function handleIngestIntentEvent(
             event_type,
             event_source,
             event_value,
+            dedupe_key,
             metadata,
             occurred_at,
             created_at
@@ -661,6 +662,7 @@ async function handleIngestIntentEvent(
             ${normalized.event_type},
             ${normalized.event_source},
             ${eventValue},
+            ${normalized.dedupe_key},
             ${JSON.stringify(normalized.metadata)},
             ${normalized.occurred_at},
             now()
@@ -688,15 +690,16 @@ async function handleIngestIntentEvent(
         );
         scored = autoScoreResult ?? false;
         if (event.lead_id) {
+          const leadId = event.lead_id;
           await runOptionalScoringStep(
             "update_lead_scoring",
             request_id,
-            () => updateLeadScoring(event.lead_id)
+            () => updateLeadScoring(leadId)
           );
           await runOptionalScoringStep(
             "check_and_push_to_sales",
             request_id,
-            () => checkAndPushToSales(event.lead_id)
+            () => checkAndPushToSales(leadId)
           );
         }
       } catch (error) {

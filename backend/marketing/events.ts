@@ -3,6 +3,9 @@ import { db } from "../db/db";
 
 interface EventsQuery {
   limit?: number | string;
+  offset?: number | string;
+  lead_id?: string;
+  event_type?: string;
   event_source?: string;
   dedupe_key?: string;
   anonymous_id?: string;
@@ -44,11 +47,21 @@ function parseSince(value: string | undefined): string | null {
   return parsed.toISOString();
 }
 
+function clampOffset(rawOffset: number | string | undefined): number {
+  const parsed =
+    typeof rawOffset === "number" ? rawOffset : parseInt(rawOffset ?? "", 10);
+  if (Number.isNaN(parsed)) {
+    return 0;
+  }
+  return Math.max(parsed, 0);
+}
+
 // Debug-only verification endpoint for ingest -> DB -> read path.
 export const listEvents = api<EventsQuery, EventsResponse>(
   { expose: true, method: "GET", path: "/api/v1/events" },
   async (params) => {
     const limit = clampLimit(params.limit);
+    const offset = clampOffset(params.offset);
     const since = parseSince(params.since);
 
     let query = `
@@ -57,7 +70,7 @@ export const listEvents = api<EventsQuery, EventsResponse>(
         event_type,
         event_source,
         anonymous_id,
-        NULL::text as dedupe_key,
+        dedupe_key,
         metadata,
         occurred_at
       FROM intent_events
@@ -66,6 +79,16 @@ export const listEvents = api<EventsQuery, EventsResponse>(
 
     const queryParams: Array<string | number> = [];
 
+    if (params.lead_id) {
+      queryParams.push(params.lead_id);
+      query += ` AND lead_id = $${queryParams.length}`;
+    }
+
+    if (params.event_type) {
+      queryParams.push(params.event_type);
+      query += ` AND event_type = $${queryParams.length}`;
+    }
+
     if (params.event_source) {
       queryParams.push(params.event_source);
       query += ` AND event_source = $${queryParams.length}`;
@@ -73,9 +96,7 @@ export const listEvents = api<EventsQuery, EventsResponse>(
 
     if (params.dedupe_key) {
       queryParams.push(params.dedupe_key);
-      const dedupeIndex = queryParams.length;
-      // Filter against metadata to stay compatible with schemas missing dedupe_key.
-      query += ` AND metadata->>'dedupe_key' = $${dedupeIndex}`;
+      query += ` AND dedupe_key = $${queryParams.length}`;
     }
 
     if (params.anonymous_id) {
@@ -93,22 +114,20 @@ export const listEvents = api<EventsQuery, EventsResponse>(
     }
 
     query += ` ORDER BY occurred_at DESC, id DESC`;
+    
+    if (offset > 0) {
+      queryParams.push(offset);
+      query += ` OFFSET $${queryParams.length}`;
+    }
+    
     queryParams.push(limit);
     query += ` LIMIT $${queryParams.length}`;
 
     const rows = await db.rawQueryAll<EventItem>(query, ...queryParams);
-    const items = rows.map((row) => ({
-      ...row,
-      dedupe_key:
-        row.dedupe_key ??
-        (typeof row.metadata === "object" && row.metadata
-          ? (row.metadata as { dedupe_key?: string }).dedupe_key ?? null
-          : null),
-    }));
 
     return {
-      items,
-      count: items.length,
+      items: rows,
+      count: rows.length,
     };
   }
 );
