@@ -57,7 +57,7 @@ export const listEvents = api<EventsQuery, EventsResponse>(
         event_type,
         event_source,
         anonymous_id,
-        dedupe_key,
+        NULL::text as dedupe_key,
         metadata,
         occurred_at
       FROM intent_events
@@ -74,10 +74,8 @@ export const listEvents = api<EventsQuery, EventsResponse>(
     if (params.dedupe_key) {
       queryParams.push(params.dedupe_key);
       const dedupeIndex = queryParams.length;
-      query += ` AND (
-        dedupe_key = $${dedupeIndex}
-        OR metadata->>'dedupe_key' = $${dedupeIndex}
-      )`;
+      // Filter against metadata to stay compatible with schemas missing dedupe_key.
+      query += ` AND metadata->>'dedupe_key' = $${dedupeIndex}`;
     }
 
     if (params.anonymous_id) {
@@ -98,7 +96,15 @@ export const listEvents = api<EventsQuery, EventsResponse>(
     queryParams.push(limit);
     query += ` LIMIT $${queryParams.length}`;
 
-    const items = await db.rawQueryAll<EventItem>(query, ...queryParams);
+    const rows = await db.rawQueryAll<EventItem>(query, ...queryParams);
+    const items = rows.map((row) => ({
+      ...row,
+      dedupe_key:
+        row.dedupe_key ??
+        (typeof row.metadata === "object" && row.metadata
+          ? (row.metadata as { dedupe_key?: string }).dedupe_key ?? null
+          : null),
+    }));
 
     return {
       items,

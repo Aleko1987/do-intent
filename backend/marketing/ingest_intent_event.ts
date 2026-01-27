@@ -275,6 +275,20 @@ function parseOptionalString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function setMetadataValue(
+  metadata: Record<string, any>,
+  key: string,
+  value: string | null
+): void {
+  if (value === null) {
+    return;
+  }
+  const existing = metadata[key];
+  if (existing === undefined || existing === null || existing === "") {
+    metadata[key] = value;
+  }
+}
+
 function normalizeDbError(error: unknown): NormalizedDbError {
   if (!error || typeof error !== "object") {
     return {};
@@ -433,30 +447,16 @@ function validatePayload(
     }
   }
 
-  if (anonymousId) {
-    metadata.anonymous_id = anonymousId;
-  }
-  if (payload.url) {
-    metadata.url = payload.url;
-  }
-  if (payload.path) {
-    metadata.path = payload.path;
-  }
-  if (payload.referrer) {
-    metadata.referrer = payload.referrer;
-  }
-  if (payload.utm_source) {
-    metadata.utm_source = payload.utm_source;
-  }
-  if (payload.utm_medium) {
-    metadata.utm_medium = payload.utm_medium;
-  }
-  if (payload.utm_campaign) {
-    metadata.utm_campaign = payload.utm_campaign;
-  }
-  if (payload.utm_content) {
-    metadata.utm_content = payload.utm_content;
-  }
+  // Ensure metadata stays stable; only backfill empty keys from payload fields.
+  setMetadataValue(metadata, "anonymous_id", anonymousId);
+  setMetadataValue(metadata, "dedupe_key", payloadDedupeKey);
+  setMetadataValue(metadata, "url", parseOptionalString(payload.url));
+  setMetadataValue(metadata, "path", parseOptionalString(payload.path));
+  setMetadataValue(metadata, "referrer", parseOptionalString(payload.referrer));
+  setMetadataValue(metadata, "utm_source", parseOptionalString(payload.utm_source));
+  setMetadataValue(metadata, "utm_medium", parseOptionalString(payload.utm_medium));
+  setMetadataValue(metadata, "utm_campaign", parseOptionalString(payload.utm_campaign));
+  setMetadataValue(metadata, "utm_content", parseOptionalString(payload.utm_content));
 
   for (const key of Object.keys(metadata)) {
     if (metadata[key] === "") {
@@ -652,7 +652,6 @@ async function handleIngestIntentEvent(
             event_type,
             event_source,
             event_value,
-            dedupe_key,
             metadata,
             occurred_at,
             created_at
@@ -662,7 +661,6 @@ async function handleIngestIntentEvent(
             ${normalized.event_type},
             ${normalized.event_source},
             ${eventValue},
-            ${normalized.dedupe_key},
             ${JSON.stringify(normalized.metadata)},
             ${normalized.occurred_at},
             now()
