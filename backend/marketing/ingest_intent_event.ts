@@ -384,6 +384,10 @@ function validatePayload(
           (payload.metadata as Record<string, unknown>).anonymous_id
         )
       : null;
+  const metadataDedupeKey =
+    payload.metadata && typeof payload.metadata === "object"
+      ? parseOptionalString((payload.metadata as Record<string, unknown>).dedupe_key)
+      : null;
   const anonymousId =
     parseOptionalString(payload.anonymous_id) ?? metadataAnonymousId;
   if (!leadId && !anonymousId) {
@@ -470,7 +474,7 @@ function validatePayload(
       occurred_at: occurredAt ?? new Date().toISOString(),
       lead_id: leadId ?? null,
       anonymous_id: anonymousId,
-      dedupe_key: parseOptionalString(payload.dedupe_key),
+      dedupe_key: parseOptionalString(payload.dedupe_key) ?? metadataDedupeKey,
       metadata,
     },
     errors,

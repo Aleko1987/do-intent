@@ -81,11 +81,23 @@ export const seedDemo = api(
 
           const event = await db.queryRow<{ id: string }>`
             INSERT INTO intent_events (
-              lead_id, event_type, event_source, event_value, 
-              metadata, occurred_at
+              lead_id,
+              anonymous_id,
+              event_type,
+              event_source,
+              event_value,
+              dedupe_key,
+              metadata,
+              occurred_at
             ) VALUES (
-              ${leadId}, ${template.type}, 'demo_seed', 0, 
-              ${JSON.stringify(metadata)}, ${occurredAt.toISOString()}
+              ${leadId},
+              ${null},
+              ${template.type},
+              'demo_seed',
+              0,
+              ${null},
+              ${JSON.stringify(metadata)},
+              ${occurredAt.toISOString()}
             )
             RETURNING id
           `;
