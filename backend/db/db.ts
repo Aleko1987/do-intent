@@ -5,7 +5,7 @@ type SqlQuery = { text: string; values: unknown[] };
 
 // Encore SQLDatabase with migrations configured
 export const encoreDb = new SQLDatabase("do_intent", {
-  migrations: "./migrations",
+  migrations: "./db/migrations",
 });
 
 // Fallback Pool for compatibility with existing code that uses raw queries
