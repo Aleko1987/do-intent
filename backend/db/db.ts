@@ -3,12 +3,47 @@ import { Pool } from "pg";
 
 type SqlQuery = { text: string; values: unknown[] };
 
+// Parse DATABASE_URL to configure external connection if present
+function parseDatabaseUrlForEncore(): {
+  host?: string;
+  port?: number;
+  user?: string;
+  password?: string;
+  database?: string;
+} | null {
+  const dbUrl = process.env.DATABASE_URL;
+  if (!dbUrl) {
+    return null;
+  }
+
+  try {
+    const url = new URL(dbUrl);
+    return {
+      host: url.hostname,
+      port: url.port ? parseInt(url.port, 10) : 5432,
+      user: url.username,
+      password: url.password,
+      database: url.pathname ? url.pathname.replace(/^\//, "") : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Encore SQLDatabase with migrations configured
+// When DATABASE_URL is set, configure external connection to prevent Docker startup.
+// If DATABASE_URL is not set, Encore will use its default local database (requires Docker).
+const dbConfig = parseDatabaseUrlForEncore();
 export const encoreDb = new SQLDatabase("do_intent", {
   migrations: "./migrations",
+  host: dbConfig ? dbConfig.host : undefined,
+  port: dbConfig ? dbConfig.port : undefined,
+  user: dbConfig ? dbConfig.user : undefined,
+  password: dbConfig ? dbConfig.password : undefined,
+  database: dbConfig ? dbConfig.database : undefined,
 });
 
-// Fallback Pool for compatibility with existing code
+// Fallback Pool for compatibility with existing code that uses raw queries
 let pool: Pool | null = null;
 let warnedMissingConfig = false;
 
