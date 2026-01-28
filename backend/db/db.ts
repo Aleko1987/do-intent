@@ -1,10 +1,10 @@
-import { SQLDatabase } from "encore.dev/sql";
+import { SQLDatabase } from "encore.dev/storage/sqldb";
 import { Pool } from "pg";
 
 type SqlQuery = { text: string; values: unknown[] };
 
 // Encore SQLDatabase with migrations configured
-const encoreDb = new SQLDatabase("do_intent", {
+export const encoreDb = new SQLDatabase("do_intent", {
   migrations: "./migrations",
 });
 
