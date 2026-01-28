@@ -1,7 +1,14 @@
+import { SQLDatabase } from "encore.dev/sql";
 import { Pool } from "pg";
 
 type SqlQuery = { text: string; values: unknown[] };
 
+// Encore SQLDatabase with migrations configured
+const encoreDb = new SQLDatabase("do_intent", {
+  migrations: "./migrations",
+});
+
+// Fallback Pool for compatibility with existing code
 let pool: Pool | null = null;
 let warnedMissingConfig = false;
 
