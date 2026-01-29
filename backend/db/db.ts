@@ -1,14 +1,8 @@
-import { SQLDatabase } from "encore.dev/storage/sqldb";
 import { Pool } from "pg";
 
 type SqlQuery = { text: string; values: unknown[] };
 
-// Encore SQLDatabase with migrations configured
-export const encoreDb = new SQLDatabase("do_intent", {
-  migrations: "./db/migrations",
-});
-
-// Fallback Pool for compatibility with existing code that uses raw queries
+// pg Pool for database connections
 let pool: Pool | null = null;
 let warnedMissingConfig = false;
 
@@ -82,7 +76,7 @@ function resolveDatabaseUrl(): string | null {
   return `postgresql://${user}:${encodedPassword}@${hostport}/${name}`;
 }
 
-function getPool(): Pool {
+export function getPool(): Pool {
   if (!pool) {
     const connectionString = resolveDatabaseUrl();
     if (!connectionString) {

@@ -55,6 +55,29 @@ for file in backend/db/migrations/*.up.sql; do
 done
 ```
 
+### Local dev without Docker
+
+1. Set DATABASE_URL:
+   ```bash
+   export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/do_intent"
+   ```
+
+2. Run migrations:
+   ```bash
+   npm run migrate
+   ```
+
+3. Run the backend:
+   ```bash
+   encore run --watch=false --browser=never --port=4001
+   ```
+
+4. Test healthz and dbinfo endpoints:
+   ```bash
+   curl http://localhost:4001/healthz
+   curl http://localhost:4001/api/v1/debug/dbinfo
+   ```
+
 
 
 ### Frontend Setup
