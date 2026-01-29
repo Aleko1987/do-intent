@@ -55,25 +55,26 @@ for file in backend/db/migrations/*.up.sql; do
 done
 ```
 
-### Local dev without Docker
+### Local dev without Docker (PowerShell)
 
-1. Set DATABASE_URL:
-   ```bash
-   export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/do_intent"
+1. Set DATABASE_URL (and ENABLE_DB if you want `/track` writes):
+   ```powershell
+   $env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/do_intent"
+   $env:ENABLE_DB = "true"
    ```
 
 2. Run migrations:
-   ```bash
+   ```powershell
    npm run migrate
    ```
 
 3. Run the backend:
-   ```bash
+   ```powershell
    encore run --watch=false --browser=never --port=4001
    ```
 
 4. Test healthz and dbinfo endpoints:
-   ```bash
+   ```powershell
    curl http://localhost:4001/healthz
    curl http://localhost:4001/api/v1/debug/dbinfo
    ```
