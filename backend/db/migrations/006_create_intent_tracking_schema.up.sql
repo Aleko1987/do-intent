@@ -18,7 +18,7 @@
 -- ============================================================================
 -- Represents a browsing session. Sessions are anonymous by default but can
 -- be linked to an identity later when the user is identified.
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
   session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   anonymous_id UUID NOT NULL,
   identity_id UUID NULL, -- Optional link; may be set later during identity promotion
@@ -32,17 +32,17 @@ CREATE TABLE sessions (
 );
 
 -- Index for looking up sessions by anonymous_id (most common query)
-CREATE INDEX idx_sessions_anonymous_id_last_seen ON sessions (anonymous_id, last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_anonymous_id_last_seen ON sessions (anonymous_id, last_seen_at DESC);
 
 -- Index for looking up sessions by identity_id (after promotion)
-CREATE INDEX idx_sessions_identity_id ON sessions (identity_id) WHERE identity_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sessions_identity_id ON sessions (identity_id) WHERE identity_id IS NOT NULL;
 
 -- ============================================================================
 -- IDENTITIES TABLE
 -- ============================================================================
 -- Represents a known person or entity. Created when user provides email/identity.
 -- Supports merging anonymous browsing history into a known identity.
-CREATE TABLE identities (
+CREATE TABLE IF NOT EXISTS identities (
   identity_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email TEXT NOT NULL UNIQUE,
   name TEXT NULL,
@@ -53,7 +53,7 @@ CREATE TABLE identities (
 );
 
 -- Index for looking up identities by last_seen_at (for recency queries)
-CREATE INDEX idx_identities_last_seen ON identities (last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_identities_last_seen ON identities (last_seen_at DESC);
 
 -- ============================================================================
 -- EVENTS TABLE
@@ -61,7 +61,7 @@ CREATE INDEX idx_identities_last_seen ON identities (last_seen_at DESC);
 -- Immutable raw interaction events. Events are never updated or deleted.
 -- Supports anonymous-first tracking with optional identity_id that can be
 -- backfilled later when anonymous_id is promoted to identity.
-CREATE TABLE events (
+CREATE TABLE IF NOT EXISTS events (
   event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id UUID NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
   anonymous_id UUID NOT NULL,
@@ -77,16 +77,16 @@ CREATE TABLE events (
 
 -- Indexes for efficient event lookups:
 -- 1. Lookup events by anonymous_id (most common during anonymous browsing)
-CREATE INDEX idx_events_anonymous_id_occurred ON events (anonymous_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_events_anonymous_id_occurred ON events (anonymous_id, occurred_at DESC);
 
 -- 2. Lookup events by identity_id (after identity promotion)
-CREATE INDEX idx_events_identity_id_occurred ON events (identity_id, occurred_at DESC) WHERE identity_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_events_identity_id_occurred ON events (identity_id, occurred_at DESC) WHERE identity_id IS NOT NULL;
 
 -- 3. Lookup events by session_id (for session-based queries)
-CREATE INDEX idx_events_session_id_occurred ON events (session_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_events_session_id_occurred ON events (session_id, occurred_at DESC);
 
 -- 4. Lookup events by timestamp (for time-based queries)
-CREATE INDEX idx_events_occurred_at ON events (occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_events_occurred_at ON events (occurred_at DESC);
 
 -- ============================================================================
 -- INTENT_SCORES TABLE
@@ -108,7 +108,7 @@ CREATE INDEX idx_events_occurred_at ON events (occurred_at DESC);
 -- - Scores can exist for both 'anonymous' and 'identity' subject types
 -- - When anonymous_id is promoted to identity_id, anonymous score is transferred
 -- - The intent_scores row is updated or merged accordingly
-CREATE TABLE intent_scores (
+CREATE TABLE IF NOT EXISTS intent_scores (
   intent_score_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   subject_type TEXT NOT NULL CHECK (subject_type IN ('anonymous', 'identity')),
   subject_id UUID NOT NULL, -- References anonymous_id or identity_id depending on subject_type
@@ -124,13 +124,13 @@ CREATE TABLE intent_scores (
 );
 
 -- Index for efficient score lookups (used in threshold evaluation and score retrieval)
-CREATE INDEX idx_intent_scores_subject ON intent_scores (subject_type, subject_id);
+CREATE INDEX IF NOT EXISTS idx_intent_scores_subject ON intent_scores (subject_type, subject_id);
 
 -- Index for finding high-intent subjects (for prioritization)
-CREATE INDEX idx_intent_scores_total_score ON intent_scores (total_score DESC);
+CREATE INDEX IF NOT EXISTS idx_intent_scores_total_score ON intent_scores (total_score DESC);
 
 -- Index for finding recently active subjects
-CREATE INDEX idx_intent_scores_last_event_at ON intent_scores (last_event_at DESC) WHERE last_event_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_intent_scores_last_event_at ON intent_scores (last_event_at DESC) WHERE last_event_at IS NOT NULL;
 
 -- ============================================================================
 -- FOREIGN KEY CONSTRAINTS
@@ -138,8 +138,17 @@ CREATE INDEX idx_intent_scores_last_event_at ON intent_scores (last_event_at DES
 -- Add foreign key from sessions to identities
 -- Note: This FK allows NULL since sessions.identity_id can be NULL initially
 -- and set later during identity promotion.
-ALTER TABLE sessions ADD CONSTRAINT fk_sessions_identity_id 
-  FOREIGN KEY (identity_id) REFERENCES identities(identity_id) ON DELETE SET NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'fk_sessions_identity_id'
+    AND conrelid = 'sessions'::regclass
+  ) THEN
+    ALTER TABLE sessions ADD CONSTRAINT fk_sessions_identity_id 
+      FOREIGN KEY (identity_id) REFERENCES identities(identity_id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 -- ============================================================================
 -- COMMENTS FOR DOCUMENTATION
