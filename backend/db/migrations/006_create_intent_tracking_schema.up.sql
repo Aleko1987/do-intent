@@ -4,7 +4,7 @@
 -- - sessions: Tracks browsing sessions (anonymous by default)
 -- - events: Immutable raw interaction events
 -- - identities: Known users/entities
--- - intent_scores: Incremental score state with threshold tracking
+-- - intent_subject_scores: Incremental score state with threshold tracking
 --
 -- Design Principles:
 -- 1. Anonymous-first: Events start anonymous, can be promoted to identity later
@@ -89,7 +89,7 @@ CREATE INDEX IF NOT EXISTS idx_events_session_id_occurred ON events (session_id,
 CREATE INDEX IF NOT EXISTS idx_events_occurred_at ON events (occurred_at DESC);
 
 -- ============================================================================
--- INTENT_SCORES TABLE
+-- INTENT_SUBJECT_SCORES TABLE
 -- ============================================================================
 -- Incremental intent score state. Updated in real-time as events arrive.
 -- Tracks the last threshold emitted to prevent duplicate threshold signals.
@@ -107,8 +107,8 @@ CREATE INDEX IF NOT EXISTS idx_events_occurred_at ON events (occurred_at DESC);
 -- How identity promotion works:
 -- - Scores can exist for both 'anonymous' and 'identity' subject types
 -- - When anonymous_id is promoted to identity_id, anonymous score is transferred
--- - The intent_scores row is updated or merged accordingly
-CREATE TABLE IF NOT EXISTS intent_scores (
+-- - The intent_subject_scores row is updated or merged accordingly
+CREATE TABLE IF NOT EXISTS intent_subject_scores (
   intent_score_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   subject_type TEXT NOT NULL CHECK (subject_type IN ('anonymous', 'identity')),
   subject_id UUID NOT NULL, -- References anonymous_id or identity_id depending on subject_type
@@ -124,13 +124,13 @@ CREATE TABLE IF NOT EXISTS intent_scores (
 );
 
 -- Index for efficient score lookups (used in threshold evaluation and score retrieval)
-CREATE INDEX IF NOT EXISTS idx_intent_scores_subject ON intent_scores (subject_type, subject_id);
+CREATE INDEX IF NOT EXISTS idx_intent_subject_scores_subject ON intent_subject_scores (subject_type, subject_id);
 
 -- Index for finding high-intent subjects (for prioritization)
-CREATE INDEX IF NOT EXISTS idx_intent_scores_total_score ON intent_scores (total_score DESC);
+CREATE INDEX IF NOT EXISTS idx_intent_subject_scores_total_score ON intent_subject_scores (total_score DESC);
 
 -- Index for finding recently active subjects
-CREATE INDEX IF NOT EXISTS idx_intent_scores_last_event_at ON intent_scores (last_event_at DESC) WHERE last_event_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_intent_subject_scores_last_event_at ON intent_subject_scores (last_event_at DESC) WHERE last_event_at IS NOT NULL;
 
 -- ============================================================================
 -- FOREIGN KEY CONSTRAINTS
@@ -156,9 +156,9 @@ END $$;
 COMMENT ON TABLE sessions IS 'Tracks browsing sessions. Anonymous by default, can be linked to identity later.';
 COMMENT ON TABLE events IS 'Immutable raw interaction events. Append-only, never updated or deleted. Supports anonymous-first tracking with optional identity backfill.';
 COMMENT ON TABLE identities IS 'Known users/entities. Created when email/identity is provided. Supports merging anonymous history.';
-COMMENT ON TABLE intent_scores IS 'Incremental intent score state. Updated in real-time. Tracks last threshold emitted to prevent duplicate signals.';
+COMMENT ON TABLE intent_subject_scores IS 'Incremental intent score state. Updated in real-time. Tracks last threshold emitted to prevent duplicate signals.';
 
 COMMENT ON COLUMN events.identity_id IS 'Nullable to support anonymous-first tracking. Can be backfilled when anonymous_id is promoted to identity_id.';
-COMMENT ON COLUMN intent_scores.subject_type IS 'Either "anonymous" or "identity". Determines whether subject_id refers to anonymous_id or identity_id.';
-COMMENT ON COLUMN intent_scores.last_threshold_emitted IS 'Highest threshold band already emitted. Prevents duplicate threshold signals when score crosses same band multiple times.';
+COMMENT ON COLUMN intent_subject_scores.subject_type IS 'Either "anonymous" or "identity". Determines whether subject_id refers to anonymous_id or identity_id.';
+COMMENT ON COLUMN intent_subject_scores.last_threshold_emitted IS 'Highest threshold band already emitted. Prevents duplicate threshold signals when score crosses same band multiple times.';
 
