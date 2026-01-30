@@ -63,8 +63,12 @@ async function runMigrations(): Promise<void> {
     // Read migration files
     const files = await readdir(MIGRATIONS_DIR);
     const migrationFiles = files
-      .filter((file) => file.endsWith(".up.sql"))
-      .sort(); // Sort ascending
+      .filter((file) => {
+        // Only load migration files matching the numbered convention (001_...up.sql).
+        // Legacy files like "1_init.up.sql" are ignored to prevent schema errors.
+        return /^\d{3}_.+\.up\.sql$/.test(file);
+      })
+      .sort(); // Sort ascending (lexicographically)
 
     console.log(`Found ${migrationFiles.length} migration file(s) to check`);
 
