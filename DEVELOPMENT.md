@@ -259,10 +259,16 @@ curl "$BASE_URL/api/v1/events?dedupe_key=dev_smoke_1&limit=5"
 $BASE_URL = "http://localhost:4000"
 $INGEST_API_KEY = "your-api-key"
 
-# 1) Health check
-curl "$BASE_URL/healthz"
+# 1) Root endpoint (public)
+Invoke-RestMethod "$BASE_URL/"
 
-# 2) Ingest an intent event
+# 2) Health check
+Invoke-RestMethod "$BASE_URL/healthz"
+
+# 3) Ready endpoint
+Invoke-RestMethod "$BASE_URL/api/v1/ready"
+
+# 4) Ingest an intent event
 curl "$BASE_URL/api/v1/ingest" `
   -H "Content-Type: application/json" `
   -H "x-ingest-api-key: $INGEST_API_KEY" `
@@ -275,7 +281,86 @@ curl "$BASE_URL/api/v1/ingest" `
     "metadata": { "page": "pricing" }
   }'
 
-# 3) Read events back
+# 5) Read events back
 curl "$BASE_URL/api/v1/events?dedupe_key=ps_smoke_1&limit=5"
 # Expect: count >= 1 and items[0].dedupe_key == "ps_smoke_1" (non-null)
 ```
+
+## Intent Leads Endpoints
+
+### Protected Endpoint (Requires Authentication)
+
+The main leads endpoint requires authentication via Clerk:
+
+```powershell
+$BASE_URL = "https://do-intent.onrender.com"
+$AUTH_TOKEN = "your-clerk-token"
+
+# List leads with intent scores (requires Authorization header)
+$headers = @{
+    "Content-Type" = "application/json"
+    "Authorization" = "Bearer $AUTH_TOKEN"
+}
+
+$body = @{
+    limit = 50
+    offset = 0
+    sort_by = "score_7d"
+    sort_order = "desc"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri "$BASE_URL/intent-scorer/leads" `
+    -Headers $headers -Body $body
+```
+
+**Note:** Without the `Authorization` header, this endpoint returns `401 Unauthorized`.
+
+### Public Endpoint (Testing Only)
+
+A public endpoint is available for testing, but it's disabled by default and must be enabled via environment variable:
+
+```powershell
+# This endpoint is only available when DISABLE_AUTH_FOR_INTENT_LIST=true
+# When disabled, returns 404 with message explaining how to enable
+
+$body = @{
+    limit = 50
+    offset = 0
+} | ConvertTo-Json
+
+# When env var is enabled:
+Invoke-RestMethod -Method Post -Uri "$BASE_URL/intent-scorer/leads/public" `
+    -ContentType "application/json" -Body $body
+
+# When env var is NOT enabled, you'll get:
+# 404 Not Found: "Public endpoint is disabled. Set DISABLE_AUTH_FOR_INTENT_LIST=true to enable."
+```
+
+**Environment Variable:** Set `DISABLE_AUTH_FOR_INTENT_LIST=true` in your environment to enable the public endpoint. This is intended for testing only and should not be enabled in production.
+
+## Common Errors
+
+### 401 Unauthorized
+
+**Cause:** Missing or invalid `Authorization` header when calling protected endpoints.
+
+**Solution:** Include a valid Clerk token in the `Authorization` header:
+```powershell
+$headers = @{ "Authorization" = "Bearer your-clerk-token" }
+```
+
+### 404 Not Found
+
+**Possible causes:**
+- Wrong endpoint path
+- Public endpoint (`/intent-scorer/leads/public`) is disabled (env var `DISABLE_AUTH_FOR_INTENT_LIST` is not set to `"true"`)
+
+**Solution:** 
+- Verify the endpoint path is correct
+- For public endpoint: Set `DISABLE_AUTH_FOR_INTENT_LIST=true` in environment variables
+
+### 502 Bad Gateway at Base URL
+
+**Cause:** Previously, the root URL (`/`) sometimes returned 502 errors even when the service was healthy.
+
+**Solution:** The root endpoint (`GET /`) now returns a JSON response, resolving this issue. Use `/healthz` for Render health checks.

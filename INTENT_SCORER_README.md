@@ -141,6 +141,72 @@ POST /intent-scorer/events
 }
 ```
 
+**List Leads with Intent Scores (Protected):**
+```typescript
+POST /intent-scorer/leads
+Headers: {
+  "Authorization": "Bearer <clerk-token>"
+}
+Body: {
+  "min_score_7d": 10,
+  "min_score_30d": 20,
+  "activity_days": 30,
+  "search": "acme",
+  "limit": 50,
+  "offset": 0,
+  "sort_by": "score_7d",
+  "sort_order": "desc"
+}
+```
+
+**PowerShell Example (Protected Endpoint):**
+```powershell
+$BASE_URL = "https://do-intent.onrender.com"
+$AUTH_TOKEN = "your-clerk-token"
+
+$headers = @{
+    "Content-Type" = "application/json"
+    "Authorization" = "Bearer $AUTH_TOKEN"
+}
+
+$body = @{
+    limit = 50
+    offset = 0
+    sort_by = "score_7d"
+    sort_order = "desc"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri "$BASE_URL/intent-scorer/leads" `
+    -Headers $headers -Body $body
+```
+
+**Note:** Without the `Authorization` header, this endpoint returns `401 Unauthorized`.
+
+**List Leads (Public - Testing Only):**
+```typescript
+POST /intent-scorer/leads/public
+Body: {
+  "limit": 50,
+  "offset": 0
+}
+```
+
+**PowerShell Example (Public Endpoint):**
+```powershell
+# This endpoint is only available when DISABLE_AUTH_FOR_INTENT_LIST=true
+# When disabled, returns 404 with message explaining how to enable
+
+$body = @{
+    limit = 50
+    offset = 0
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri "$BASE_URL/intent-scorer/leads/public" `
+    -ContentType "application/json" -Body $body
+```
+
+**Environment Variable:** Set `DISABLE_AUTH_FOR_INTENT_LIST=true` to enable the public endpoint. This is for testing only and should not be enabled in production.
+
 **Compute Score for Event:**
 ```typescript
 POST /intent-scorer/compute
@@ -183,6 +249,33 @@ $payload = @{
 Invoke-RestMethod -Method Post -Uri "https://do-intent-web.onrender.com/track" `
   -ContentType "application/json" -Body $payload
 ```
+
+## Common Errors
+
+### 401 Unauthorized
+
+**Cause:** Missing or invalid `Authorization` header when calling protected endpoints like `/intent-scorer/leads`.
+
+**Solution:** Include a valid Clerk token in the `Authorization` header:
+```powershell
+$headers = @{ "Authorization" = "Bearer your-clerk-token" }
+```
+
+### 404 Not Found
+
+**Possible causes:**
+- Wrong endpoint path
+- Public endpoint (`/intent-scorer/leads/public`) is disabled (env var `DISABLE_AUTH_FOR_INTENT_LIST` is not set to `"true"`)
+
+**Solution:** 
+- Verify the endpoint path is correct
+- For public endpoint: Set `DISABLE_AUTH_FOR_INTENT_LIST=true` in environment variables
+
+### 502 Bad Gateway at Base URL
+
+**Cause:** Previously, the root URL (`/`) sometimes returned 502 errors even when the service was healthy.
+
+**Solution:** The root endpoint (`GET /`) now returns a JSON response `{ ok: true, service: "do-intent", ts: "<iso>" }`, resolving this issue. Use `/healthz` for Render health checks.
 
 ## Key Design Decisions
 
