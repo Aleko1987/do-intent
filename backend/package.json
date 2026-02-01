@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "bun",
   "scripts": {
-    "build": "cd ../frontend && bun install && npx vite build --outDir=../backend/frontend/dist",
+    "build": "cd ../frontend && bun install && npx vite build --outDir=../backend/frontend/dist --emptyOutDir",
     "build:web": "tsc -p ../web/tsconfig.json",
     "start:web": "node ../web/dist/server.js",
     "migrate": "tsx db/runMigrations.ts"

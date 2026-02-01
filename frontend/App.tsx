@@ -24,7 +24,7 @@ export default function App() {
           </div>
         </SignedIn>
       </header>
-      <BrowserRouter>
+      <BrowserRouter basename="/app">
         <Routes>
           <Route path="/marketing" element={<Marketing />} />
           <Route path="/intent-scorer" element={<IntentScorer />} />
