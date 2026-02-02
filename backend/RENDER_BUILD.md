@@ -27,7 +27,7 @@ This will:
 Render should use the following start command:
 
 ```bash
-encore run --listen 0.0.0.0:${PORT}
+encore run --listen 0.0.0.0:${PORT} --watch=false --browser=never
 ```
 
 The `${PORT}` environment variable is automatically provided by Render.
@@ -106,4 +106,3 @@ Invoke-WebRequest -Uri "https://do-intent.onrender.com/app/marketing" | Select-O
 - `/health/version`: 200, `{"gitSha":"<sha>","buildTime":"<timestamp>"}` (gitSha should not be "unknown" on Render)
 - `/app`: 200, `Content-Type: text/html; charset=utf-8`
 - `/app/marketing`: 200, `Content-Type: text/html; charset=utf-8`
-
