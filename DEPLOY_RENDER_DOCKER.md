@@ -70,15 +70,12 @@ Add the following environment variables in the Render dashboard:
 
 #### Database Split Variables (if needed)
 
-If Encore requires separate database connection parts instead of `DATABASE_URL`, also add:
+If you cannot use `DATABASE_URL`, the backend will fall back to component variables:
 
-- `DATABASE_HOST` - Database hostname
+- `DATABASE_HOSTPORT` - Database host and port (e.g., `host:5432`)
 - `DATABASE_USER` - Database username
 - `DATABASE_PASSWORD` - Database password
 - `DATABASE_NAME` - Database name
-- `DATABASE_PORT` - Database port (usually `5432`)
-
-**Note**: The `infra-config.json` is configured to use `DATABASE_URL` by default. Only add split variables if you encounter issues with the connection string format.
 
 #### Intent Tracking Schema
 
@@ -108,6 +105,10 @@ When you push to the `main` branch:
 2. The image is tagged with the commit SHA and also as `latest`
 3. Render will automatically pull the new `latest` image if auto-deploy is enabled
 4. Alternatively, manually trigger a deploy from the Render dashboard
+
+The workflow builds the frontend assets (`backend/frontend/dist`) before creating the Docker
+image. If SPA routes return 500s, confirm the GitHub Actions workflow ran and completed
+the `Build frontend assets for SPA` step.
 
 ## Troubleshooting
 

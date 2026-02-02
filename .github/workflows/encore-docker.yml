@@ -35,6 +35,9 @@ jobs:
       - name: Install deps (backend)
         run: cd backend && npm ci
 
+      - name: Build frontend assets for SPA
+        run: cd backend && npm run build
+
       - name: Install Encore
         run: |
           export ENCORE_INSTALL="$PWD/.encore"
@@ -81,4 +84,3 @@ jobs:
         run: |
           docker tag "$IMAGE_NAME:$IMAGE_TAG" "$IMAGE_NAME:latest"
           docker push "$IMAGE_NAME:latest"
-
