@@ -4,7 +4,8 @@
   "type": "module",
   "packageManager": "bun",
   "scripts": {
-    "build": "cd ../frontend && npm ci && npx vite build --outDir=../backend/frontend/dist --emptyOutDir",
+    "build": "npm run build:stamp && cd ../frontend && npm ci && npx vite build --outDir=../backend/frontend/dist --emptyOutDir",
+    "build:stamp": "bash ./scripts/print-build-stamp.sh",
     "build:web": "tsc -p ../web/tsconfig.json",
     "start:web": "node ../web/dist/server.js",
     "migrate": "tsx db/runMigrations.ts"
