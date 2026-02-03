@@ -4,8 +4,9 @@
   "type": "module",
   "packageManager": "bun",
   "scripts": {
-    "build": "npm run build:stamp && node ./scripts/check-encore-wildcards.mjs && cd ../frontend && npm ci && npx vite build --outDir=../backend/frontend/dist --emptyOutDir",
+    "build": "npm run build:stamp && node ./scripts/check-encore-wildcards.mjs && npm run build:encore && cd ../frontend && npm ci && npx vite build --outDir=../backend/frontend/dist --emptyOutDir",
     "build:stamp": "bash ./scripts/print-build-stamp.sh",
+    "build:encore": "export ENCORE_INSTALL=\"$PWD/.encore\" && curl -L https://encore.dev/install.sh | bash && ./.encore/bin/encore version",
     "build:web": "tsc -p ../web/tsconfig.json",
     "start:web": "node ../web/dist/server.js",
     "migrate": "tsx db/runMigrations.ts",
