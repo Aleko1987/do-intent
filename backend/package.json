@@ -4,11 +4,12 @@
   "type": "module",
   "packageManager": "bun",
   "scripts": {
-    "build": "npm run build:stamp && cd ../frontend && npm ci && npx vite build --outDir=../backend/frontend/dist --emptyOutDir",
+    "build": "npm run build:stamp && node ./scripts/check-encore-wildcards.mjs && cd ../frontend && npm ci && npx vite build --outDir=../backend/frontend/dist --emptyOutDir",
     "build:stamp": "bash ./scripts/print-build-stamp.sh",
     "build:web": "tsc -p ../web/tsconfig.json",
     "start:web": "node ../web/dist/server.js",
-    "migrate": "tsx db/runMigrations.ts"
+    "migrate": "tsx db/runMigrations.ts",
+    "guard:encore-wildcards": "node ./scripts/check-encore-wildcards.mjs"
   },
   "dependencies": {
     "@clerk/backend": "^1.27.0",
