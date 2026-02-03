@@ -44,7 +44,7 @@ This endpoint is public (no authentication required) and works in browsers, reso
 The React SPA (Single Page Application) is served under the `/app` prefix:
 
 - **UI Root**: `https://do-intent.onrender.com/app`
-- **Routes**: All client-side routes work under `/app/*`:
+- **Routes**: All client-side routes work under `/app/*path`:
   - `https://do-intent.onrender.com/app/marketing`
   - `https://do-intent.onrender.com/app/intent-scorer`
   - `https://do-intent.onrender.com/app/lead-intent`
@@ -52,6 +52,6 @@ The React SPA (Single Page Application) is served under the `/app` prefix:
   - `https://do-intent.onrender.com/app/pricing`
   - `https://do-intent.onrender.com/app/case-study/:slug`
 
-The UI is served as static files from `backend/frontend/dist` with SPA fallback routing (all `/app/*` paths serve `index.html` for client-side routing).
+The UI is served as static files from `backend/frontend/dist` with SPA fallback routing (all `/app/*path` paths serve `index.html` for client-side routing).
 
-**Note**: The API root endpoint (`/`) returns JSON and is separate from the UI. The UI is only accessible under `/app/*`.
+**Note**: The API root endpoint (`/`) returns JSON and is separate from the UI. The UI is only accessible under `/app/*path`.
