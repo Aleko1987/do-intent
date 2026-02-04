@@ -7,10 +7,47 @@ import { existsSync } from "fs";
 
 export default new Service("frontend");
 
-// Resolve dist directory relative to this file
+// Resolve dist directory; fall back to repo-root locations in dev builds.
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const distDir = resolve(__dirname, "dist");
+
+function hasIndexHtml(dir: string): boolean {
+  return existsSync(join(dir, "index.html"));
+}
+
+function findDistDir(): string {
+  const envDistDir = process.env.FRONTEND_DIST_DIR || process.env.DO_INTENT_DIST_DIR;
+  if (envDistDir && hasIndexHtml(envDistDir)) {
+    return envDistDir;
+  }
+
+  const candidates: string[] = [];
+  const bases = [__dirname, process.cwd()];
+
+  for (const base of bases) {
+    let current = base;
+    for (let i = 0; i < 7; i += 1) {
+      candidates.push(resolve(current, "dist"));
+      candidates.push(resolve(current, "frontend", "dist"));
+      candidates.push(resolve(current, "backend", "frontend", "dist"));
+      const parent = dirname(current);
+      if (parent === current) {
+        break;
+      }
+      current = parent;
+    }
+  }
+
+  for (const dir of candidates) {
+    if (hasIndexHtml(dir)) {
+      return dir;
+    }
+  }
+
+  return resolve(__dirname, "dist");
+}
+
+const distDir = findDistDir();
 
 // Content-Type mapping for common file extensions
 const mimeTypes: Record<string, string> = {

@@ -2,6 +2,8 @@ import { api, APIError, RawRequest, RawResponse } from "encore.dev/api";
 import { getAuthData } from "~encore/auth";
 import { Pool } from "pg";
 import { randomUUID } from "crypto";
+import { autoScoreEvent } from "./auto_score";
+import { db } from "../db/db";
 
 interface TrackRequest {
   event?: string;
@@ -208,6 +210,63 @@ function parseOptionalString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function parseOptionalNumber(value: unknown): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const num = Number(value);
+  if (Number.isNaN(num)) {
+    return null;
+  }
+  return num;
+}
+
+function shouldCreateIntentEvent(eventType: string, value: number | null): boolean {
+  if (eventType === "time_on_page") {
+    return (value ?? 0) >= 30;
+  }
+  if (eventType === "scroll_depth") {
+    return (value ?? 0) >= 60;
+  }
+  return true;
+}
+
+function shouldDerivePricingView(eventType: string, url: string): boolean {
+  if (eventType !== "page_view" && eventType !== "click") {
+    return false;
+  }
+  return url.includes("/pricing");
+}
+
+async function upsertAnonymousSubjectScore(
+  anonymousId: string,
+  scoreDelta: number,
+  occurredAt: string
+): Promise<void> {
+  if (scoreDelta === 0) {
+    return;
+  }
+  await db.exec`
+    INSERT INTO intent_subject_scores (
+      subject_type,
+      subject_id,
+      total_score,
+      last_event_at,
+      updated_at
+    ) VALUES (
+      'anonymous',
+      ${anonymousId},
+      ${scoreDelta},
+      ${occurredAt},
+      now()
+    )
+    ON CONFLICT (subject_type, subject_id) DO UPDATE SET
+      total_score = intent_subject_scores.total_score + ${scoreDelta},
+      last_event_at = GREATEST(intent_subject_scores.last_event_at, ${occurredAt}),
+      updated_at = now()
+  `;
+}
+
 function getDbErrorCode(error?: unknown): string {
   if (error && typeof error === "object" && "code" in error) {
     const code = String((error as any).code);
@@ -267,6 +326,72 @@ function sendJson(
   resp.end(JSON.stringify(payload));
 }
 
+async function insertIntentEvent(
+  activePool: Pool,
+  params: {
+    eventType: string;
+    eventSource: string;
+    eventValue: number | null;
+    anonymousId: string;
+    occurredAt: string;
+    metadata: Record<string, any>;
+    dedupeKey?: string | null;
+  }
+): Promise<string | null> {
+  const normalizedValue =
+    params.eventValue === null ? 0 : Math.round(params.eventValue);
+
+  const result = await activePool.query(
+    `
+      INSERT INTO intent_events (
+        lead_id,
+        anonymous_id,
+        event_type,
+        event_source,
+        event_value,
+        dedupe_key,
+        metadata,
+        occurred_at,
+        created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+      RETURNING id
+    `,
+    [
+      null,
+      params.anonymousId,
+      params.eventType,
+      params.eventSource,
+      normalizedValue,
+      params.dedupeKey ?? null,
+      JSON.stringify(params.metadata),
+      params.occurredAt,
+    ]
+  );
+
+  return result.rows[0]?.id ?? null;
+}
+
+async function scoreAndUpdateSubject(
+  intentEventId: string,
+  anonymousId: string,
+  occurredAt: string
+): Promise<void> {
+  try {
+    await autoScoreEvent(intentEventId);
+    const scoreRow = await db.queryRow<{ score: number | null }>`
+      SELECT score FROM intent_scores WHERE intent_event_id = ${intentEventId}
+    `;
+    if (scoreRow?.score !== null && scoreRow?.score !== undefined) {
+      await upsertAnonymousSubjectScore(anonymousId, Number(scoreRow.score), occurredAt);
+    }
+  } catch (error) {
+    console.warn("[track] Failed to score intent event.", {
+      intent_event_id: intentEventId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
   // Generate request_id for correlation
   const request_id = randomUUID();
@@ -316,6 +441,7 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
     const referrer = parseOptionalString(payload.referrer);
     const occurredAt = parseIsoTimestamp(payload.timestamp) ?? new Date();
     const metadata = ensureObject(payload.metadata, "metadata");
+    const eventValue = parseOptionalNumber(payload.value);
     const anonymousId = payload.anonymous_id ?? payload.session_id;
 
     let clerkUserId: string | null = null;
@@ -331,6 +457,11 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
     const storedMetadata = metadata ? { ...metadata } : {};
     if (clerkUserId) {
       storedMetadata.clerk_user_id = clerkUserId;
+    }
+    storedMetadata.session_id = payload.session_id;
+    storedMetadata.url = url;
+    if (referrer) {
+      storedMetadata.referrer = referrer;
     }
     const metadataPayload =
       Object.keys(storedMetadata).length > 0 ? storedMetadata : {};
@@ -360,6 +491,28 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
 
     try {
       await ensureTrackingTables(activePool);
+
+      const existingSession = await activePool.query(
+        `SELECT 1 FROM sessions WHERE session_id = $1`,
+        [payload.session_id]
+      );
+      const isNewSession = existingSession.rowCount === 0;
+      let isReturnVisit = false;
+      if (isNewSession) {
+        const recentSession = await activePool.query(
+          `
+            SELECT 1
+            FROM sessions
+            WHERE anonymous_id = $1
+              AND session_id <> $2
+              AND last_seen_at >= now() - interval '30 days'
+            LIMIT 1
+          `,
+          [anonymousId, payload.session_id]
+        );
+        isReturnVisit = recentSession.rowCount > 0;
+      }
+
       await activePool.query(
         `
           INSERT INTO sessions (
@@ -384,7 +537,7 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
             occurred_at,
             event_value,
             metadata
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         `,
         [
           event,
@@ -393,10 +546,72 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
           url,
           referrer,
           occurredAt.toISOString(),
-          payload.value ?? null,
+          eventValue ?? null,
           JSON.stringify(metadataPayload),
         ]
       );
+
+      if (shouldCreateIntentEvent(event, eventValue)) {
+        const intentEventId = await insertIntentEvent(activePool, {
+          eventType: event,
+          eventSource: "website",
+          eventValue,
+          anonymousId,
+          occurredAt: occurredAt.toISOString(),
+          metadata: metadataPayload,
+        });
+        if (intentEventId) {
+          await scoreAndUpdateSubject(intentEventId, anonymousId, occurredAt.toISOString());
+        }
+      }
+
+      if (shouldDerivePricingView(event, url)) {
+        const pricingEventId = await insertIntentEvent(activePool, {
+          eventType: "pricing_view",
+          eventSource: "website",
+          eventValue: null,
+          anonymousId,
+          occurredAt: occurredAt.toISOString(),
+          metadata: {
+            ...metadataPayload,
+            derived: true,
+          },
+        });
+        if (pricingEventId) {
+          await scoreAndUpdateSubject(pricingEventId, anonymousId, occurredAt.toISOString());
+        }
+      }
+
+      if (isReturnVisit) {
+        const dedupeKey = `return_visit:${payload.session_id}`;
+        const existingReturnVisit = await activePool.query(
+          `
+            SELECT 1
+            FROM intent_events
+            WHERE dedupe_key = $1
+            LIMIT 1
+          `,
+          [dedupeKey]
+        );
+        if (existingReturnVisit.rowCount === 0) {
+          const returnVisitId = await insertIntentEvent(activePool, {
+            eventType: "return_visit",
+            eventSource: "website",
+            eventValue: null,
+            anonymousId,
+            occurredAt: occurredAt.toISOString(),
+            metadata: {
+              ...metadataPayload,
+              derived: true,
+            },
+            dedupeKey,
+          });
+          if (returnVisitId) {
+            await scoreAndUpdateSubject(returnVisitId, anonymousId, occurredAt.toISOString());
+          }
+        }
+      }
+
       stored = true;
     } catch (error) {
       // DB errors are non-fatal - log but don't fail the request

@@ -286,7 +286,7 @@ Manual testing steps:
    - Click element with `data-intent-cta="true"` → Check for `event: "click"` with CTA metadata
 
 5. **Identify**
-   - Call `identify(email)` → Check for `POST /identify` → Verify response includes `identity_id` and `total_identity_score`
+   - Call `identify(email)` → Check for `POST /api/v1/identify` → Verify response includes `identity_id` and `total_identity_score`
 
 ## Troubleshooting
 

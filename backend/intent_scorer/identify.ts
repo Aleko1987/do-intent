@@ -1,10 +1,11 @@
-import { api, APIError } from "encore.dev/api";
+import { api, APIError, RawRequest, RawResponse } from "encore.dev/api";
 import { db } from "../db/db";
 import {
   ThresholdBand,
   bandFromScore,
   shouldEmitThreshold,
 } from "./scoring";
+import { updateLeadRollup } from "./rollups";
 
 // Request shape (v1)
 interface IdentifyRequest {
@@ -29,6 +30,11 @@ interface IdentifyResponse {
   threshold_emitted: boolean;
 }
 
+interface ErrorResponse {
+  code: "invalid_argument" | "internal";
+  message: string;
+}
+
 /**
  * Validates UUID format (simple check)
  */
@@ -45,6 +51,44 @@ function isValidEmail(email: string): boolean {
   // Basic check: contains @ and at least one character before and after
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(email);
+}
+
+function getCorsOrigin(req: RawRequest): string {
+  const origin = req.headers.origin;
+  if (Array.isArray(origin)) {
+    return origin[0] ?? "*";
+  }
+  return origin ?? "*";
+}
+
+function applyCorsHeaders(resp: RawResponse, req: RawRequest): void {
+  resp.setHeader("Access-Control-Allow-Origin", getCorsOrigin(req));
+  resp.setHeader("Access-Control-Allow-Headers", "content-type");
+  resp.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  resp.setHeader("Vary", "Origin");
+}
+
+async function readJsonBody(req: RawRequest): Promise<unknown> {
+  let raw = "";
+  for await (const chunk of req) {
+    raw += chunk.toString();
+  }
+
+  if (!raw) {
+    return {};
+  }
+
+  return JSON.parse(raw);
+}
+
+function sendJson(
+  resp: RawResponse,
+  status: number,
+  payload: IdentifyResponse | ErrorResponse
+): void {
+  resp.statusCode = status;
+  resp.setHeader("Content-Type", "application/json");
+  resp.end(JSON.stringify(payload));
 }
 
 /**
@@ -80,197 +124,220 @@ function isValidEmail(email: string): boolean {
  * 1) Identify with no prior /track events (should create identity, score 0, band cold)
  * 2) Track events to reach score 20+ anonymously, then identify (should return hot and threshold_emitted true)
  */
-export const identify = api<IdentifyRequest, IdentifyResponse>(
-  { expose: true, method: "POST", path: "/identify" },
-  async (req): Promise<IdentifyResponse> => {
-    // Validation
-    if (!req.anonymous_id || !isValidUUID(req.anonymous_id)) {
-      throw APIError.invalidArgument(
-        "anonymous_id is required and must be a valid UUID"
-      );
-    }
+async function identifyInternal(req: IdentifyRequest): Promise<IdentifyResponse> {
+  // Validation
+  if (!req.anonymous_id || !isValidUUID(req.anonymous_id)) {
+    throw APIError.invalidArgument(
+      "anonymous_id is required and must be a valid UUID"
+    );
+  }
 
-    if (!req.identity || !req.identity.email) {
-      throw APIError.invalidArgument("identity.email is required");
-    }
+  if (!req.identity || !req.identity.email) {
+    throw APIError.invalidArgument("identity.email is required");
+  }
 
-    if (!isValidEmail(req.identity.email)) {
-      throw APIError.invalidArgument("identity.email must be a valid email address");
-    }
+  if (!isValidEmail(req.identity.email)) {
+    throw APIError.invalidArgument("identity.email must be a valid email address");
+  }
 
-    // Normalize metadata (default to {})
-    const metadata = req.metadata || {};
+  // Normalize metadata (default to {})
+  const metadata = req.metadata || {};
 
-    // Prepare name and source for update (only if provided and not empty)
-    const nameToUpdate = req.identity.name?.trim() || null;
-    const sourceToUpdate = req.identity.source?.trim() || null;
+  // Prepare name and source for update (only if provided and not empty)
+  const nameToUpdate = req.identity.name?.trim() || null;
+  const sourceToUpdate = req.identity.source?.trim() || null;
 
-    // Step 1: Upsert identity
-    // If email exists, reuse identity_id and update last_seen_at = now(), name/source if provided
-    // (do not erase existing name if new is empty)
-    // If new, insert with first_identified_at = now(), last_seen_at = now()
-    const identityResult = await db.queryRow<{
-      identity_id: string;
-      first_identified_at: Date;
-    }>`
-      INSERT INTO identities (
-        email,
-        name,
-        source,
-        first_identified_at,
-        last_seen_at,
-        metadata
-      ) VALUES (
-        ${req.identity.email},
-        ${nameToUpdate},
-        ${sourceToUpdate},
-        now(),
-        now(),
-        ${JSON.stringify(metadata)}
-      )
-      ON CONFLICT (email) DO UPDATE SET
-        last_seen_at = now(),
-        name = COALESCE(${nameToUpdate}, identities.name),
-        source = COALESCE(${sourceToUpdate}, identities.source),
-        metadata = ${JSON.stringify(metadata)}
-      RETURNING identity_id, first_identified_at
-    `;
+  // Step 1: Upsert identity
+  const identityResult = await db.queryRow<{
+    identity_id: string;
+    first_identified_at: Date;
+  }>`
+    INSERT INTO identities (
+      email,
+      name,
+      source,
+      first_identified_at,
+      last_seen_at,
+      metadata
+    ) VALUES (
+      ${req.identity.email},
+      ${nameToUpdate},
+      ${sourceToUpdate},
+      now(),
+      now(),
+      ${JSON.stringify(metadata)}
+    )
+    ON CONFLICT (email) DO UPDATE SET
+      last_seen_at = now(),
+      name = COALESCE(${nameToUpdate}, identities.name),
+      source = COALESCE(${sourceToUpdate}, identities.source),
+      metadata = ${JSON.stringify(metadata)}
+    RETURNING identity_id, first_identified_at
+  `;
 
-    if (!identityResult) {
-      throw new Error("Failed to upsert identity");
-    }
+  if (!identityResult) {
+    throw new Error("Failed to upsert identity");
+  }
 
-    const identityId = identityResult.identity_id;
+  const identityId = identityResult.identity_id;
 
-    // Step 2: Link sessions
-    // Update sessions set identity_id = identity_id where anonymous_id = request.anonymous_id
-    // (Do not change anonymous_id or session_id)
+  // Step 2: Link sessions
+  await db.exec`
+    UPDATE sessions
+    SET identity_id = ${identityId}
+    WHERE anonymous_id = ${req.anonymous_id}
+  `;
+
+  // Step 3: Backfill events
+  await db.exec`
+    UPDATE events
+    SET identity_id = ${identityId}
+    WHERE anonymous_id = ${req.anonymous_id}
+      AND identity_id IS NULL
+  `;
+
+  // Step 4: Merge intent_subject_scores
+  const anonymousScore = await db.queryRow<{
+    total_score: number;
+    last_event_at: Date | null;
+    last_threshold_emitted: ThresholdBand | null;
+  }>`
+    SELECT total_score, last_event_at, last_threshold_emitted
+    FROM intent_subject_scores
+    WHERE subject_type = 'anonymous' AND subject_id = ${req.anonymous_id}
+  `;
+
+  const previousAnonymousScore = anonymousScore?.total_score ?? 0;
+  const anonymousLastEventAt = anonymousScore?.last_event_at;
+
+  const identityScoreBefore = await db.queryRow<{
+    total_score: number;
+    last_event_at: Date | null;
+    last_threshold_emitted: ThresholdBand | null;
+  }>`
+    SELECT total_score, last_event_at, last_threshold_emitted
+    FROM intent_subject_scores
+    WHERE subject_type = 'identity' AND subject_id = ${identityId}
+  `;
+
+  const previousIdentityScore = identityScoreBefore?.total_score ?? 0;
+  const identityLastEventAt = identityScoreBefore?.last_event_at;
+
+  const totalIdentityScore = previousIdentityScore + previousAnonymousScore;
+
+  let mergedLastEventAt: Date | null = null;
+  if (anonymousLastEventAt && identityLastEventAt) {
+    mergedLastEventAt =
+      anonymousLastEventAt > identityLastEventAt
+        ? anonymousLastEventAt
+        : identityLastEventAt;
+  } else if (anonymousLastEventAt) {
+    mergedLastEventAt = anonymousLastEventAt;
+  } else if (identityLastEventAt) {
+    mergedLastEventAt = identityLastEventAt;
+  }
+
+  const previousIdentityBand = identityScoreBefore?.last_threshold_emitted ?? null;
+
+  await db.exec`
+    INSERT INTO intent_subject_scores (
+      subject_type,
+      subject_id,
+      total_score,
+      last_event_at,
+      updated_at
+    ) VALUES (
+      'identity',
+      ${identityId},
+      ${totalIdentityScore},
+      ${mergedLastEventAt ? mergedLastEventAt.toISOString() : null},
+      now()
+    )
+    ON CONFLICT (subject_type, subject_id) DO UPDATE SET
+      total_score = ${totalIdentityScore},
+      last_event_at = ${mergedLastEventAt ? mergedLastEventAt.toISOString() : null},
+      updated_at = now()
+  `;
+
+  const newBand = bandFromScore(totalIdentityScore);
+  const thresholdEmitted = shouldEmitThreshold(previousIdentityBand, newBand);
+
+  if (thresholdEmitted) {
     await db.exec`
-      UPDATE sessions
-      SET identity_id = ${identityId}
-      WHERE anonymous_id = ${req.anonymous_id}
-    `;
-
-    // Step 3: Backfill events
-    // Update events set identity_id = identity_id
-    // where anonymous_id = request.anonymous_id and identity_id is NULL
-    // Keep events immutable conceptually, but backfill identity_id is explicitly allowed for promotion
-    await db.exec`
-      UPDATE events
-      SET identity_id = ${identityId}
-      WHERE anonymous_id = ${req.anonymous_id}
-        AND identity_id IS NULL
-    `;
-
-    // Step 4: Merge intent_scores
-    // Read anonymous_score (if missing, treat as 0)
-    // Read identity_score (if missing, treat as 0)
-    // total_identity_score = identity_score + anonymous_score
-    // Upsert identity intent_scores row to total_identity_score, 
-    // last_event_at = max(identity.last_event_at, anonymous.last_event_at), updated_at=now()
-
-    // Read anonymous score
-    const anonymousScore = await db.queryRow<{
-      total_score: number;
-      last_event_at: Date | null;
-      last_threshold_emitted: ThresholdBand | null;
-    }>`
-      SELECT total_score, last_event_at, last_threshold_emitted
-      FROM intent_scores
-      WHERE subject_type = 'anonymous' AND subject_id = ${req.anonymous_id}
-    `;
-
-    const previousAnonymousScore = anonymousScore?.total_score ?? 0;
-    const anonymousLastEventAt = anonymousScore?.last_event_at;
-
-    // Read identity score (before merge)
-    const identityScoreBefore = await db.queryRow<{
-      total_score: number;
-      last_event_at: Date | null;
-      last_threshold_emitted: ThresholdBand | null;
-    }>`
-      SELECT total_score, last_event_at, last_threshold_emitted
-      FROM intent_scores
+      UPDATE intent_subject_scores
+      SET last_threshold_emitted = ${newBand}
       WHERE subject_type = 'identity' AND subject_id = ${identityId}
     `;
+  }
 
-    const previousIdentityScore = identityScoreBefore?.total_score ?? 0;
-    const identityLastEventAt = identityScoreBefore?.last_event_at;
+  const matchingLead = await db.queryRow<{ id: string }>`
+    SELECT id FROM marketing_leads WHERE lower(email) = lower(${req.identity.email}) LIMIT 1
+  `;
 
-    // Calculate merged score
-    const totalIdentityScore = previousIdentityScore + previousAnonymousScore;
-
-    // Determine last_event_at (max of both, or whichever exists)
-    let mergedLastEventAt: Date | null = null;
-    if (anonymousLastEventAt && identityLastEventAt) {
-      mergedLastEventAt = anonymousLastEventAt > identityLastEventAt 
-        ? anonymousLastEventAt 
-        : identityLastEventAt;
-    } else if (anonymousLastEventAt) {
-      mergedLastEventAt = anonymousLastEventAt;
-    } else if (identityLastEventAt) {
-      mergedLastEventAt = identityLastEventAt;
-    }
-
-    // Get previous threshold band for identity (before merge)
-    const previousIdentityBand = identityScoreBefore?.last_threshold_emitted ?? null;
-
-    // Upsert identity intent_scores with merged values
-    // Note: We'll update last_threshold_emitted in step 5 after threshold evaluation
+  if (matchingLead) {
     await db.exec`
-      INSERT INTO intent_scores (
-        subject_type,
-        subject_id,
-        total_score,
-        last_event_at,
-        updated_at
-      ) VALUES (
-        'identity',
-        ${identityId},
-        ${totalIdentityScore},
-        ${mergedLastEventAt ? mergedLastEventAt.toISOString() : null},
-        now()
-      )
-      ON CONFLICT (subject_type, subject_id) DO UPDATE SET
-        total_score = ${totalIdentityScore},
-        last_event_at = ${mergedLastEventAt ? mergedLastEventAt.toISOString() : null},
-        updated_at = now()
+      UPDATE intent_events
+      SET lead_id = ${matchingLead.id}
+      WHERE anonymous_id = ${req.anonymous_id}
+        AND lead_id IS NULL
     `;
+    await updateLeadRollup(matchingLead.id);
+  }
 
-    // Step 5: Threshold evaluation for identity
-    // Determine new band from total_identity_score using bandFromScore helper
-    // Determine previous band from identity intent_scores.last_threshold_emitted (before update)
-    // threshold_emitted should be true if:
-    //   a) previous band is NULL (first-ever emit)
-    //   OR
-    //   b) new band is higher than previous band (upward movement only)
-    // If threshold_emitted true, update identity intent_scores.last_threshold_emitted = new band
-    // If false, leave last_threshold_emitted unchanged
+  return {
+    ok: true,
+    identity_id: identityId,
+    merged: previousAnonymousScore > 0 || previousIdentityScore > 0,
+    previous_anonymous_score: previousAnonymousScore,
+    previous_identity_score: previousIdentityScore,
+    total_identity_score: totalIdentityScore,
+    band: newBand,
+    threshold_emitted: thresholdEmitted,
+  };
+}
 
-    const newBand = bandFromScore(totalIdentityScore);
-    const thresholdEmitted = shouldEmitThreshold(previousIdentityBand, newBand);
+export const identify = api<IdentifyRequest, IdentifyResponse>(
+  { expose: true, method: "POST", path: "/identify" },
+  identifyInternal
+);
 
-    // Update last_threshold_emitted if threshold was emitted
-    if (thresholdEmitted) {
-      await db.exec`
-        UPDATE intent_scores
-        SET last_threshold_emitted = ${newBand}
-        WHERE subject_type = 'identity' AND subject_id = ${identityId}
-      `;
+export const identifyV1 = api.raw(
+  { expose: true, method: "POST", path: "/api/v1/identify" },
+  async (req, resp) => {
+    applyCorsHeaders(resp, req);
+    try {
+      const body = await readJsonBody(req);
+      if (typeof body !== "object" || body === null) {
+        sendJson(resp, 400, {
+          code: "invalid_argument",
+          message: "body must be a JSON object",
+        });
+        return;
+      }
+      const result = await identifyInternal(body as IdentifyRequest);
+      sendJson(resp, 200, result);
+    } catch (error) {
+      if (error instanceof APIError && error.code === "invalid_argument") {
+        sendJson(resp, 400, {
+          code: "invalid_argument",
+          message: error.message,
+        });
+        return;
+      }
+      sendJson(resp, 500, {
+        code: "internal",
+        message: error instanceof Error ? error.message : "Internal error",
+      });
     }
+  }
+);
 
-    // Note: We do NOT delete anonymous intent_scores row (as per requirements)
-
-    return {
-      ok: true,
-      identity_id: identityId,
-      merged: previousAnonymousScore > 0 || previousIdentityScore > 0,
-      previous_anonymous_score: previousAnonymousScore,
-      previous_identity_score: previousIdentityScore,
-      total_identity_score: totalIdentityScore,
-      band: newBand,
-      threshold_emitted: thresholdEmitted,
-    };
+export const identifyV1Options = api.raw(
+  { expose: true, method: "OPTIONS", path: "/api/v1/identify" },
+  (req, resp) => {
+    applyCorsHeaders(resp, req);
+    resp.statusCode = 200;
+    resp.end();
   }
 );
 

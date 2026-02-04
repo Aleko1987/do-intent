@@ -435,7 +435,7 @@ export async function identify(
   const anonymousId = getAnonymousId();
   const apiBase = getApiBaseUrl();
   const trimmedBase = apiBase.replace(/\/$/, '');
-  const endpoint = trimmedBase ? `${trimmedBase}/identify` : '/identify';
+  const endpoint = trimmedBase ? `${trimmedBase}/api/v1/identify` : '/api/v1/identify';
   
   const payload = {
     anonymous_id: anonymousId,

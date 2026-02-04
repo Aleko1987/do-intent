@@ -81,6 +81,14 @@ export default function EventsTab() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="page_view">Page View</SelectItem>
+                <SelectItem value="time_on_page">Time on Page</SelectItem>
+                <SelectItem value="scroll_depth">Scroll Depth</SelectItem>
+                <SelectItem value="click">Click</SelectItem>
+                <SelectItem value="pricing_view">Pricing View</SelectItem>
+                <SelectItem value="form_start">Form Start</SelectItem>
+                <SelectItem value="form_submit">Form Submit</SelectItem>
+                <SelectItem value="return_visit">Return Visit</SelectItem>
                 <SelectItem value="post_published">Post Published</SelectItem>
                 <SelectItem value="link_clicked">Link Clicked</SelectItem>
                 <SelectItem value="inbound_message">Inbound Message</SelectItem>

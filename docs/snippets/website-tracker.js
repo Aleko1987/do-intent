@@ -354,7 +354,7 @@
    */
   function identify(email, name) {
     const anonymousId = getAnonymousId();
-    const endpoint = API_BASE + '/identify';
+    const endpoint = API_BASE + '/api/v1/identify';
     
     const payload = {
       anonymous_id: anonymousId,
