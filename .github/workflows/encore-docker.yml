@@ -36,6 +36,8 @@ jobs:
         run: cd backend && npm ci
 
       - name: Build frontend assets for SPA
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
         run: cd backend && npm run build
 
       - name: Install Encore
