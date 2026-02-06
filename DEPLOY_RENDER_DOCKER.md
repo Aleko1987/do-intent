@@ -52,11 +52,11 @@ Add the following environment variables in the Render dashboard:
   - Format: `postgresql://user:password@host:port/database`
   - You can find this in your Render Postgres service dashboard
 
-- `ENABLE_DB` - Set to `true` to enable `/track` writes to Postgres
+- `ENABLE_DB` - Set to `true` to enable `/track` and `/api/v1/ingest` persistence
 
 - `CLERK_SECRET_KEY` - Your Clerk secret key for authentication
 
-- `INGEST_API_KEY` - API key for website ingestion endpoints
+- `INGEST_API_KEY` - API key for website ingestion endpoints (`x-ingest-api-key`)
 
 - `NODE_ENV` - Set to `production`
 
@@ -67,6 +67,7 @@ Add the following environment variables in the Render dashboard:
 - `ALLOWED_INGEST_ORIGINS` - Comma-separated list of allowed origin hostnames for website ingestion endpoints
   - Example: `example.com,app.example.com`
   - If not set, all origins are allowed
+- `DISABLE_AUTH_FOR_INTENT_LIST` - Set to `true` to enable `/intent-scorer/leads/public` (testing only)
 
 #### Database Split Variables (if needed)
 
@@ -87,8 +88,9 @@ psql "$DATABASE_URL" -f docs/intent-tracking-schema.sql
 
 ### 5. Configure Health Check
 
-- **Health Check Path**: Leave empty or set to `/` (Encore doesn't expose a specific health endpoint by default)
+- **Health Check Path**: `/healthz`
 - **Health Check Timeout**: Default is fine
+- **Optional**: `/health/version` returns build metadata; `/` returns a simple JSON payload
 
 ### 6. Deploy
 

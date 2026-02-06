@@ -57,7 +57,7 @@ done
 
 ### Local dev without Docker (PowerShell)
 
-1. Set DATABASE_URL (and ENABLE_DB if you want `/track` writes):
+1. Set DATABASE_URL (and ENABLE_DB if you want `/track` and `/api/v1/ingest` persistence):
    ```powershell
    $env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/do_intent"
    $env:ENABLE_DB = "true"
@@ -73,9 +73,12 @@ done
    encore run --watch=false --browser=never --port=4001
    ```
 
-4. Test healthz and dbinfo endpoints:
+4. Test health and debug endpoints:
    ```powershell
+   curl http://localhost:4001/
    curl http://localhost:4001/healthz
+   curl http://localhost:4001/health/version
+   curl http://localhost:4001/api/v1/ready
    curl http://localhost:4001/api/v1/debug/dbinfo
    ```
 
@@ -173,7 +176,7 @@ git push origin main
 
 #### Secrets (Required in Production)
 
-- `IngestApiKey` (secret, **required in production**): API key for website intent event ingestion endpoints. Endpoints require `x-do-intent-key` header matching this value. In production, missing secret causes startup error. In development, endpoints are public if secret is not set.
+- `IngestApiKey` (secret, **required in production**): API key for website ingestion endpoints. `/marketing/ingest-intent-event` and `/api/v1/ingest` require `x-ingest-api-key` in production. `/marketing/identify` uses `x-do-intent-key`.
 
 To set the secret in Encore:
 ```bash
@@ -184,6 +187,8 @@ encore secret set --type prod IngestApiKey <your-api-key>
 #### Environment Variables
 
 - `ALLOWED_INGEST_ORIGINS` (optional): Comma-separated list of allowed origin hostnames for website ingestion endpoints. If set, requests must include `Origin` or `Referer` header with a matching hostname. Supports subdomain matching (e.g., `example.com` matches `app.example.com`). If not set, all origins are allowed.
+- `ENABLE_DB` (optional): Set to `"true"` to persist `/track` and `/api/v1/ingest` writes.
+- `DISABLE_AUTH_FOR_INTENT_LIST` (optional): Enables `/intent-scorer/leads/public` when `"true"`.
 
 Example:
 ```bash
@@ -202,7 +207,7 @@ Example flow:
 # Step 1: Identify user (get lead_id)
 curl -X POST http://localhost:4000/marketing/identify \
   -H "Content-Type: application/json" \
-  -H "x-do-intent-key: your-api-key" \
+  -H "x-do-intent-key: your-identify-key" \
   -H "Origin: https://example.com" \
   -d '{
     "anonymous_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -214,13 +219,29 @@ curl -X POST http://localhost:4000/marketing/identify \
 # Step 2: Ingest events with lead_id
 curl -X POST http://localhost:4000/marketing/ingest-intent-event \
   -H "Content-Type: application/json" \
-  -H "x-do-intent-key: your-api-key" \
+  -H "x-ingest-api-key: your-ingest-key" \
   -H "Origin: https://example.com" \
   -d '{
     "event_type": "page_view",
     "lead_id": "<lead_id from identify>",
     "url": "https://example.com/pricing",
     "metadata": { "page_title": "Pricing" }
+  }'
+```
+
+## Anonymous Tracking Flow (Optional)
+
+The `/track` endpoint supports anonymous-first event capture with `session_id` + `anonymous_id`. Persistence is gated by `ENABLE_DB`.
+
+```bash
+curl -X POST http://localhost:4000/track \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event": "page_view",
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "anonymous_id": "22222222-2222-4222-8222-222222222222",
+    "url": "/pricing",
+    "timestamp": "2026-01-01T00:00:00.000Z"
   }'
 ```
 

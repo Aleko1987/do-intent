@@ -2,11 +2,11 @@
 
 ## Overview
 
-The Intent Scorer is a deterministic, rule-based scoring engine that processes intent events and computes scores with full explainability. It operates independently from the existing marketing module and provides a clean separation of concerns.
+The Intent Scorer is a deterministic, rule-based scoring engine that processes intent events, computes scores with full explainability, and supports anonymous-first website tracking. It operates independently from the marketing module while reusing the same Postgres database.
 
 ## Architecture
 
-### Database Schema (Migration 004)
+### Intent Scoring Schema (Migration 004/013)
 
 **intent_scores**
 - Links to intent_events (one-to-one via unique constraint)
@@ -23,6 +23,16 @@ The Intent Scorer is a deterministic, rule-based scoring engine that processes i
 - Supports dynamic point values and enable/disable toggles
 - Pre-seeded with standard event types
 
+### Website Tracking Schema (Migration 006)
+
+**sessions / events / identities**
+- Anonymous-first tracking tables
+- Events are append-only and later promoted to identities
+
+**intent_subject_scores**
+- Incremental scores for anonymous + identity subjects
+- Tracks last threshold emitted for signal gating
+
 ### Backend Service (`backend/intent_scorer/`)
 
 **Core Files:**
@@ -30,13 +40,33 @@ The Intent Scorer is a deterministic, rule-based scoring engine that processes i
 - `types.ts` - TypeScript interfaces and types
 - `engine.ts` - Deterministic scoring logic (rules v1)
 - `auto_score.ts` - Auto-scoring on event insert
+- `track.ts` - Website tracking endpoint
+- `identify.ts` - Anonymous -> identity promotion
+- `health.ts` - /health + /ready endpoints
 
 **API Endpoints:**
-- `list_events.ts` - Filter and search events with scores
-- `compute_score.ts` - Manually score a single event
-- `recompute_scores.ts` - Batch recompute (e.g., last 30 days)
-- `list_rules.ts` - Get all scoring rules
-- `update_rule.ts` - Edit rule points, status, or description
+Scoring + rules:
+- `POST /intent-scorer/events`
+- `POST /intent-scorer/compute`
+- `POST /intent-scorer/recompute`
+- `GET /intent-scorer/rules`
+- `POST /intent-scorer/rules/update`
+
+Lead insights:
+- `POST /intent-scorer/leads` (Clerk auth required)
+- `POST /intent-scorer/leads/public` (requires `DISABLE_AUTH_FOR_INTENT_LIST=true`)
+- `POST /intent-scorer/lead-rollups`
+- `POST /intent-scorer/lead-trend`
+- `POST /intent-scorer/lead-top-signals`
+- `POST /intent-scorer/seed-demo`
+
+Website tracking:
+- `POST /track` / `POST /api/v1/track`
+- `POST /identify` / `POST /api/v1/identify`
+
+Health:
+- `GET /health`, `GET /ready`, `GET /api/v1/ready`
+- `GET /intent-scorer/ping`
 
 ### Scoring Engine (Rules V1)
 
@@ -68,55 +98,36 @@ Each score includes an array of human-readable strings explaining the calculatio
 ]
 ```
 
-### Frontend UI (`/intent-scorer` route)
+### Frontend UI
 
-**Three Tabs:**
-
-1. **Events Tab**
-   - Filter by source, event type, date range
-   - Search in payload (JSON)
-   - Displays event metadata and scoring reasons
-   - Pagination support
-
-2. **Scores Tab**
-   - Shows scored events sorted by score (high to low)
-   - Summary statistics (total, average, highest)
-   - Manual "Recompute" button with configurable days
-   - Full scoring breakdown per event
-
-3. **Rules Tab**
-   - Base Scores section (per event type)
-   - Modifiers section (payload-based)
-   - Inline editing of points and descriptions
-   - Toggle rules on/off without deletion
+- `/intent-scorer`: Leads, Events, Scores, Rules tabs
+- `/lead-intent`: lead-level rollups + drawer
 
 ### Auto-Scoring Integration
 
 The intent scorer is automatically triggered when events are created via:
 - `/marketing/leads/:id/events` (create_event.ts)
 - `/marketing/events` (webhook_event.ts)
+- `/marketing/ingest-intent-event` (website ingestion)
 
 Flow:
-1. Event created in `intent_events` table
-2. `autoScoreEvent()` called immediately
-3. Score computed using current active rules
+1. Event created in `intent_events`
+2. `autoScoreEvent()` called
+3. Score computed using active rules
 4. Score stored in `intent_scores`
-5. Lead rollup updated (7d/30d aggregations)
-6. Existing marketing scoring continues (backward compatible)
+5. Lead rollup updated (7d/30d)
 
 ## Usage
 
 ### Accessing the UI
 
-Navigate to `/intent-scorer` in your browser to access the Intent Scorer dashboard.
+Navigate to `/intent-scorer` or `/lead-intent`.
 
 ### Manual Scoring
 
-To manually score or rescore events:
 1. Go to the Scores tab
 2. Set the number of days to recompute (default: 30)
 3. Click "Run Scoring"
-4. All events in that window will be rescored with current rules
 
 ### Editing Rules
 
@@ -124,8 +135,7 @@ To manually score or rescore events:
 2. Click "Edit" on any base score or modifier
 3. Change the points value or description
 4. Click "Save"
-5. Toggle rules on/off using the "Enabled/Disabled" button
-6. Recompute scores to apply changes to historical events
+5. Recompute scores to apply changes
 
 ### API Examples
 
@@ -159,29 +169,6 @@ Body: {
 }
 ```
 
-**PowerShell Example (Protected Endpoint):**
-```powershell
-$BASE_URL = "https://do-intent.onrender.com"
-$AUTH_TOKEN = "your-clerk-token"
-
-$headers = @{
-    "Content-Type" = "application/json"
-    "Authorization" = "Bearer $AUTH_TOKEN"
-}
-
-$body = @{
-    limit = 50
-    offset = 0
-    sort_by = "score_7d"
-    sort_order = "desc"
-} | ConvertTo-Json
-
-Invoke-RestMethod -Method Post -Uri "$BASE_URL/intent-scorer/leads" `
-    -Headers $headers -Body $body
-```
-
-**Note:** Without the `Authorization` header, this endpoint returns `401 Unauthorized`.
-
 **List Leads (Public - Testing Only):**
 ```typescript
 POST /intent-scorer/leads/public
@@ -191,103 +178,109 @@ Body: {
 }
 ```
 
-**PowerShell Example (Public Endpoint):**
-```powershell
-# This endpoint is only available when DISABLE_AUTH_FOR_INTENT_LIST=true
-# When disabled, returns 404 with message explaining how to enable
-
-$body = @{
-    limit = 50
-    offset = 0
-} | ConvertTo-Json
-
-Invoke-RestMethod -Method Post -Uri "$BASE_URL/intent-scorer/leads/public" `
-    -ContentType "application/json" -Body $body
-```
-
-**Environment Variable:** Set `DISABLE_AUTH_FOR_INTENT_LIST=true` to enable the public endpoint. This is for testing only and should not be enabled in production.
-
-**Compute Score for Event:**
+**Lead Trend (Sparkline):**
 ```typescript
-POST /intent-scorer/compute
+POST /intent-scorer/lead-trend
 {
-  "event_id": "uuid-here"
+  "lead_id": "<lead-id>",
+  "days": 14
 }
 ```
 
-**Recompute Last 30 Days:**
+**Lead Top Signals:**
 ```typescript
-POST /intent-scorer/recompute
+POST /intent-scorer/lead-top-signals
 {
-  "days": 30
+  "lead_id": "<lead-id>",
+  "limit": 10
 }
 ```
 
-**Update Rule:**
+**Seed Demo Data:**
 ```typescript
-POST /intent-scorer/rules/update
-{
-  "rule_key": "base_link_clicked",
-  "points": 10,
-  "is_active": true
-}
+POST /intent-scorer/seed-demo
 ```
 
-**PowerShell Manual Test (Tracking):**
+**Website Tracking (Anonymous-First):**
 ```powershell
 $payload = @{
   event = "page_view"
   session_id = "11111111-1111-4111-8111-111111111111"
   anonymous_id = "22222222-2222-4222-8222-222222222222"
   url = "/"
-  referrer = ""
   timestamp = (Get-Date).ToUniversalTime().ToString("o")
-  value = 1
   metadata = @{ source = "powershell_test" }
 } | ConvertTo-Json -Depth 4
 
-Invoke-RestMethod -Method Post -Uri "https://do-intent-web.onrender.com/track" `
+Invoke-RestMethod -Method Post -Uri "https://do-intent.onrender.com/track" `
   -ContentType "application/json" -Body $payload
 ```
+
+**Website Identify (Anonymous -> Identity):**
+```powershell
+$payload = @{
+  anonymous_id = "22222222-2222-4222-8222-222222222222"
+  identity = @{
+    email = "user@example.com"
+    name = "Jane Doe"
+    source = "website"
+  }
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod -Method Post -Uri "https://do-intent.onrender.com/api/v1/identify" `
+  -ContentType "application/json" -Body $payload
+```
+
+**Website Ingest (Lead-Based):**
+```powershell
+$headers = @{
+  "Content-Type" = "application/json"
+  "x-ingest-api-key" = "your-api-key"
+}
+$payload = @{
+  event_type = "page_view"
+  event_source = "website"
+  lead_id = "<lead-id>"
+  url = "https://example.com/pricing"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri "https://do-intent.onrender.com/api/v1/ingest" `
+  -Headers $headers -Body $payload
+```
+
+## Environment Variables
+
+- `ENABLE_DB`: gates `/track` and `/api/v1/track` persistence
+- `DATABASE_URL` or `DATABASE_*`: Postgres connection config
+- `INGEST_API_KEY`: required in production for `/marketing/ingest-intent-event` and `/api/v1/ingest` (`x-ingest-api-key`)
+- `ALLOWED_INGEST_ORIGINS`: optional origin allowlist
+- `DISABLE_AUTH_FOR_INTENT_LIST`: enables `/intent-scorer/leads/public`
+- `CLERK_SECRET_KEY`: required for auth-protected endpoints
 
 ## Common Errors
 
 ### 401 Unauthorized
-
-**Cause:** Missing or invalid `Authorization` header when calling protected endpoints like `/intent-scorer/leads`.
-
-**Solution:** Include a valid Clerk token in the `Authorization` header:
-```powershell
-$headers = @{ "Authorization" = "Bearer your-clerk-token" }
-```
+- Missing or invalid `Authorization` header for `/intent-scorer/leads`
+- Missing or invalid `x-ingest-api-key` for `/marketing/ingest-intent-event` or `/api/v1/ingest`
 
 ### 404 Not Found
+- Public endpoint (`/intent-scorer/leads/public`) disabled unless `DISABLE_AUTH_FOR_INTENT_LIST=true`
 
-**Possible causes:**
-- Wrong endpoint path
-- Public endpoint (`/intent-scorer/leads/public`) is disabled (env var `DISABLE_AUTH_FOR_INTENT_LIST` is not set to `"true"`)
+### 400 Invalid Argument
+- Missing `lead_id` or `anonymous_id` on ingest requests
+- Missing `url` or `path` for ingest requests
 
-**Solution:** 
-- Verify the endpoint path is correct
-- For public endpoint: Set `DISABLE_AUTH_FOR_INTENT_LIST=true` in environment variables
-
-### 502 Bad Gateway at Base URL
-
-**Cause:** Previously, the root URL (`/`) sometimes returned 502 errors even when the service was healthy.
-
-**Solution:** The root endpoint (`GET /`) now returns a JSON response `{ ok: true, service: "do-intent", ts: "<iso>" }`, resolving this issue. Use `/healthz` for Render health checks.
+### DB Disabled
+- `/track` returns `{ ok: true, stored: false, reason: "db_disabled" }` when `ENABLE_DB` is not `"true"`
+- `/api/v1/ingest` returns `202` with `reason: "db_disabled"` if DB is disabled
 
 ## Key Design Decisions
 
-1. **Deterministic & Explainable**: No LLM dependency in v1. Every score has traceable reasoning.
-
-2. **Backward Compatible**: Existing marketing module continues to work. Intent scorer runs in parallel.
-
-3. **Flexible Rules**: Rules stored in database, editable via UI, versioned for future A/B testing.
-
-4. **Efficient Rollups**: Pre-computed 7d/30d aggregations avoid expensive real-time queries.
-
-5. **Minimal MVP**: Core functionality only. No auth complexity, no external dependencies.
+1. **Deterministic & Explainable**: No LLM dependency in v1.
+2. **Backward Compatible**: Existing marketing module continues to work.
+3. **Flexible Rules**: Rules stored in database, editable via UI.
+4. **Efficient Rollups**: Pre-computed 7d/30d aggregations avoid expensive queries.
+5. **Anonymous-First Tracking**: Promotes identity only when email is known.
 
 ## Future Enhancements
 
@@ -295,45 +288,13 @@ $headers = @{ "Authorization" = "Bearer your-clerk-token" }
 - A/B testing between rule versions
 - Custom modifier conditions via UI
 - Webhook notifications on high scores
-- Lead intent trend visualization
 - Export scored events to CSV/JSON
-
-## Database Queries
-
-The scorer uses Encore.ts template literal syntax for static queries:
-```typescript
-const event = await db.queryRow<Event>`
-  SELECT * FROM intent_events WHERE id = ${eventId}
-`;
-```
-
-And raw query methods for dynamic SQL:
-```typescript
-const events = await db.rawQueryAll<ScoredEvent>(dataQuery, ...params);
-```
-
-## No Environment Variables Required
-
-The Intent Scorer uses the same Neon Postgres database as the rest of the application. No additional configuration is needed.
 
 ## Testing
 
 1. Create test leads in Marketing module
-2. Generate intent events via webhook or UI
+2. Generate intent events via webhook or ingest endpoints
 3. Check Events tab to see raw events
 4. Check Scores tab to see computed scores with reasoning
 5. Edit rules and recompute to verify changes
 6. Monitor lead_intent_rollups for 7d/30d aggregations
-
----
-
-**Status**: ✅ MVP Complete & Ready for Use
-
-All todos completed:
-- ✅ Migration created (intent_scores, lead_intent_rollups, intent_rules)
-- ✅ Service and types defined
-- ✅ Scoring engine implemented (rules v1)
-- ✅ API endpoints created (list, compute, recompute, rules CRUD)
-- ✅ Frontend UI with 3 tabs (Events, Scores, Rules)
-- ✅ Auto-scoring on event insert
-- ✅ Lead rollup calculations (7d/30d)
