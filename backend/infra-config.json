@@ -4,7 +4,7 @@
     "app_id": "do-intent",
     "env_name": "production",
     "env_type": "production",
-    "base_url": { "$env": "BASE_URL" }
+    "base_url": "https://do-intent.onrender.com"
   },
   "secrets": {
     "ClerkSecretKey": { "$env": "CLERK_SECRET_KEY" },
