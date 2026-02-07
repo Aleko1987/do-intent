@@ -4,6 +4,7 @@ import { Pool } from "pg";
 import { randomUUID } from "crypto";
 import { autoScoreEvent } from "./auto_score";
 import { db } from "../db/db";
+import type { JsonObject } from "../internal/json_types";
 
 interface TrackRequest {
   event?: string;
@@ -13,7 +14,7 @@ interface TrackRequest {
   referrer?: string;
   timestamp?: string;
   value?: number;
-  metadata?: Record<string, any>;
+  metadata?: JsonObject;
 }
 
 interface TrackResponse {
@@ -275,14 +276,14 @@ function getDbErrorCode(error?: unknown): string {
   return "db_query_failed";
 }
 
-function ensureObject(value: unknown, field: string): Record<string, any> | null {
+function ensureObject(value: unknown, field: string): JsonObject | null {
   if (value === undefined || value === null) {
     return null;
   }
   if (typeof value !== "object" || Array.isArray(value)) {
     throw APIError.invalidArgument(`${field} must be an object`);
   }
-  return value as Record<string, any>;
+  return value as JsonObject;
 }
 
 function getCorsOrigin(req: RawRequest): string {
@@ -334,7 +335,7 @@ async function insertIntentEvent(
     eventValue: number | null;
     anonymousId: string;
     occurredAt: string;
-    metadata: Record<string, any>;
+    metadata: JsonObject;
     dedupeKey?: string | null;
   }
 ): Promise<string | null> {

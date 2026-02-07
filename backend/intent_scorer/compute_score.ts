@@ -1,5 +1,6 @@
 import { api } from "encore.dev/api";
 import { db } from "../db/db";
+import type { JsonObject } from "../internal/json_types";
 import { computeScore } from "./engine";
 import { updateLeadRollup } from "./rollups";
 import type { ComputeScoreRequest, IntentScore } from "./types";
@@ -11,7 +12,7 @@ export const computeEventScore = api<ComputeScoreRequest, IntentScore>(
       id: string;
       event_type: string;
       event_source: string;
-      metadata: Record<string, any>;
+      metadata: JsonObject;
       lead_id: string | null;
     }>`
       SELECT id, event_type, event_source, metadata, lead_id 

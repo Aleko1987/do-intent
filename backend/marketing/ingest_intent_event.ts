@@ -2,6 +2,7 @@ import { api, RawRequest, RawResponse } from "encore.dev/api";
 import { timingSafeEqual } from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/db";
+import type { JsonObject } from "../internal/json_types";
 import { resolveIngestApiKey } from "../internal/env_secrets";
 import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
@@ -46,7 +47,7 @@ interface IngestIntentEventPayload {
   utm_medium?: string;
   utm_campaign?: string;
   utm_content?: string;
-  metadata?: Record<string, any>;
+  metadata?: JsonObject;
 }
 
 interface IngestIntentEventResponse {
@@ -78,7 +79,7 @@ interface NormalizedPayload {
   lead_id: string | null;
   anonymous_id: string | null;
   dedupe_key: string | null;
-  metadata: Record<string, any>;
+  metadata: JsonObject;
 }
 
 interface NormalizedDbError {
@@ -276,7 +277,7 @@ function parseOptionalString(value: unknown): string | null {
 }
 
 function setMetadataValue(
-  metadata: Record<string, any>,
+  metadata: JsonObject,
   key: string,
   value: string | null
 ): void {
@@ -395,14 +396,12 @@ function validatePayload(
   const payloadAnonymousId = parseOptionalString(payload.anonymous_id);
   const metadataAnonymousId =
     payload.metadata && typeof payload.metadata === "object"
-      ? parseOptionalString(
-          (payload.metadata as Record<string, unknown>).anonymous_id
-        )
+      ? parseOptionalString((payload.metadata as JsonObject).anonymous_id)
       : null;
   const payloadDedupeKey = parseOptionalString(payload.dedupe_key);
   const metadataDedupeKey =
     payload.metadata && typeof payload.metadata === "object"
-      ? parseOptionalString((payload.metadata as Record<string, unknown>).dedupe_key)
+      ? parseOptionalString((payload.metadata as JsonObject).dedupe_key)
       : null;
   const anonymousId = payloadAnonymousId ?? metadataAnonymousId ?? null;
   const dedupeKey = payloadDedupeKey ?? metadataDedupeKey ?? null;
@@ -438,7 +437,7 @@ function validatePayload(
     errors.event_source = "event_source must be a string";
   }
 
-  let metadata: Record<string, any> = {};
+  let metadata: JsonObject = {};
   if (payload.metadata !== undefined) {
     if (payload.metadata && typeof payload.metadata === "object") {
       metadata = { ...payload.metadata };

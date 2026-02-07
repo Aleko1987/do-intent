@@ -1,5 +1,6 @@
 import { db } from "../db/db";
 import { tableExists } from "../internal/db";
+import type { JsonObject } from "../internal/json_types";
 import { computeScore } from "./engine";
 import { updateLeadRollup } from "./rollups";
 
@@ -16,7 +17,7 @@ export async function autoScoreEvent(eventId: string): Promise<boolean> {
     id: string;
     event_type: string;
     event_source: string;
-    metadata: Record<string, any>;
+    metadata: JsonObject;
     lead_id: string | null;
   }>`
     SELECT id, event_type, event_source, metadata, lead_id 

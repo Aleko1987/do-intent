@@ -1,5 +1,6 @@
 import { api } from "encore.dev/api";
 import { db } from "../db/db";
+import type { JsonObject } from "../internal/json_types";
 import { recomputeScores } from "./recompute_scores";
 
 interface SeedDemoResponse {
@@ -71,7 +72,7 @@ export const seedDemo = api<void, SeedDemoResponse>(
           const occurredAt = new Date();
           occurredAt.setDate(occurredAt.getDate() - daysAgo);
 
-          const metadata: Record<string, any> = {};
+          const metadata: JsonObject = {};
           if (template.type === "link_clicked") {
             metadata.utm_medium = "social";
             metadata.clicks = Math.floor(Math.random() * 10) + 1;

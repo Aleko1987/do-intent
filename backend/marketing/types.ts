@@ -1,3 +1,5 @@
+import type { JsonObject } from "../internal/json_types";
+
 export interface MarketingLead {
   id: string;
   company_name: string | null;
@@ -24,7 +26,7 @@ export interface IntentEvent {
   event_source: string;
   event_value: number;
   dedupe_key: string | null;
-  metadata: Record<string, any>;
+  metadata: JsonObject;
   occurred_at: string;
   created_at: string;
 }

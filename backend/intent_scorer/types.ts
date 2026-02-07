@@ -16,12 +16,14 @@ export interface LeadIntentRollup {
   updated_at: string;
 }
 
+import type { JsonObject } from "../internal/json_types";
+
 export interface IntentRule {
   id: string;
   rule_key: string;
   rule_type: 'base_score' | 'modifier';
   event_type: string | null;
-  modifier_condition: Record<string, any> | null;
+  modifier_condition: JsonObject | null;
   points: number;
   is_active: boolean;
   description: string | null;
@@ -34,7 +36,7 @@ export interface ScoredEvent {
   lead_id: string | null;
   event_type: string;
   event_source: string;
-  metadata: Record<string, any>;
+  metadata: JsonObject;
   occurred_at: string;
   score: number;
   confidence: number;

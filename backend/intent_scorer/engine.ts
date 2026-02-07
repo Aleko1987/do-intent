@@ -1,10 +1,11 @@
 import { db } from "../db/db";
 import type { ScoreResult, IntentRule } from "./types";
+import type { JsonObject } from "../internal/json_types";
 
 interface EventData {
   event_type: string;
   event_source: string;
-  metadata: Record<string, any>;
+  metadata: JsonObject;
 }
 
 export async function computeScore(eventData: EventData): Promise<ScoreResult> {
@@ -76,8 +77,8 @@ export async function computeScore(eventData: EventData): Promise<ScoreResult> {
 }
 
 function applyModifier(
-  metadata: Record<string, any>,
-  condition: Record<string, any>
+  metadata: JsonObject,
+  condition: JsonObject
 ): boolean {
   for (const [key, value] of Object.entries(condition)) {
     if (key === "utm_medium") {
@@ -92,8 +93,8 @@ function applyModifier(
 }
 
 function calculateModifierPoints(
-  condition: Record<string, any>,
-  metadata: Record<string, any>,
+  condition: JsonObject,
+  metadata: JsonObject,
   basePoints: number
 ): number {
   if (condition.clicks !== undefined) {
