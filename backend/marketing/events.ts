@@ -1,6 +1,7 @@
 import { api, APIError } from "encore.dev/api";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/db";
+import type { JsonObject } from "../internal/json_types";
 
 interface EventsQuery {
   limit?: string;
@@ -20,7 +21,7 @@ interface EventItem {
   anonymous_id: string | null;
   dedupe_key: string | null;
   occurred_at: string;
-  metadata: Record<string, unknown>;
+  metadata: JsonObject;
 }
 
 interface EventsResponse {
