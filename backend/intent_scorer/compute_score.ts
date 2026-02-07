@@ -4,9 +4,9 @@ import { computeScore } from "./engine";
 import { updateLeadRollup } from "./rollups";
 import type { ComputeScoreRequest, IntentScore } from "./types";
 
-export const computeEventScore = api(
+export const computeEventScore = api<ComputeScoreRequest, IntentScore>(
   { method: "POST", path: "/intent-scorer/compute", expose: true },
-  async (req: ComputeScoreRequest): Promise<IntentScore> => {
+  async (req): Promise<IntentScore> => {
     const event = await db.queryRow<{
       id: string;
       event_type: string;

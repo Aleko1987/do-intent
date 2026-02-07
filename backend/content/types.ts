@@ -18,12 +18,14 @@ export interface ContentItem {
   updated_at: string;
 }
 
+import type { JsonObject } from "../internal/json_types";
+
 export interface ContentPostLog {
   id: string;
   content_item_id: string;
   channel: string;
   posted_at: string | null;
   status: string;
-  platform_response: Record<string, any>;
+  platform_response: JsonObject;
   created_at: string;
 }

@@ -1,6 +1,7 @@
 import { api } from "encore.dev/api";
 import { getAuthData } from "~encore/auth";
 import { db } from "../db/db";
+import type { JsonObject } from "../internal/json_types";
 import type { IntentEvent, MarketingLead } from "./types";
 import { updateLeadScoring } from "./scoring";
 import { checkAndPushToSales } from "./auto_push";
@@ -12,7 +13,7 @@ interface CreateEventRequest {
   event_source: string;
   anonymous_id?: string;
   dedupe_key?: string;
-  metadata?: Record<string, any>;
+  metadata?: JsonObject;
   occurred_at?: string;
 }
 

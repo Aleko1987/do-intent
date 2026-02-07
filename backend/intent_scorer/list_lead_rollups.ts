@@ -2,9 +2,9 @@ import { api } from "encore.dev/api";
 import { db } from "../db/db";
 import type { LeadRollupsRequest, LeadRollupsResponse, LeadRollupWithLead } from "./types";
 
-export const listLeadRollups = api(
+export const listLeadRollups = api<LeadRollupsRequest, LeadRollupsResponse>(
   { method: "POST", path: "/intent-scorer/lead-rollups", expose: true },
-  async (req: LeadRollupsRequest): Promise<LeadRollupsResponse> => {
+  async (req): Promise<LeadRollupsResponse> => {
     const limit = req.limit || 50;
     const offset = req.offset || 0;
     const search = req.search?.trim() || "";

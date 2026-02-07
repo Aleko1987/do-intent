@@ -2,9 +2,9 @@ import { api } from "encore.dev/api";
 import { db } from "../db/db";
 import type { LeadTrendRequest, LeadTrendResponse, DailyScoreBucket } from "./types";
 
-export const getLeadTrend = api(
+export const getLeadTrend = api<LeadTrendRequest, LeadTrendResponse>(
   { method: "POST", path: "/intent-scorer/lead-trend", expose: true },
-  async (req: LeadTrendRequest): Promise<LeadTrendResponse> => {
+  async (req): Promise<LeadTrendResponse> => {
     const days = req.days || 14;
 
     const query = `

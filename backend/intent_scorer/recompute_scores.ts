@@ -9,9 +9,9 @@ interface RecomputeResponse {
   message: string;
 }
 
-export const recomputeScores = api(
+export const recomputeScores = api<RecomputeScoresRequest, RecomputeResponse>(
   { method: "POST", path: "/intent-scorer/recompute", expose: true },
-  async (req: RecomputeScoresRequest): Promise<RecomputeResponse> => {
+  async (req): Promise<RecomputeResponse> => {
     const days = req.days || 30;
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - days);

@@ -7,7 +7,7 @@ interface SeedDemoResponse {
   events_created: number;
 }
 
-export const seedDemo = api(
+export const seedDemo = api<void, SeedDemoResponse>(
   { method: "POST", path: "/intent-scorer/seed-demo", expose: true },
   async (): Promise<SeedDemoResponse> => {
     const leads = [

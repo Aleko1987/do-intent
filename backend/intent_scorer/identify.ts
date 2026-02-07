@@ -1,5 +1,6 @@
 import { api, APIError, RawRequest, RawResponse } from "encore.dev/api";
 import { db } from "../db/db";
+import type { JsonObject } from "../internal/json_types";
 import {
   ThresholdBand,
   bandFromScore,
@@ -15,7 +16,7 @@ interface IdentifyRequest {
     name?: string;
     source?: string;
   };
-  metadata?: Record<string, any>;
+  metadata?: JsonObject;
 }
 
 // Response shape

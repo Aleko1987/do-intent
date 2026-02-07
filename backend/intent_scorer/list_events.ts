@@ -7,9 +7,9 @@ interface ListEventsResponse {
   total: number;
 }
 
-export const listEvents = api(
+export const listEvents = api<EventFilters, ListEventsResponse>(
   { method: "POST", path: "/intent-scorer/events", expose: true },
-  async (filters: EventFilters): Promise<ListEventsResponse> => {
+  async (filters): Promise<ListEventsResponse> => {
     const limit = filters.limit || 50;
     const offset = filters.offset || 0;
 

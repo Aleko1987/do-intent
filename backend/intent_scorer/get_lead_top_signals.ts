@@ -2,9 +2,9 @@ import { api } from "encore.dev/api";
 import { db } from "../db/db";
 import type { LeadTopSignalsRequest, LeadTopSignalsResponse, TopSignalEvent } from "./types";
 
-export const getLeadTopSignals = api(
+export const getLeadTopSignals = api<LeadTopSignalsRequest, LeadTopSignalsResponse>(
   { method: "POST", path: "/intent-scorer/lead-top-signals", expose: true },
-  async (req: LeadTopSignalsRequest): Promise<LeadTopSignalsResponse> => {
+  async (req): Promise<LeadTopSignalsResponse> => {
     const limit = req.limit || 10;
 
     const query = `

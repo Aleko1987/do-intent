@@ -1,5 +1,6 @@
 import { api } from "encore.dev/api";
 import { db } from "../db/db";
+import type { JsonObject } from "../internal/json_types";
 import type { IntentEvent, MarketingLead } from "./types";
 import { updateLeadScoring } from "./scoring";
 import { checkAndPushToSales } from "./auto_push";
@@ -12,7 +13,7 @@ interface WebhookEventRequest {
   };
   event_type: string;
   event_source?: string;
-  metadata?: Record<string, any>;
+  metadata?: JsonObject;
   occurred_at?: string;
   dedupe_key?: string;
   anonymous_id?: string;
@@ -39,8 +40,8 @@ function normalizeEventType(eventType: string): string {
   return VALID_EVENT_TYPES.includes(normalized) ? normalized : 'other';
 }
 
-function normalizeMetadata(metadata: Record<string, any>): Record<string, any> {
-  const normalized: Record<string, any> = { ...metadata };
+function normalizeMetadata(metadata: JsonObject): JsonObject {
+  const normalized: JsonObject = { ...metadata };
   
   if (normalized.utm_medium) {
     normalized.utm_medium = String(normalized.utm_medium).toLowerCase();

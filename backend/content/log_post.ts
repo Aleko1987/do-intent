@@ -1,6 +1,7 @@
 import { api } from "encore.dev/api";
 import { getAuthData } from "~encore/auth";
 import { db } from "../db/db";
+import type { JsonObject } from "../internal/json_types";
 import type { ContentPostLog, ContentItem } from "./types";
 
 interface LogPostRequest {
@@ -8,7 +9,7 @@ interface LogPostRequest {
   channel: string;
   posted_at?: string;
   status: string;
-  platform_response?: Record<string, any>;
+  platform_response?: JsonObject;
 }
 
 // Logs a content post to a channel.

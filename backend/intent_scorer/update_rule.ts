@@ -2,9 +2,9 @@ import { api } from "encore.dev/api";
 import { db } from "../db/db";
 import type { UpdateRuleRequest, IntentRule } from "./types";
 
-export const updateRule = api(
+export const updateRule = api<UpdateRuleRequest, IntentRule>(
   { method: "POST", path: "/intent-scorer/rules/update", expose: true },
-  async (req: UpdateRuleRequest): Promise<IntentRule> => {
+  async (req): Promise<IntentRule> => {
     const updates: string[] = [];
     const params: any[] = [];
     let paramCount = 0;
