@@ -9,7 +9,7 @@ interface LogPostRequest {
   channel: string;
   posted_at?: string;
   status: string;
-  platform_response?: JsonObject;
+  platform_response?: string;
 }
 
 // Logs a content post to a channel.
@@ -25,6 +25,17 @@ export const logPost = api<LogPostRequest, ContentPostLog>(
     if (!item) {
       throw new Error("Content item not found");
     }
+    let platformResponse: JsonObject = {};
+    if (req.platform_response) {
+      try {
+        const parsed = JSON.parse(req.platform_response) as JsonObject;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          platformResponse = parsed;
+        }
+      } catch {
+        platformResponse = {};
+      }
+    }
     const log = await db.queryRow<ContentPostLog>`
       INSERT INTO content_post_logs (
         content_item_id,
@@ -38,7 +49,7 @@ export const logPost = api<LogPostRequest, ContentPostLog>(
         ${req.channel},
         ${req.posted_at || new Date().toISOString()},
         ${req.status},
-        ${JSON.stringify(req.platform_response || {})},
+        ${JSON.stringify(platformResponse)},
         now()
       )
       RETURNING *

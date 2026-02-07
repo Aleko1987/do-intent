@@ -16,7 +16,7 @@ interface IdentifyRequest {
     name?: string;
     source?: string;
   };
-  metadata?: JsonObject;
+  metadata?: string;
 }
 
 // Response shape
@@ -142,7 +142,17 @@ async function identifyInternal(req: IdentifyRequest): Promise<IdentifyResponse>
   }
 
   // Normalize metadata (default to {})
-  const metadata = req.metadata || {};
+  let metadata: JsonObject = {};
+  if (req.metadata) {
+    try {
+      const parsed = JSON.parse(req.metadata) as JsonObject;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        metadata = parsed;
+      }
+    } catch {
+      metadata = {};
+    }
+  }
 
   // Prepare name and source for update (only if provided and not empty)
   const nameToUpdate = req.identity.name?.trim() || null;

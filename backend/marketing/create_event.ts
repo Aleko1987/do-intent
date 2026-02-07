@@ -13,7 +13,7 @@ interface CreateEventRequest {
   event_source: string;
   anonymous_id?: string;
   dedupe_key?: string;
-  metadata?: JsonObject;
+  metadata?: string;
   occurred_at?: string;
 }
 
@@ -36,7 +36,17 @@ export const createEvent = api<CreateEventRequest, CreateEventResponse>(
   { expose: true, method: "POST", path: "/marketing/leads/:id/events", auth: true },
   async (req) => {
     const authData = getAuthData()!;
-    const metadata = { ...(req.metadata ?? {}) };
+    let metadata: JsonObject = {};
+    if (req.metadata) {
+      try {
+        const parsed = JSON.parse(req.metadata) as JsonObject;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          metadata = { ...parsed };
+        }
+      } catch {
+        metadata = {};
+      }
+    }
     const metadataAnonymousId = parseOptionalString(metadata.anonymous_id);
     const anonymousId = parseOptionalString(req.anonymous_id) ?? metadataAnonymousId;
     if (anonymousId) {

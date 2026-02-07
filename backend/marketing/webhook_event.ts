@@ -13,7 +13,7 @@ interface WebhookEventRequest {
   };
   event_type: string;
   event_source?: string;
-  metadata?: JsonObject;
+  metadata?: string;
   occurred_at?: string;
   dedupe_key?: string;
   anonymous_id?: string;
@@ -70,7 +70,18 @@ export const webhookEvent = api<WebhookEventRequest, WebhookEventResponse>(
   { expose: true, method: "POST", path: "/marketing/events" },
   async (req) => {
     const normalizedEventType = normalizeEventType(req.event_type);
-    const normalizedMetadata = normalizeMetadata(req.metadata || {});
+    let parsedMetadata: JsonObject = {};
+    if (req.metadata) {
+      try {
+        const parsed = JSON.parse(req.metadata) as JsonObject;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          parsedMetadata = parsed;
+        }
+      } catch {
+        parsedMetadata = {};
+      }
+    }
+    const normalizedMetadata = normalizeMetadata(parsedMetadata);
     const metadataAnonymousId = parseOptionalString(normalizedMetadata.anonymous_id);
     const anonymousId =
       parseOptionalString(req.anonymous_id) ?? metadataAnonymousId;
