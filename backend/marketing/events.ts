@@ -3,8 +3,8 @@ import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/db";
 
 interface EventsQuery {
-  limit?: number | string;
-  offset?: number | string;
+  limit?: string;
+  offset?: string;
   lead_id?: string;
   event_type?: string;
   event_source?: string;
@@ -28,9 +28,8 @@ interface EventsResponse {
   count: number;
 }
 
-function clampLimit(rawLimit: number | string | undefined): number {
-  const parsed =
-    typeof rawLimit === "number" ? rawLimit : parseInt(rawLimit ?? "", 10);
+function clampLimit(rawLimit: string | undefined): number {
+  const parsed = parseInt(rawLimit ?? "", 10);
   if (Number.isNaN(parsed)) {
     return 20;
   }
@@ -48,9 +47,8 @@ function parseSince(value: string | undefined): string | null {
   return parsed.toISOString();
 }
 
-function clampOffset(rawOffset: number | string | undefined): number {
-  const parsed =
-    typeof rawOffset === "number" ? rawOffset : parseInt(rawOffset ?? "", 10);
+function clampOffset(rawOffset: string | undefined): number {
+  const parsed = parseInt(rawOffset ?? "", 10);
   if (Number.isNaN(parsed)) {
     return 0;
   }
