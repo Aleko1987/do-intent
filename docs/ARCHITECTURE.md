@@ -196,3 +196,11 @@ This enables sub-minute outreach.
 - Confidence scoring
 - Intent explanation summaries
 
+---
+
+## Project Status (Stage 1 MVP)
+
+The phased roadmap and current gap analysis live here:
+- `docs/INTENT_GROWTH_PLAN.md`
+- `docs/STAGE1_MVP_GAP_ANALYSIS.md`
+

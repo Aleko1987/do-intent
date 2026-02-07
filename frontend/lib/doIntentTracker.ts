@@ -22,6 +22,8 @@
 // Storage keys
 const STORAGE_KEY_ANONYMOUS_ID = 'do_intent_anonymous_id';
 const STORAGE_KEY_SESSION_ID = 'do_intent_session_id';
+const STORAGE_KEY_SESSION_TS = 'do_intent_session_ts';
+const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
 // Configuration
 interface TrackerConfig {
@@ -93,18 +95,29 @@ function getAnonymousId(): string {
 }
 
 /**
- * Get or create session_id from sessionStorage
+ * Get or create session_id from sessionStorage.
+ * Rotates the session after 30 minutes of inactivity.
  */
 function getSessionId(): string {
   if (typeof window === 'undefined' || !window.sessionStorage) {
     return generateUUID();
   }
-  
+
+  const now = Date.now();
+  const lastSeenRaw = sessionStorage.getItem(STORAGE_KEY_SESSION_TS);
+  const lastSeen = lastSeenRaw ? Number(lastSeenRaw) : null;
+  const isExpired =
+    lastSeen !== null && !Number.isNaN(lastSeen)
+      ? now - lastSeen > SESSION_TIMEOUT_MS
+      : false;
+
   let sessionId = sessionStorage.getItem(STORAGE_KEY_SESSION_ID);
-  if (!sessionId) {
+  if (!sessionId || isExpired) {
     sessionId = generateUUID();
     sessionStorage.setItem(STORAGE_KEY_SESSION_ID, sessionId);
   }
+
+  sessionStorage.setItem(STORAGE_KEY_SESSION_TS, String(now));
   return sessionId;
 }
 
