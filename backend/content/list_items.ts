@@ -1,5 +1,8 @@
 import { api } from "encore.dev/api";
-import type { EmptyRequest } from "../internal/empty_request";
+
+interface EmptyRequest {
+  dummy?: string;
+}
 import { getAuthData } from "~encore/auth";
 import { db } from "../db/db";
 import type { ContentItem } from "./types";

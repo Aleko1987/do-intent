@@ -1,5 +1,8 @@
 import { api, APIError } from "encore.dev/api";
-import type { EmptyRequest } from "../internal/empty_request";
+
+interface EmptyRequest {
+  dummy?: string;
+}
 import { getAuthData } from "~encore/auth";
 import { Pool } from "pg";
 import { randomUUID } from "crypto";

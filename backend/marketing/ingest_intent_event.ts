@@ -1,5 +1,8 @@
 import { api, APIError, Header } from "encore.dev/api";
-import type { EmptyRequest } from "../internal/empty_request";
+
+interface EmptyRequest {
+  dummy?: string;
+}
 import { timingSafeEqual } from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/db";

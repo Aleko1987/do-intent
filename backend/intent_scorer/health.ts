@@ -1,5 +1,8 @@
 import { api } from "encore.dev/api";
-import type { EmptyRequest } from "../internal/empty_request";
+
+interface EmptyRequest {
+  dummy?: string;
+}
 
 interface HealthResponse {
   ok: boolean;
