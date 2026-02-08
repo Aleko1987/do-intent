@@ -52,6 +52,7 @@ function requireDebugKey(headerKey: string | undefined): boolean {
 
 interface DebugEnvRequest {
   "x-debug-key"?: Header<"x-debug-key">;
+  dummy?: string;
 }
 
 interface DebugEnvResponse {
@@ -84,6 +85,7 @@ async function handleDebugEnv(req: DebugEnvRequest): Promise<DebugEnvResponse> {
 
 interface DebugDbRequest {
   "x-debug-key"?: Header<"x-debug-key">;
+  dummy?: string;
 }
 
 interface DebugDbResponse {
