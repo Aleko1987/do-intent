@@ -8,7 +8,7 @@ interface UpdateContentRequest {
   title?: string;
   body?: string;
   creative_url?: string;
-  channels?: string[];
+  channels?: string;
   status?: string;
   scheduled_at?: string;
   buffer_post_id?: string;
@@ -42,8 +42,19 @@ export const update = api<UpdateContentRequest, ContentItem>(
     }
 
     if (req.channels !== undefined) {
+      let channels: string[] = [];
+      if (req.channels) {
+        try {
+          const parsed = JSON.parse(req.channels) as string[];
+          if (Array.isArray(parsed)) {
+            channels = parsed.filter((value) => typeof value === "string");
+          }
+        } catch {
+          channels = [];
+        }
+      }
       updates.push(`channels = $${paramIndex}`);
-      params.push(JSON.stringify(req.channels));
+      params.push(JSON.stringify(channels));
       paramIndex++;
     }
 

@@ -7,7 +7,7 @@ interface CreateContentRequest {
   title: string;
   body?: string;
   creative_url?: string;
-  channels?: string[];
+  channels?: string;
   cta_type?: string;
   target_url?: string;
   utm_source?: string;
@@ -22,6 +22,18 @@ export const create = api<CreateContentRequest, ContentItem>(
   { expose: true, method: "POST", path: "/content/items", auth: true },
   async (req) => {
     const authData = getAuthData()!;
+    let channels: string[] = [];
+    if (req.channels) {
+      try {
+        const parsed = JSON.parse(req.channels) as string[];
+        if (Array.isArray(parsed)) {
+          channels = parsed.filter((value) => typeof value === "string");
+        }
+      } catch {
+        channels = [];
+      }
+    }
+
     const item = await db.queryRow<ContentItem & { channels: any }>`
       INSERT INTO content_items (
         title,
@@ -43,7 +55,7 @@ export const create = api<CreateContentRequest, ContentItem>(
         ${req.title},
         ${req.body || null},
         ${req.creative_url || null},
-        ${JSON.stringify(req.channels || [])},
+        ${JSON.stringify(channels)},
         ${req.cta_type || null},
         ${req.target_url || null},
         ${req.utm_source || null},
