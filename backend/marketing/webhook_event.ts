@@ -7,10 +7,8 @@ import { checkAndPushToSales } from "./auto_push";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
 
 interface WebhookEventRequest {
-  leadLookup: {
-    email?: string;
-    phone?: string;
-  };
+  lead_email?: string;
+  lead_phone?: string;
   event_type: string;
   event_source?: string;
   metadata?: string;
@@ -92,17 +90,17 @@ export const webhookEvent = api<WebhookEventRequest, WebhookEventResponse>(
     
     let lead: MarketingLead | null = null;
 
-    if (req.leadLookup.email) {
+    if (req.lead_email) {
       lead = await db.queryRow<MarketingLead>`
         SELECT * FROM marketing_leads
-        WHERE lower(email) = lower(${req.leadLookup.email})
+        WHERE lower(email) = lower(${req.lead_email})
       `;
     }
 
-    if (!lead && req.leadLookup.phone) {
+    if (!lead && req.lead_phone) {
       lead = await db.queryRow<MarketingLead>`
         SELECT * FROM marketing_leads
-        WHERE phone = ${req.leadLookup.phone}
+        WHERE phone = ${req.lead_phone}
       `;
     }
 
@@ -119,8 +117,8 @@ export const webhookEvent = api<WebhookEventRequest, WebhookEventResponse>(
           created_at,
           updated_at
         ) VALUES (
-          ${req.leadLookup.email || null},
-          ${req.leadLookup.phone || null},
+          ${req.lead_email || null},
+          ${req.lead_phone || null},
           'website',
           'system',
           'M1',

@@ -452,11 +452,9 @@ export async function identify(
   
   const payload = {
     anonymous_id: anonymousId,
-    identity: {
-      email: email.trim().toLowerCase(),
-      ...(name && { name: name.trim() }),
-      source: 'website',
-    },
+    email: email.trim().toLowerCase(),
+    ...(name && { name: name.trim() }),
+    source: 'website',
   };
   
   if (config.debug) {

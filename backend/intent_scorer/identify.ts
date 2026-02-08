@@ -15,11 +15,9 @@ import { updateLeadRollup } from "./rollups";
 // Request shape (v1)
 interface IdentifyRequest {
   anonymous_id: string;
-  identity: {
-    email: string;
-    name?: string;
-    source?: string;
-  };
+  email: string;
+  name?: string;
+  source?: string;
   metadata?: string;
 }
 
@@ -71,11 +69,9 @@ function isValidEmail(email: string): boolean {
  *   -H "Content-Type: application/json" \
  *   -d '{
  *     "anonymous_id": "660e8400-e29b-41d4-a716-446655440001",
- *     "identity": {
- *       "email": "user@example.com",
- *       "name": "John Doe",
- *       "source": "website"
- *     },
+ *     "email": "user@example.com",
+ *     "name": "John Doe",
+ *     "source": "website",
  *     "metadata": {
  *       "campaign": "homepage_form"
  *     }
@@ -94,12 +90,12 @@ async function identifyInternal(req: IdentifyRequest): Promise<IdentifyResponse>
     );
   }
 
-  if (!req.identity || !req.identity.email) {
-    throw APIError.invalidArgument("identity.email is required");
+  if (!req.email) {
+    throw APIError.invalidArgument("email is required");
   }
 
-  if (!isValidEmail(req.identity.email)) {
-    throw APIError.invalidArgument("identity.email must be a valid email address");
+  if (!isValidEmail(req.email)) {
+    throw APIError.invalidArgument("email must be a valid email address");
   }
 
   // Normalize metadata (default to {})
@@ -116,8 +112,8 @@ async function identifyInternal(req: IdentifyRequest): Promise<IdentifyResponse>
   }
 
   // Prepare name and source for update (only if provided and not empty)
-  const nameToUpdate = req.identity.name?.trim() || null;
-  const sourceToUpdate = req.identity.source?.trim() || null;
+  const nameToUpdate = req.name?.trim() || null;
+  const sourceToUpdate = req.source?.trim() || null;
 
   // Step 1: Upsert identity
   const identityResult = await db.queryRow<{
@@ -132,7 +128,7 @@ async function identifyInternal(req: IdentifyRequest): Promise<IdentifyResponse>
       last_seen_at,
       metadata
     ) VALUES (
-      ${req.identity.email},
+      ${req.email},
       ${nameToUpdate},
       ${sourceToUpdate},
       now(),
@@ -243,7 +239,7 @@ async function identifyInternal(req: IdentifyRequest): Promise<IdentifyResponse>
   }
 
   const matchingLead = await db.queryRow<{ id: string }>`
-    SELECT id FROM marketing_leads WHERE lower(email) = lower(${req.identity.email}) LIMIT 1
+    SELECT id FROM marketing_leads WHERE lower(email) = lower(${req.email}) LIMIT 1
   `;
 
   if (matchingLead) {
