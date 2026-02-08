@@ -6,7 +6,7 @@ interface PingResponse {
   ts: string;
 }
 
-export const ping = api<void, PingResponse>(
+export const ping = api<{}, PingResponse>(
   { expose: true, method: "GET", path: "/intent-scorer/ping" },
   async (): Promise<PingResponse> => {
     return {

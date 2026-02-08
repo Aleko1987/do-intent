@@ -26,7 +26,7 @@ function parseDatabaseUrl(): { host: string | null; dbname: string | null } {
   }
 }
 
-export const getDbInfo = api<void, DbInfoResponse>(
+export const getDbInfo = api<{}, DbInfoResponse>(
   { expose: true, method: "GET", path: "/api/v1/debug/dbinfo" },
   async () => {
     const dbUrl = process.env.DATABASE_URL;

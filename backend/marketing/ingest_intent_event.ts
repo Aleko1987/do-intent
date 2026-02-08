@@ -635,12 +635,12 @@ export const ingestIntentEventV1 = api<IngestIntentEventRequest, IngestIntentEve
   handleIngestIntentEvent
 );
 
-export const ingestIntentEventOptions = api<void, { message: string }>(
+export const ingestIntentEventOptions = api<{}, { message: string }>(
   { expose: true, method: "OPTIONS", path: "/marketing/ingest-intent-event" },
   async () => ({ message: "ok" })
 );
 
-export const ingestIntentEventV1Options = api<void, { message: string }>(
+export const ingestIntentEventV1Options = api<{}, { message: string }>(
   { expose: true, method: "OPTIONS", path: "/api/v1/ingest" },
   async () => ({ message: "ok" })
 );

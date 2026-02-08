@@ -623,12 +623,12 @@ export const track = api<TrackRequest, TrackResponse>(
   async (payload) => handleTrack(payload)
 );
 
-export const trackOptions = api<void, InfoResponse>(
+export const trackOptions = api<{}, InfoResponse>(
   { expose: true, method: "OPTIONS", path: "/track" },
   async () => ({ message: "ok" })
 );
 
-export const trackGet = api<void, InfoResponse>(
+export const trackGet = api<{}, InfoResponse>(
   { expose: true, method: "GET", path: "/track" },
   async () => ({ message: "use POST /track" })
 );
@@ -638,7 +638,7 @@ export const trackV1 = api<TrackRequest, TrackResponse>(
   async (payload) => handleTrack(payload)
 );
 
-export const trackV1Options = api<void, InfoResponse>(
+export const trackV1Options = api<{}, InfoResponse>(
   { expose: true, method: "OPTIONS", path: "/api/v1/track" },
   async () => ({ message: "ok" })
 );

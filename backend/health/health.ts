@@ -16,12 +16,12 @@ interface VersionResponse {
   buildTime: string;
 }
 
-export const healthz = api<void, HealthResponse>(
+export const healthz = api<{}, HealthResponse>(
   { expose: true, method: "GET", path: "/healthz" },
   async () => ({ ok: true })
 );
 
-export const root = api<void, RootResponse>(
+export const root = api<{}, RootResponse>(
   { expose: true, method: "GET", path: "/", auth: false },
   async (): Promise<RootResponse> => {
     return {
@@ -32,7 +32,7 @@ export const root = api<void, RootResponse>(
   }
 );
 
-export const version = api<void, VersionResponse>(
+export const version = api<{}, VersionResponse>(
   { expose: true, method: "GET", path: "/health/version", auth: false },
   async (): Promise<VersionResponse> => {
     return {

@@ -6,7 +6,7 @@ interface ListRulesResponse {
   rules: IntentRule[];
 }
 
-export const listRules = api<void, ListRulesResponse>(
+export const listRules = api<{}, ListRulesResponse>(
   { method: "GET", path: "/intent-scorer/rules", expose: true },
   async (): Promise<ListRulesResponse> => {
     const rules = await db.queryAll<IntentRule>`

@@ -274,7 +274,7 @@ export const identifyV1 = api<IdentifyRequest, IdentifyResponse>(
   identifyInternal
 );
 
-export const identifyV1Options = api<void, { message: string }>(
+export const identifyV1Options = api<{}, { message: string }>(
   { expose: true, method: "OPTIONS", path: "/api/v1/identify" },
   async () => ({ message: "ok" })
 );

@@ -8,7 +8,7 @@ interface ListContentResponse {
 }
 
 // Lists all content items.
-export const list = api<void, ListContentResponse>(
+export const list = api<{}, ListContentResponse>(
   { expose: true, method: "GET", path: "/content/items", auth: true },
   async () => {
     const authData = getAuthData()!;
