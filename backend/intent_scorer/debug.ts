@@ -1,4 +1,4 @@
-import { api, Header, APIError } from "encore.dev/api";
+import { Header, APIError } from "encore.dev/api";
 import { timingSafeEqual } from "crypto";
 import { db } from "../db/db";
 import { resolveDebugKey } from "../internal/env_secrets";
@@ -119,12 +119,10 @@ async function handleDebugDb(req: DebugDbRequest): Promise<DebugDbResponse> {
   }
 }
 
-export const debugEnv = api<DebugEnvRequest, DebugEnvResponse>(
-  { expose: true, method: "GET", path: "/api/v1/debug/env" },
-  handleDebugEnv
-);
+export function debugEnvDisabled(): never {
+  throw new Error("debug endpoint disabled");
+}
 
-export const debugDb = api<DebugDbRequest, DebugDbResponse>(
-  { expose: true, method: "GET", path: "/api/v1/debug/db" },
-  handleDebugDb
-);
+export function debugDbDisabled(): never {
+  throw new Error("debug endpoint disabled");
+}
