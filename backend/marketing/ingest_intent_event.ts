@@ -1,8 +1,5 @@
 import { api, APIError, Header } from "encore.dev/api";
 
-interface EmptyRequest {
-  dummy?: string;
-}
 import { timingSafeEqual } from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/db";
@@ -639,12 +636,4 @@ export const ingestIntentEventV1 = api<IngestIntentEventRequest, IngestIntentEve
   handleIngestIntentEvent
 );
 
-export const ingestIntentEventOptions = api<EmptyRequest, { message: string }>(
-  { expose: true, method: "OPTIONS", path: "/marketing/ingest-intent-event" },
-  async () => ({ message: "ok" })
-);
-
-export const ingestIntentEventV1Options = api<EmptyRequest, { message: string }>(
-  { expose: true, method: "OPTIONS", path: "/api/v1/ingest" },
-  async () => ({ message: "ok" })
-);
+// OPTIONS endpoints removed while isolating request schema panic.
