@@ -23,9 +23,7 @@ for (const match of contents.matchAll(unnamedWildcardPattern)) {
   );
 }
 
-let namedWildcardFound = false;
 for (const match of contents.matchAll(namedWildcardPattern)) {
-  namedWildcardFound = true;
   const wildcardName = match[1];
   if (wildcardName !== "path") {
     const index = match.index ?? 0;
@@ -36,12 +34,6 @@ for (const match of contents.matchAll(namedWildcardPattern)) {
         `${targetPath}:${lineNumber}\n> ${lineText}`
     );
   }
-}
-
-if (!namedWildcardFound) {
-  errors.push(
-    `Expected a named wildcard "/app/*path" in ${targetPath}, but none was found.`
-  );
 }
 
 if (errors.length > 0) {
