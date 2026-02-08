@@ -24,8 +24,8 @@ interface ListLeadsIntentParams {
   search?: string; // Search company/contact/email
   limit?: number;
   offset?: number;
-  sort_by?: "score_7d" | "score_30d" | "last_activity";
-  sort_order?: "asc" | "desc";
+  sort_by?: string;
+  sort_order?: string;
 }
 
 interface ListLeadsIntentResponse {
@@ -39,8 +39,13 @@ async function executeLeadsQuery(
 ): Promise<ListLeadsIntentResponse> {
   const limit = params.limit || 50;
   const offset = params.offset || 0;
-  const sortBy = params.sort_by || "score_7d";
-  const sortOrder = params.sort_order || "desc";
+  const sortByRaw = (params.sort_by || "score_7d").toLowerCase();
+  const sortOrderRaw = (params.sort_order || "desc").toLowerCase();
+  const sortBy =
+    sortByRaw === "score_30d" || sortByRaw === "last_activity"
+      ? sortByRaw
+      : "score_7d";
+  const sortOrder = sortOrderRaw === "asc" ? "asc" : "desc";
 
   let whereConditions: string[] = [];
   let paramsList: any[] = [];
