@@ -14,7 +14,7 @@ interface TrackRequest {
   referrer?: string;
   timestamp?: string;
   value?: number;
-  metadata?: JsonObject;
+  metadata?: string;
 }
 
 interface TrackResponse {
@@ -276,14 +276,22 @@ function getDbErrorCode(error?: unknown): string {
   return "db_query_failed";
 }
 
-function ensureObject(value: unknown, field: string): JsonObject | null {
-  if (value === undefined || value === null) {
-    return null;
+function parseMetadata(raw: unknown): JsonObject {
+  if (raw === undefined || raw === null || raw === "") {
+    return {};
   }
-  if (typeof value !== "object" || Array.isArray(value)) {
-    throw APIError.invalidArgument(`${field} must be an object`);
+  if (typeof raw !== "string") {
+    throw APIError.invalidArgument("metadata must be a JSON string");
   }
-  return value as JsonObject;
+  try {
+    const parsed = JSON.parse(raw) as JsonObject;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch {
+    // fall through
+  }
+  throw APIError.invalidArgument("metadata must be a JSON object string");
 }
 
 function getCorsOrigin(req: RawRequest): string {
@@ -441,7 +449,7 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
     const url = parseOptionalString(payload.url) ?? "";
     const referrer = parseOptionalString(payload.referrer);
     const occurredAt = parseIsoTimestamp(payload.timestamp) ?? new Date();
-    const metadata = ensureObject(payload.metadata, "metadata");
+    const metadata = parseMetadata(payload.metadata);
     const eventValue = parseOptionalNumber(payload.value);
     const anonymousId = payload.anonymous_id ?? payload.session_id;
 

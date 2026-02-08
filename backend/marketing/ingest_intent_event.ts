@@ -47,7 +47,7 @@ interface IngestIntentEventPayload {
   utm_medium?: string;
   utm_campaign?: string;
   utm_content?: string;
-  metadata?: JsonObject;
+  metadata?: string;
 }
 
 interface IngestIntentEventResponse {
@@ -394,15 +394,24 @@ function validatePayload(
 
   const leadId = parseOptionalString(payload.lead_id);
   const payloadAnonymousId = parseOptionalString(payload.anonymous_id);
-  const metadataAnonymousId =
-    payload.metadata && typeof payload.metadata === "object"
-      ? parseOptionalString((payload.metadata as JsonObject).anonymous_id)
-      : null;
+  let parsedMetadata: JsonObject = {};
+  if (payload.metadata !== undefined) {
+    if (typeof payload.metadata === "string" && payload.metadata.trim().length > 0) {
+      try {
+        const parsed = JSON.parse(payload.metadata) as JsonObject;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          parsedMetadata = parsed;
+        }
+      } catch {
+        errors.metadata = "metadata must be a JSON object string";
+      }
+    } else if (payload.metadata !== "") {
+      errors.metadata = "metadata must be a JSON object string";
+    }
+  }
+  const metadataAnonymousId = parseOptionalString(parsedMetadata.anonymous_id);
   const payloadDedupeKey = parseOptionalString(payload.dedupe_key);
-  const metadataDedupeKey =
-    payload.metadata && typeof payload.metadata === "object"
-      ? parseOptionalString((payload.metadata as JsonObject).dedupe_key)
-      : null;
+  const metadataDedupeKey = parseOptionalString(parsedMetadata.dedupe_key);
   const anonymousId = payloadAnonymousId ?? metadataAnonymousId ?? null;
   const dedupeKey = payloadDedupeKey ?? metadataDedupeKey ?? null;
   if (!leadId && !anonymousId) {
@@ -437,14 +446,7 @@ function validatePayload(
     errors.event_source = "event_source must be a string";
   }
 
-  let metadata: JsonObject = {};
-  if (payload.metadata !== undefined) {
-    if (payload.metadata && typeof payload.metadata === "object") {
-      metadata = { ...payload.metadata };
-    } else {
-      errors.metadata = "metadata must be an object";
-    }
-  }
+  let metadata: JsonObject = { ...parsedMetadata };
 
   // Ensure metadata stays stable; only backfill empty keys from payload fields.
   setMetadataValue(metadata, "anonymous_id", anonymousId);
