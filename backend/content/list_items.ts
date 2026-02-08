@@ -1,4 +1,5 @@
 import { api } from "encore.dev/api";
+import type { EmptyRequest } from "../internal/empty_request";
 import { getAuthData } from "~encore/auth";
 import { db } from "../db/db";
 import type { ContentItem } from "./types";
@@ -8,7 +9,7 @@ interface ListContentResponse {
 }
 
 // Lists all content items.
-export const list = api<{}, ListContentResponse>(
+export const list = api<EmptyRequest, ListContentResponse>(
   { expose: true, method: "GET", path: "/content/items", auth: true },
   async () => {
     const authData = getAuthData()!;

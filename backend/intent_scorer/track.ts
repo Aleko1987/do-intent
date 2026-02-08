@@ -1,4 +1,5 @@
 import { api, APIError } from "encore.dev/api";
+import type { EmptyRequest } from "../internal/empty_request";
 import { getAuthData } from "~encore/auth";
 import { Pool } from "pg";
 import { randomUUID } from "crypto";
@@ -623,12 +624,12 @@ export const track = api<TrackRequest, TrackResponse>(
   async (payload) => handleTrack(payload)
 );
 
-export const trackOptions = api<{}, InfoResponse>(
+export const trackOptions = api<EmptyRequest, InfoResponse>(
   { expose: true, method: "OPTIONS", path: "/track" },
   async () => ({ message: "ok" })
 );
 
-export const trackGet = api<{}, InfoResponse>(
+export const trackGet = api<EmptyRequest, InfoResponse>(
   { expose: true, method: "GET", path: "/track" },
   async () => ({ message: "use POST /track" })
 );
@@ -638,7 +639,7 @@ export const trackV1 = api<TrackRequest, TrackResponse>(
   async (payload) => handleTrack(payload)
 );
 
-export const trackV1Options = api<{}, InfoResponse>(
+export const trackV1Options = api<EmptyRequest, InfoResponse>(
   { expose: true, method: "OPTIONS", path: "/api/v1/track" },
   async () => ({ message: "ok" })
 );

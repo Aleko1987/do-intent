@@ -1,4 +1,5 @@
 import { api } from "encore.dev/api";
+import type { EmptyRequest } from "../internal/empty_request";
 
 interface PingResponse {
   ok: boolean;
@@ -6,7 +7,7 @@ interface PingResponse {
   ts: string;
 }
 
-export const ping = api<{}, PingResponse>(
+export const ping = api<EmptyRequest, PingResponse>(
   { expose: true, method: "GET", path: "/intent-scorer/ping" },
   async (): Promise<PingResponse> => {
     return {

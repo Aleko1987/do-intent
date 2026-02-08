@@ -1,4 +1,5 @@
 import { api, APIError } from "encore.dev/api";
+import type { EmptyRequest } from "../internal/empty_request";
 import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
 import {
@@ -274,7 +275,7 @@ export const identifyV1 = api<IdentifyRequest, IdentifyResponse>(
   identifyInternal
 );
 
-export const identifyV1Options = api<{}, { message: string }>(
+export const identifyV1Options = api<EmptyRequest, { message: string }>(
   { expose: true, method: "OPTIONS", path: "/api/v1/identify" },
   async () => ({ message: "ok" })
 );

@@ -1,4 +1,5 @@
 import { api } from "encore.dev/api";
+import type { EmptyRequest } from "../internal/empty_request";
 import { GIT_SHA, BUILD_TIME } from "../version";
 
 interface HealthResponse {
@@ -16,12 +17,12 @@ interface VersionResponse {
   buildTime: string;
 }
 
-export const healthz = api<{}, HealthResponse>(
+export const healthz = api<EmptyRequest, HealthResponse>(
   { expose: true, method: "GET", path: "/healthz" },
   async () => ({ ok: true })
 );
 
-export const root = api<{}, RootResponse>(
+export const root = api<EmptyRequest, RootResponse>(
   { expose: true, method: "GET", path: "/", auth: false },
   async (): Promise<RootResponse> => {
     return {
@@ -32,7 +33,7 @@ export const root = api<{}, RootResponse>(
   }
 );
 
-export const version = api<{}, VersionResponse>(
+export const version = api<EmptyRequest, VersionResponse>(
   { expose: true, method: "GET", path: "/health/version", auth: false },
   async (): Promise<VersionResponse> => {
     return {

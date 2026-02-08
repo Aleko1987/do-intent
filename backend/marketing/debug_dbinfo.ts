@@ -1,4 +1,5 @@
 import { api } from "encore.dev/api";
+import type { EmptyRequest } from "../internal/empty_request";
 import { db } from "../db/db";
 
 interface DbInfoResponse {
@@ -26,7 +27,7 @@ function parseDatabaseUrl(): { host: string | null; dbname: string | null } {
   }
 }
 
-export const getDbInfo = api<{}, DbInfoResponse>(
+export const getDbInfo = api<EmptyRequest, DbInfoResponse>(
   { expose: true, method: "GET", path: "/api/v1/debug/dbinfo" },
   async () => {
     const dbUrl = process.env.DATABASE_URL;

@@ -1,4 +1,5 @@
 import { api } from "encore.dev/api";
+import type { EmptyRequest } from "../internal/empty_request";
 import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
 import { recomputeScores } from "./recompute_scores";
@@ -8,7 +9,7 @@ interface SeedDemoResponse {
   events_created: number;
 }
 
-export const seedDemo = api<{}, SeedDemoResponse>(
+export const seedDemo = api<EmptyRequest, SeedDemoResponse>(
   { method: "POST", path: "/intent-scorer/seed-demo", expose: true },
   async (): Promise<SeedDemoResponse> => {
     const leads = [
