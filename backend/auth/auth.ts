@@ -18,6 +18,7 @@ function getClerkClient() {
 
 interface AuthParams {
   authorization?: Header<"Authorization">;
+  dummy?: string;
 }
 
 export interface AuthData {
