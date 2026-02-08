@@ -1,15 +1,7 @@
-import { api, RawRequest, RawResponse } from "encore.dev/api";
+import { api, Header, APIError } from "encore.dev/api";
 import { timingSafeEqual } from "crypto";
 import { db } from "../db/db";
 import { resolveDebugKey } from "../internal/env_secrets";
-
-function getHeader(req: RawRequest, name: string): string | undefined {
-  const value = req.headers[name.toLowerCase()];
-  if (Array.isArray(value)) {
-    return value[0];
-  }
-  return value;
-}
 
 function constantTimeEquals(a: string, b: string): boolean {
   const aBuf = Buffer.from(a);
@@ -22,12 +14,6 @@ function constantTimeEquals(a: string, b: string): boolean {
     return false;
   }
   return timingSafeEqual(aBuf, bBuf);
-}
-
-function sendJson(resp: RawResponse, statusCode: number, body: unknown): void {
-  resp.statusCode = statusCode;
-  resp.setHeader("content-type", "application/json; charset=utf-8");
-  resp.end(JSON.stringify(body));
 }
 
 function isDbEnabled(): boolean {
@@ -46,42 +32,45 @@ function hasDatabaseConfig(): boolean {
   );
 }
 
-function requireDebugKey(req: RawRequest, resp: RawResponse): boolean {
+function requireDebugKey(headerKey: string | undefined): boolean {
   const expectedKey = resolveDebugKey();
   if (!expectedKey) {
-    sendJson(resp, 500, {
-      code: "missing_secret",
-      message: "Debug key is not configured",
-    });
     return false;
   }
 
-  const headerKey = (getHeader(req, "x-debug-key") ?? "").trim();
-  if (!headerKey) {
-    sendJson(resp, 401, {
-      code: "unauthorized",
-      message: "missing x-debug-key header",
-    });
+  const trimmed = (headerKey ?? "").trim();
+  if (!trimmed) {
     return false;
   }
 
-  if (!constantTimeEquals(headerKey, expectedKey)) {
-    sendJson(resp, 401, {
-      code: "unauthorized",
-      message: "invalid debug key",
-    });
+  if (!constantTimeEquals(trimmed, expectedKey)) {
     return false;
   }
 
   return true;
 }
 
-async function handleDebugEnv(req: RawRequest, resp: RawResponse): Promise<void> {
-  if (!requireDebugKey(req, resp)) {
-    return;
+interface DebugEnvRequest {
+  "x-debug-key"?: Header<"x-debug-key">;
+}
+
+interface DebugEnvResponse {
+  ok: true;
+  env: {
+    node_env: string;
+    port_set: boolean;
+    enable_db: boolean;
+    has_database_url: boolean;
+    allowed_ingest_origins_set: boolean;
+  };
+}
+
+async function handleDebugEnv(req: DebugEnvRequest): Promise<DebugEnvResponse> {
+  if (!requireDebugKey(req["x-debug-key"])) {
+    throw APIError.unauthenticated("invalid or missing x-debug-key");
   }
 
-  sendJson(resp, 200, {
+  return {
     ok: true,
     env: {
       node_env: process.env.NODE_ENV ?? "unknown",
@@ -90,45 +79,50 @@ async function handleDebugEnv(req: RawRequest, resp: RawResponse): Promise<void>
       has_database_url: hasDatabaseConfig(),
       allowed_ingest_origins_set: Boolean(process.env.ALLOWED_INGEST_ORIGINS),
     },
-  });
+  };
 }
 
-async function handleDebugDb(req: RawRequest, resp: RawResponse): Promise<void> {
-  if (!requireDebugKey(req, resp)) {
-    return;
+interface DebugDbRequest {
+  "x-debug-key"?: Header<"x-debug-key">;
+}
+
+interface DebugDbResponse {
+  ok: boolean;
+  configured: boolean;
+  message?: string;
+}
+
+async function handleDebugDb(req: DebugDbRequest): Promise<DebugDbResponse> {
+  if (!requireDebugKey(req["x-debug-key"])) {
+    throw APIError.unauthenticated("invalid or missing x-debug-key");
   }
 
   if (!hasDatabaseConfig()) {
-    sendJson(resp, 200, {
+    return {
       ok: false,
       configured: false,
       message: "database not configured",
-    });
-    return;
+    };
   }
 
   try {
     await db.rawQueryRow("SELECT 1");
-    sendJson(resp, 200, { ok: true, configured: true });
+    return { ok: true, configured: true };
   } catch (error) {
-    sendJson(resp, 200, {
+    return {
       ok: false,
       configured: true,
       message: "database query failed",
-    });
+    };
   }
 }
 
-export const debugEnv = api.raw(
+export const debugEnv = api<DebugEnvRequest, DebugEnvResponse>(
   { expose: true, method: "GET", path: "/api/v1/debug/env" },
-  (req, resp) => {
-    void handleDebugEnv(req, resp);
-  }
+  handleDebugEnv
 );
 
-export const debugDb = api.raw(
+export const debugDb = api<DebugDbRequest, DebugDbResponse>(
   { expose: true, method: "GET", path: "/api/v1/debug/db" },
-  (req, resp) => {
-    void handleDebugDb(req, resp);
-  }
+  handleDebugDb
 );

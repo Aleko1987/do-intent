@@ -1,4 +1,4 @@
-import { api, RawRequest, RawResponse } from "encore.dev/api";
+import { api, APIError, Header } from "encore.dev/api";
 import { timingSafeEqual } from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/db";
@@ -51,25 +51,21 @@ interface IngestIntentEventPayload {
 }
 
 interface IngestIntentEventResponse {
+  ok: true;
+  stored: boolean;
+  reason?: "db_disabled";
+  message?: string;
   event_id: string;
   lead_id: string | null;
   scored: boolean;
   request_id: string;
 }
 
-interface AcceptedResponse {
-  ok: true;
-  stored: false;
-  reason: "db_disabled";
-  message: string;
-  request_id: string;
-}
-
-interface ErrorResponse {
-  code: "invalid_argument" | "unauthorized" | "internal" | "missing_secret";
-  message: string;
-  details?: Record<string, string>;
-  request_id: string;
+interface IngestIntentEventRequest extends IngestIntentEventPayload {
+  "x-ingest-api-key"?: Header<"x-ingest-api-key">;
+  "origin"?: Header<"origin">;
+  "referer"?: Header<"referer">;
+  "x-request-id"?: Header<"x-request-id">;
 }
 
 interface NormalizedPayload {
@@ -96,8 +92,7 @@ function makeRequestId(): string {
   return uuidv4();
 }
 
-function getRequestId(req: RawRequest): string {
-  const headerId = getHeader(req, "x-request-id");
+function getRequestId(headerId: string | undefined): string {
   return headerId && headerId.trim().length > 0 ? headerId : makeRequestId();
 }
 
@@ -117,14 +112,6 @@ function hasDatabaseConfig(): boolean {
   );
 }
 
-function getHeader(req: RawRequest, name: string): string | undefined {
-  const value = req.headers[name.toLowerCase()];
-  if (Array.isArray(value)) {
-    return value[0];
-  }
-  return value;
-}
-
 function constantTimeEquals(a: string, b: string): boolean {
   const aBuf = Buffer.from(a);
   const bBuf = Buffer.from(b);
@@ -139,7 +126,7 @@ function constantTimeEquals(a: string, b: string): boolean {
 }
 
 function checkApiKey(
-  req: RawRequest,
+  headerValue: string | undefined,
   expectedKey: string
 ): {
   ok: true;
@@ -151,8 +138,7 @@ function checkApiKey(
   headerReceived: boolean;
   details: Record<string, string>;
 } {
-  const incomingHeader = getHeader(req, "x-ingest-api-key");
-  const headerKey = (incomingHeader ?? "").trim();
+  const headerKey = (headerValue ?? "").trim();
   const headerReceived = headerKey.length > 0;
 
   if (!headerReceived) {
@@ -160,9 +146,7 @@ function checkApiKey(
       ok: false,
       message: "missing x-ingest-api-key header",
       headerReceived,
-      details: {
-        header: "x-ingest-api-key",
-      },
+      details: { header: "x-ingest-api-key" },
     };
   }
 
@@ -171,9 +155,7 @@ function checkApiKey(
       ok: false,
       message: "invalid ingest api key",
       headerReceived,
-      details: {
-        header: "x-ingest-api-key",
-      },
+      details: { header: "x-ingest-api-key" },
     };
   }
 
@@ -225,47 +207,6 @@ function checkOrigin(origin: string | undefined, referer: string | undefined): {
   }
 
   return { ok: true };
-}
-
-function getCorsOrigin(req: RawRequest): string {
-  const origin = req.headers.origin;
-  if (Array.isArray(origin)) {
-    return origin[0] ?? "*";
-  }
-  return origin ?? "*";
-}
-
-function applyCorsHeaders(resp: RawResponse, req: RawRequest): void {
-  resp.setHeader("Access-Control-Allow-Origin", getCorsOrigin(req));
-  resp.setHeader(
-    "Access-Control-Allow-Headers",
-    "content-type, x-ingest-api-key"
-  );
-  resp.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  resp.setHeader("Vary", "Origin");
-}
-
-async function readJsonBody(req: RawRequest): Promise<unknown> {
-  let raw = "";
-  for await (const chunk of req) {
-    raw += chunk.toString();
-  }
-
-  if (!raw) {
-    return {};
-  }
-
-  return JSON.parse(raw);
-}
-
-function sendJson(
-  resp: RawResponse,
-  status: number,
-  payload: IngestIntentEventResponse | AcceptedResponse | ErrorResponse
-): void {
-  resp.statusCode = status;
-  resp.setHeader("Content-Type", "application/json");
-  resp.end(JSON.stringify(payload));
 }
 
 function parseOptionalString(value: unknown): string | null {
@@ -485,12 +426,9 @@ function validatePayload(
 }
 
 async function handleIngestIntentEvent(
-  req: RawRequest,
-  resp: RawResponse
-): Promise<void> {
-  const request_id = getRequestId(req);
-  applyCorsHeaders(resp, req);
-
+  req: IngestIntentEventRequest
+): Promise<IngestIntentEventResponse> {
+  const request_id = getRequestId(req["x-request-id"]);
   try {
     const ingestKey = resolveIngestApiKey();
     const isProduction = process.env.NODE_ENV === "production";
@@ -511,28 +449,17 @@ async function handleIngestIntentEvent(
       console.error("[ingest] ingest api key not configured", {
         request_id,
       });
-      sendJson(resp, 500, {
-        code: "missing_secret",
-        message: "Ingest API key is not configured",
-        request_id,
-      });
-      return;
+      throw APIError.internal("Ingest API key is not configured");
     }
 
     if (ingestKey) {
-      const authCheck = checkApiKey(req, ingestKey);
+      const authCheck = checkApiKey(req["x-ingest-api-key"], ingestKey);
       if (!authCheck.ok) {
         console.info("[ingest] unauthorized", {
           request_id,
           db_write_attempted: false,
         });
-        sendJson(resp, 401, {
-          code: "unauthorized",
-          message: authCheck.message,
-          details: authCheck.details,
-          request_id,
-        });
-        return;
+        throw APIError.unauthenticated(authCheck.message);
       }
 
       if (authCheck.source) {
@@ -542,56 +469,22 @@ async function handleIngestIntentEvent(
       }
     }
 
-    const originCheck = checkOrigin(getHeader(req, "origin"), getHeader(req, "referer"));
+    const originCheck = checkOrigin(req.origin, req.referer);
     if (!originCheck.ok) {
       console.info("[ingest] unauthorized origin", {
         request_id,
         db_write_attempted: false,
       });
-      sendJson(resp, 401, {
-        code: "unauthorized",
-        message: originCheck.message,
-        request_id,
-      });
-      return;
+      throw APIError.unauthenticated(originCheck.message);
     }
 
-    let payload: IngestIntentEventPayload;
-    try {
-      const body = await readJsonBody(req);
-      if (typeof body !== "object" || body === null) {
-        sendJson(resp, 400, {
-          code: "invalid_argument",
-          message: "body must be a JSON object",
-          details: { body: "body must be a JSON object" },
-          request_id,
-        });
-        return;
-      }
-      payload = body as IngestIntentEventPayload;
-    } catch (error) {
-      sendJson(resp, 400, {
-        code: "invalid_argument",
-        message: "body must be valid JSON",
-        details: { body: "invalid JSON" },
-        request_id,
-      });
-      return;
-    }
-
-    const { normalized, errors } = validatePayload(payload);
+    const { normalized, errors } = validatePayload(req);
     if (Object.keys(errors).length > 0) {
       console.info("[ingest] validation failed", {
         request_id,
         db_write_attempted: false,
       });
-      sendJson(resp, 400, {
-        code: "invalid_argument",
-        message: "invalid request payload",
-        details: errors,
-        request_id,
-      });
-      return;
+      throw APIError.invalidArgument("invalid request payload");
     }
 
     if (!envFlags.enable_db || !envFlags.has_database_url) {
@@ -599,14 +492,16 @@ async function handleIngestIntentEvent(
         request_id,
         db_write_attempted: false,
       });
-      sendJson(resp, 202, {
+      return {
         ok: true,
         stored: false,
         reason: "db_disabled",
         message: "event accepted but not persisted",
+        event_id: "",
+        lead_id: normalized.lead_id,
+        scored: false,
         request_id,
-      });
-      return;
+      };
     }
 
     let dbWriteAttempted = false;
@@ -621,13 +516,7 @@ async function handleIngestIntentEvent(
         );
 
         if (!lead) {
-          sendJson(resp, 400, {
-            code: "invalid_argument",
-            message: "lead not found",
-            details: { lead_id: "lead not found" },
-            request_id,
-          });
-          return;
+          throw APIError.invalidArgument("lead not found");
         }
       }
 
@@ -674,12 +563,7 @@ async function handleIngestIntentEvent(
 
       if (!event) {
         console.error("[ingest] Failed to create event", { request_id });
-        sendJson(resp, 500, {
-          code: "internal",
-          message: "db_error",
-          request_id,
-        });
-        return;
+        throw APIError.internal("db_error");
       }
 
       let scored = true;
@@ -716,71 +600,47 @@ async function handleIngestIntentEvent(
         db_write_attempted: dbWriteAttempted,
       });
 
-      sendJson(resp, 200, {
+      return {
+        ok: true,
+        stored: true,
         event_id: event.id,
         lead_id: event.lead_id,
         scored,
         request_id,
-      });
+      };
     } catch (error) {
       console.error("[ingest] db error", {
         request_id,
         db_write_attempted: dbWriteAttempted,
         error: normalizeDbError(error),
       });
-      sendJson(resp, 500, {
-        code: "internal",
-        message: "db_error",
-        request_id,
-      });
+      throw APIError.internal("db_error");
     }
   } catch (error) {
     console.error("[ingest] unexpected error", {
       request_id,
       error,
     });
-    sendJson(resp, 500, {
-      code: "internal",
-      message: "an internal error occurred",
-      request_id,
-    });
+    throw APIError.internal("an internal error occurred");
   }
 }
 
-// Sanity check (curl):
-// curl -i -X POST "$BASE_URL/api/v1/ingest" -H "content-type: application/json" \
-//   -H "x-ingest-api-key: $INGEST_API_KEY" \
-//   -d '{"event_type":"page_view","event_source":"website","lead_id":"<lead-id>","url":"https://example.com"}'
-
-// POST endpoint for ingesting intent events from website
-export const ingestIntentEvent = api.raw(
+export const ingestIntentEvent = api<IngestIntentEventRequest, IngestIntentEventResponse>(
   { expose: true, method: "POST", path: "/marketing/ingest-intent-event" },
-  (req, resp) => {
-    void handleIngestIntentEvent(req, resp);
-  }
+  handleIngestIntentEvent
 );
 
-export const ingestIntentEventV1 = api.raw(
+export const ingestIntentEventV1 = api<IngestIntentEventRequest, IngestIntentEventResponse>(
   { expose: true, method: "POST", path: "/api/v1/ingest" },
-  (req, resp) => {
-    void handleIngestIntentEvent(req, resp);
-  }
+  handleIngestIntentEvent
 );
 
-export const ingestIntentEventOptions = api.raw(
+export const ingestIntentEventOptions = api<void, { message: string }>(
   { expose: true, method: "OPTIONS", path: "/marketing/ingest-intent-event" },
-  (req, resp) => {
-    applyCorsHeaders(resp, req);
-    resp.statusCode = 204;
-    resp.end();
-  }
+  async () => ({ message: "ok" })
 );
 
-export const ingestIntentEventV1Options = api.raw(
+export const ingestIntentEventV1Options = api<void, { message: string }>(
   { expose: true, method: "OPTIONS", path: "/api/v1/ingest" },
-  (req, resp) => {
-    applyCorsHeaders(resp, req);
-    resp.statusCode = 204;
-    resp.end();
-  }
+  async () => ({ message: "ok" })
 );

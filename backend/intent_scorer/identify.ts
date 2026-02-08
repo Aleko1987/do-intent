@@ -1,4 +1,4 @@
-import { api, APIError, RawRequest, RawResponse } from "encore.dev/api";
+import { api, APIError } from "encore.dev/api";
 import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
 import {
@@ -31,11 +31,6 @@ interface IdentifyResponse {
   threshold_emitted: boolean;
 }
 
-interface ErrorResponse {
-  code: "invalid_argument" | "internal";
-  message: string;
-}
-
 /**
  * Validates UUID format (simple check)
  */
@@ -52,44 +47,6 @@ function isValidEmail(email: string): boolean {
   // Basic check: contains @ and at least one character before and after
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(email);
-}
-
-function getCorsOrigin(req: RawRequest): string {
-  const origin = req.headers.origin;
-  if (Array.isArray(origin)) {
-    return origin[0] ?? "*";
-  }
-  return origin ?? "*";
-}
-
-function applyCorsHeaders(resp: RawResponse, req: RawRequest): void {
-  resp.setHeader("Access-Control-Allow-Origin", getCorsOrigin(req));
-  resp.setHeader("Access-Control-Allow-Headers", "content-type");
-  resp.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  resp.setHeader("Vary", "Origin");
-}
-
-async function readJsonBody(req: RawRequest): Promise<unknown> {
-  let raw = "";
-  for await (const chunk of req) {
-    raw += chunk.toString();
-  }
-
-  if (!raw) {
-    return {};
-  }
-
-  return JSON.parse(raw);
-}
-
-function sendJson(
-  resp: RawResponse,
-  status: number,
-  payload: IdentifyResponse | ErrorResponse
-): void {
-  resp.statusCode = status;
-  resp.setHeader("Content-Type", "application/json");
-  resp.end(JSON.stringify(payload));
 }
 
 /**
@@ -312,43 +269,13 @@ export const identify = api<IdentifyRequest, IdentifyResponse>(
   identifyInternal
 );
 
-export const identifyV1 = api.raw(
+export const identifyV1 = api<IdentifyRequest, IdentifyResponse>(
   { expose: true, method: "POST", path: "/api/v1/identify" },
-  async (req, resp) => {
-    applyCorsHeaders(resp, req);
-    try {
-      const body = await readJsonBody(req);
-      if (typeof body !== "object" || body === null) {
-        sendJson(resp, 400, {
-          code: "invalid_argument",
-          message: "body must be a JSON object",
-        });
-        return;
-      }
-      const result = await identifyInternal(body as IdentifyRequest);
-      sendJson(resp, 200, result);
-    } catch (error) {
-      if (error instanceof APIError && error.code === "invalid_argument") {
-        sendJson(resp, 400, {
-          code: "invalid_argument",
-          message: error.message,
-        });
-        return;
-      }
-      sendJson(resp, 500, {
-        code: "internal",
-        message: error instanceof Error ? error.message : "Internal error",
-      });
-    }
-  }
+  identifyInternal
 );
 
-export const identifyV1Options = api.raw(
+export const identifyV1Options = api<void, { message: string }>(
   { expose: true, method: "OPTIONS", path: "/api/v1/identify" },
-  (req, resp) => {
-    applyCorsHeaders(resp, req);
-    resp.statusCode = 200;
-    resp.end();
-  }
+  async () => ({ message: "ok" })
 );
 

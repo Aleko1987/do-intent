@@ -1,4 +1,4 @@
-import { api, APIError, RawRequest, RawResponse } from "encore.dev/api";
+import { api, APIError } from "encore.dev/api";
 import { getAuthData } from "~encore/auth";
 import { Pool } from "pg";
 import { randomUUID } from "crypto";
@@ -29,13 +29,6 @@ interface TrackResponse {
 interface InfoResponse {
   ok?: true;
   message: string;
-}
-
-interface ErrorResponse {
-  code: "invalid_argument" | "internal";
-  message: string;
-  details?: unknown;
-  request_id?: string;
 }
 
 let pool: Pool | null = null;
@@ -294,47 +287,6 @@ function parseMetadata(raw: unknown): JsonObject {
   throw APIError.invalidArgument("metadata must be a JSON object string");
 }
 
-function getCorsOrigin(req: RawRequest): string {
-  const origin = req.headers.origin;
-  if (Array.isArray(origin)) {
-    return origin[0] ?? "*";
-  }
-  return origin ?? "*";
-}
-
-function applyCorsHeaders(resp: RawResponse, req: RawRequest): void {
-  resp.setHeader("Access-Control-Allow-Origin", getCorsOrigin(req));
-  resp.setHeader(
-    "Access-Control-Allow-Headers",
-    "content-type, x-do-intent-key, authorization"
-  );
-  resp.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS, GET");
-  resp.setHeader("Vary", "Origin");
-}
-
-async function readJsonBody(req: RawRequest): Promise<unknown> {
-  let raw = "";
-  for await (const chunk of req) {
-    raw += chunk.toString();
-  }
-
-  if (!raw) {
-    return {};
-  }
-
-  return JSON.parse(raw);
-}
-
-function sendJson(
-  resp: RawResponse,
-  status: number,
-  payload: TrackResponse | InfoResponse | ErrorResponse
-): void {
-  resp.statusCode = status;
-  resp.setHeader("Content-Type", "application/json");
-  resp.end(JSON.stringify(payload));
-}
-
 async function insertIntentEvent(
   activePool: Pool,
   params: {
@@ -401,38 +353,21 @@ async function scoreAndUpdateSubject(
   }
 }
 
-async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
+async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
   // Generate request_id for correlation
   const request_id = randomUUID();
 
-  applyCorsHeaders(resp, req);
-
   if (!isDbEnabled()) {
     console.info("[track] DB disabled via ENABLE_DB flag.", { request_id });
-    sendJson(resp, 200, {
+    return {
       ok: true,
       stored: false,
       reason: "db_disabled",
       request_id,
-    });
-    return;
+    };
   }
 
   try {
-    let payload: TrackRequest;
-    try {
-      const body = await readJsonBody(req);
-      if (typeof body !== "object" || body === null) {
-        throw APIError.invalidArgument("body must be a JSON object");
-      }
-      payload = body as TrackRequest;
-    } catch (error) {
-      if (error instanceof APIError) {
-        throw error;
-      }
-      throw APIError.invalidArgument("body must be valid JSON");
-    }
-    
     // Validate required fields
     const event = requireNonEmptyString(payload.event, "event");
 
@@ -487,15 +422,14 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
         request_id,
         error_code: errorCode,
       });
-      sendJson(resp, 200, {
+      return {
         ok: true,
         stored,
         reason: "db_error",
         error_code: errorCode,
         error_message: errorMessage,
         request_id,
-      });
-      return;
+      };
     }
 
     try {
@@ -636,23 +570,18 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
       );
     }
 
-    sendJson(resp, 200, {
+    return {
       ok: true,
       stored,
       reason: stored ? undefined : "db_error",
       error_code: stored ? undefined : errorCode ?? "db_query_failed",
       error_message: stored ? undefined : errorMessage ?? "Database query failed",
       request_id,
-    });
+    };
   } catch (error) {
     // Handle validation errors (400)
     if (error instanceof APIError && error.code === "invalid_argument") {
-      sendJson(resp, 400, {
-        code: "invalid_argument",
-        message: error.message,
-        request_id,
-      });
-      return;
+      throw error;
     }
 
     // Handle internal errors (500)
@@ -679,54 +608,37 @@ async function handleTrack(req: RawRequest, resp: RawResponse): Promise<void> {
       ),
     });
 
-    sendJson(resp, 200, {
+    return {
       ok: true,
       stored: false,
       reason: "db_error",
       error_message: fallbackError.message,
       request_id,
-    });
+    };
   }
 }
 
-export const track = api.raw(
+export const track = api<TrackRequest, TrackResponse>(
   { expose: true, method: "POST", path: "/track" },
-  (req, resp) => {
-    void handleTrack(req, resp);
-  }
+  async (payload) => handleTrack(payload)
 );
 
-export const trackOptions = api.raw(
+export const trackOptions = api<void, InfoResponse>(
   { expose: true, method: "OPTIONS", path: "/track" },
-  (req, resp) => {
-    applyCorsHeaders(resp, req);
-    resp.statusCode = 200;
-    resp.end();
-  }
+  async () => ({ message: "ok" })
 );
 
-export const trackGet = api.raw(
+export const trackGet = api<void, InfoResponse>(
   { expose: true, method: "GET", path: "/track" },
-  (req, resp) => {
-    applyCorsHeaders(resp, req);
-    sendJson(resp, 200, {
-      message: "use POST /track",
-    });
-  }
+  async () => ({ message: "use POST /track" })
 );
 
-export const trackV1 = api.raw(
+export const trackV1 = api<TrackRequest, TrackResponse>(
   { expose: true, method: "POST", path: "/api/v1/track" },
-  (req, resp) => {
-    void handleTrack(req, resp);
-  }
+  async (payload) => handleTrack(payload)
 );
 
-export const trackV1Options = api.raw(
+export const trackV1Options = api<void, InfoResponse>(
   { expose: true, method: "OPTIONS", path: "/api/v1/track" },
-  (req, resp) => {
-    applyCorsHeaders(resp, req);
-    resp.statusCode = 200;
-    resp.end();
-  }
+  async () => ({ message: "ok" })
 );
