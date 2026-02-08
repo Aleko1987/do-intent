@@ -19,5 +19,5 @@ export const appRoot = api<void, FrontendResponse>(
 
 export const assets = api<FrontendPathRequest, FrontendResponse>(
   { expose: true, method: "GET", path: "/app/*path" },
-  async () => ({ message: "frontend disabled in api build" })
+  async (_req) => ({ message: "frontend disabled in api build" })
 );
