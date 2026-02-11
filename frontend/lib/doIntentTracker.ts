@@ -203,6 +203,23 @@ function getUtmParams(): Record<string, string> {
   return utm;
 }
 
+function getClickIds(): Record<string, string> {
+  if (typeof window === 'undefined') return {};
+
+  const params = new URLSearchParams(window.location.search);
+  const clickIds: Record<string, string> = {};
+  const clickKeys = ['gclid', 'fbclid', 'msclkid'];
+
+  for (const key of clickKeys) {
+    const value = params.get(key);
+    if (value) {
+      clickIds[key] = value;
+    }
+  }
+
+  return clickIds;
+}
+
 /**
  * Build metadata object for events
  */
@@ -215,6 +232,7 @@ function buildMetadata(additional?: Record<string, any>): Record<string, any> {
     referrer: typeof document !== 'undefined' ? document.referrer : '',
     page_title: typeof document !== 'undefined' ? document.title : '',
     ...getUtmParams(),
+    ...getClickIds(),
     ...additional,
   };
 

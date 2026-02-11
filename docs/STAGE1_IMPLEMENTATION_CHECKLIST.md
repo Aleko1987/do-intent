@@ -11,7 +11,7 @@ Status legend:
 - [x] Add 30-min inactivity timeout for `session_id` rotation in `doIntentTracker.ts`
 - [x] Add explicit `event_id` to `/track` payloads and store as `dedupe_key`
 - [x] Add `page_class` to `/track` metadata
-- [ ] Capture click IDs in tracker metadata (`gclid`, `fbclid`, `msclkid`)
+- [x] Capture click IDs in tracker metadata (`gclid`, `fbclid`, `msclkid`)
 - [ ] Optional: support first-party cookie storage in addition to localStorage
 
 ## B. Identity + score merge
