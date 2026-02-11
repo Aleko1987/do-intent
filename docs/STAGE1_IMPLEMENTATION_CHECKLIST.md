@@ -10,7 +10,7 @@ Status legend:
 ## A. Anonymous-first tracking reliability
 - [x] Add 30-min inactivity timeout for `session_id` rotation in `doIntentTracker.ts`
 - [x] Add explicit `event_id` to `/track` payloads and store as `dedupe_key`
-- [ ] Add `page_class` to `/track` metadata
+- [x] Add `page_class` to `/track` metadata
 - [ ] Capture click IDs in tracker metadata (`gclid`, `fbclid`, `msclkid`)
 - [ ] Optional: support first-party cookie storage in addition to localStorage
 

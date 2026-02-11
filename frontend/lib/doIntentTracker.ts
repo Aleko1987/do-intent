@@ -143,6 +143,32 @@ function getTimezone(): string {
   }
 }
 
+function getPageClass(): string {
+  if (typeof window === 'undefined') {
+    return 'unknown';
+  }
+  const pathname = window.location.pathname || '';
+  if (pathname === '/' || pathname === '') {
+    return 'home';
+  }
+  if (pathname.startsWith('/pricing')) {
+    return 'pricing';
+  }
+  if (pathname.startsWith('/docs')) {
+    return 'docs';
+  }
+  if (pathname.startsWith('/blog')) {
+    return 'blog';
+  }
+  if (pathname.startsWith('/contact')) {
+    return 'contact';
+  }
+  if (pathname.startsWith('/case-study') || pathname.startsWith('/case-studies')) {
+    return 'case_study';
+  }
+  return 'other';
+}
+
 function getClerkUserId(): string | null {
   if (typeof window === 'undefined') {
     return null;
@@ -185,6 +211,7 @@ function buildMetadata(additional?: Record<string, any>): Record<string, any> {
     device: detectDevice(),
     user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
     timezone: getTimezone(),
+    page_class: getPageClass(),
     referrer: typeof document !== 'undefined' ? document.referrer : '',
     page_title: typeof document !== 'undefined' ? document.title : '',
     ...getUtmParams(),
