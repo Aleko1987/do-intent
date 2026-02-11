@@ -29,11 +29,13 @@ const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 interface TrackerConfig {
   apiBase?: string;
   debug?: boolean;
+  useCookies?: boolean;
 }
 
 let config: TrackerConfig = {
   apiBase: '',
   debug: false,
+  useCookies: false,
 };
 
 // Tracked flags (fire-once per page)
@@ -56,6 +58,44 @@ function generateUUID(): string {
     return crypto.randomUUID();
   }
   return generateUUIDFallback();
+}
+
+function canUseLocalStorage(): boolean {
+  try {
+    return typeof window !== 'undefined' && !!window.localStorage;
+  } catch {
+    return false;
+  }
+}
+
+function canUseSessionStorage(): boolean {
+  try {
+    return typeof window !== 'undefined' && !!window.sessionStorage;
+  } catch {
+    return false;
+  }
+}
+
+function getCookie(name: string): string | null {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+  const cookies = document.cookie ? document.cookie.split('; ') : [];
+  for (const cookie of cookies) {
+    if (cookie.startsWith(`${name}=`)) {
+      return decodeURIComponent(cookie.slice(name.length + 1));
+    }
+  }
+  return null;
+}
+
+function setCookie(name: string, value: string, maxAgeSeconds?: number): void {
+  if (typeof document === 'undefined') {
+    return;
+  }
+  const encoded = encodeURIComponent(value);
+  const maxAge = typeof maxAgeSeconds === 'number' ? `; Max-Age=${maxAgeSeconds}` : '';
+  document.cookie = `${name}=${encoded}; Path=/; SameSite=Lax${maxAge}`;
 }
 
 function getApiBaseUrl(): string {
@@ -82,15 +122,24 @@ function getApiBaseUrl(): string {
  * Get or create anonymous_id from localStorage
  */
 function getAnonymousId(): string {
-  if (typeof window === 'undefined' || !window.localStorage) {
+  if (typeof window === 'undefined') {
     return generateUUID();
   }
-  
-  let anonymousId = localStorage.getItem(STORAGE_KEY_ANONYMOUS_ID);
+
+  const useCookies = config.useCookies || !canUseLocalStorage();
+  let anonymousId = useCookies
+    ? getCookie(STORAGE_KEY_ANONYMOUS_ID)
+    : localStorage.getItem(STORAGE_KEY_ANONYMOUS_ID);
+
   if (!anonymousId) {
     anonymousId = generateUUID();
-    localStorage.setItem(STORAGE_KEY_ANONYMOUS_ID, anonymousId);
+    if (useCookies) {
+      setCookie(STORAGE_KEY_ANONYMOUS_ID, anonymousId, 60 * 60 * 24 * 365);
+    } else {
+      localStorage.setItem(STORAGE_KEY_ANONYMOUS_ID, anonymousId);
+    }
   }
+
   return anonymousId;
 }
 
@@ -99,25 +148,39 @@ function getAnonymousId(): string {
  * Rotates the session after 30 minutes of inactivity.
  */
 function getSessionId(): string {
-  if (typeof window === 'undefined' || !window.sessionStorage) {
+  if (typeof window === 'undefined') {
     return generateUUID();
   }
 
+  const useCookies = config.useCookies || !canUseSessionStorage();
+
   const now = Date.now();
-  const lastSeenRaw = sessionStorage.getItem(STORAGE_KEY_SESSION_TS);
+  const lastSeenRaw = useCookies
+    ? getCookie(STORAGE_KEY_SESSION_TS)
+    : sessionStorage.getItem(STORAGE_KEY_SESSION_TS);
   const lastSeen = lastSeenRaw ? Number(lastSeenRaw) : null;
   const isExpired =
     lastSeen !== null && !Number.isNaN(lastSeen)
       ? now - lastSeen > SESSION_TIMEOUT_MS
       : false;
 
-  let sessionId = sessionStorage.getItem(STORAGE_KEY_SESSION_ID);
+  let sessionId = useCookies
+    ? getCookie(STORAGE_KEY_SESSION_ID)
+    : sessionStorage.getItem(STORAGE_KEY_SESSION_ID);
   if (!sessionId || isExpired) {
     sessionId = generateUUID();
-    sessionStorage.setItem(STORAGE_KEY_SESSION_ID, sessionId);
+    if (useCookies) {
+      setCookie(STORAGE_KEY_SESSION_ID, sessionId, 60 * 60 * 24);
+    } else {
+      sessionStorage.setItem(STORAGE_KEY_SESSION_ID, sessionId);
+    }
   }
 
-  sessionStorage.setItem(STORAGE_KEY_SESSION_TS, String(now));
+  if (useCookies) {
+    setCookie(STORAGE_KEY_SESSION_TS, String(now), 60 * 60 * 24);
+  } else {
+    sessionStorage.setItem(STORAGE_KEY_SESSION_TS, String(now));
+  }
   return sessionId;
 }
 
