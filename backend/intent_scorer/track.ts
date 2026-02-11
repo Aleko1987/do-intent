@@ -12,6 +12,7 @@ import type { JsonObject } from "../internal/json_types";
 
 interface TrackRequest {
   event?: string;
+  event_id?: string;
   session_id?: string;
   anonymous_id?: string;
   url?: string;
@@ -319,6 +320,9 @@ async function insertIntentEvent(
         occurred_at,
         created_at
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+      ON CONFLICT (event_source, dedupe_key)
+        WHERE dedupe_key IS NOT NULL
+        DO NOTHING
       RETURNING id
     `,
     [
@@ -383,6 +387,11 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
       throw APIError.invalidArgument(
         "anonymous_id must be a valid UUID when provided"
       );
+    }
+
+    const eventId = parseOptionalString(payload.event_id);
+    if (eventId && !isValidUUID(eventId)) {
+      throw APIError.invalidArgument("event_id must be a valid UUID when provided");
     }
 
     const url = parseOptionalString(payload.url) ?? "";
@@ -506,6 +515,7 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
           anonymousId,
           occurredAt: occurredAt.toISOString(),
           metadata: metadataPayload,
+          dedupeKey: eventId ?? null,
         });
         if (intentEventId) {
           await scoreAndUpdateSubject(intentEventId, anonymousId, occurredAt.toISOString());

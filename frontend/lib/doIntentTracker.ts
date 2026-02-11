@@ -211,9 +211,11 @@ async function sendTrackEvent(
   const anonymousId = getAnonymousId();
   const sessionId = getSessionId();
   const timestamp = new Date().toISOString();
+  const eventId = generateUUID();
   
   const payload = {
     event: eventType,
+    event_id: eventId,
     session_id: sessionId,
     anonymous_id: anonymousId,
     url,
