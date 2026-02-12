@@ -33,6 +33,17 @@ interface IdentifyResponse {
   threshold_emitted: boolean;
 }
 
+interface TopIdentityEvent {
+  event_id: string;
+  event_type: string;
+  event_source: string;
+  event_value: number | null;
+  occurred_at: string;
+  score: number;
+  reasons: string[];
+  metadata: JsonObject;
+}
+
 /**
  * Validates UUID format (simple check)
  */
@@ -49,6 +60,69 @@ function isValidEmail(email: string): boolean {
   // Basic check: contains @ and at least one character before and after
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(email);
+}
+
+function normalizeJsonObject(value: unknown): JsonObject {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as JsonObject;
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as JsonObject;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // ignore parse error
+    }
+  }
+  return {};
+}
+
+async function getTopIdentityEvents(
+  anonymousId: string,
+  leadId: string | null
+): Promise<TopIdentityEvent[]> {
+  const limit = 10;
+  if (leadId) {
+    const query = `
+      SELECT
+        ie.id as event_id,
+        ie.event_type,
+        ie.event_source,
+        ie.event_value,
+        ie.occurred_at,
+        ie.metadata,
+        isc.score,
+        isc.reasons
+      FROM intent_events ie
+      JOIN intent_scores isc ON ie.id = isc.intent_event_id
+      WHERE (ie.anonymous_id = $1 OR ie.lead_id = $2)
+        AND ie.occurred_at >= NOW() - INTERVAL '30 days'
+      ORDER BY isc.score DESC, ie.occurred_at DESC
+      LIMIT $3
+    `;
+    return await db.rawQueryAll<TopIdentityEvent>(query, anonymousId, leadId, limit);
+  }
+
+  const query = `
+    SELECT
+      ie.id as event_id,
+      ie.event_type,
+      ie.event_source,
+      ie.event_value,
+      ie.occurred_at,
+      ie.metadata,
+      isc.score,
+      isc.reasons
+    FROM intent_events ie
+    JOIN intent_scores isc ON ie.id = isc.intent_event_id
+    WHERE ie.anonymous_id = $1
+      AND ie.occurred_at >= NOW() - INTERVAL '30 days'
+    ORDER BY isc.score DESC, ie.occurred_at DESC
+    LIMIT $2
+  `;
+  return await db.rawQueryAll<TopIdentityEvent>(query, anonymousId, limit);
 }
 
 /**
@@ -251,6 +325,27 @@ async function identifyInternal(req: IdentifyRequest): Promise<IdentifyResponse>
     `;
     await updateLeadRollup(matchingLead.id);
   }
+
+  const existingScoreMetadata = await db.queryRow<{ metadata: JsonObject | string }>`
+    SELECT metadata
+    FROM intent_subject_scores
+    WHERE subject_type = 'identity' AND subject_id = ${identityId}
+  `;
+  const baseMetadata = normalizeJsonObject(existingScoreMetadata?.metadata);
+  const topEvents = await getTopIdentityEvents(
+    req.anonymous_id,
+    matchingLead?.id ?? null
+  );
+  await db.exec`
+    UPDATE intent_subject_scores
+    SET metadata = ${JSON.stringify({
+      ...baseMetadata,
+      top_events: topEvents,
+      top_events_updated_at: new Date().toISOString(),
+      top_event_window_days: 30,
+    })}
+    WHERE subject_type = 'identity' AND subject_id = ${identityId}
+  `;
 
   return {
     ok: true,
