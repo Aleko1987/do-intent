@@ -31,7 +31,9 @@ function resolveAssetPath(urlPath: string): string {
 }
 
 async function handleFrontendRequest(req: Request): Promise<Response> {
-  const { pathname } = new URL(req.url);
+  // Encore raw requests may provide a relative URL (e.g. "/app"), which
+  // `new URL(req.url)` rejects. Provide a base to support both absolute and relative.
+  const { pathname } = new URL(req.url, "http://localhost");
   const shouldServeIndex =
     pathname === "/app" || pathname === "/app/" || !pathname.includes(".");
   const targetPath = shouldServeIndex
