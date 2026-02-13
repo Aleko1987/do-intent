@@ -44,6 +44,7 @@ import { init, track, identify } from '@/lib/doIntentTracker';
 init({
   apiBase: import.meta.env.VITE_API_BASE_URL || '',
   debug: false,
+  useCookies: true, // optional: first-party cookie storage fallback
 });
 
 // Track custom events
@@ -90,13 +91,28 @@ window.DO_INTENT_DEBUG = 'true';
 init({ debug: true });
 ```
 
+### Storage Mode (`useCookies`)
+
+Tracker storage defaults to browser storage, but you can force first-party cookie mode:
+
+```typescript
+init({
+  apiBase: '',
+  useCookies: true,
+});
+```
+
+- `useCookies: false` (default): uses `localStorage`/`sessionStorage` when available
+- `useCookies: true`: uses first-party cookies (`SameSite=Lax`) for IDs/timestamps
+- automatic fallback: if storage APIs are unavailable, tracker falls back to cookies
+
 ## Automatic Events
 
 The tracker automatically emits these events:
 
 ### 1. `page_view`
 - **When**: On every page load
-- **Payload**: URL, referrer, device, user agent, timezone, UTM params
+- **Payload**: URL, referrer, device, user agent, timezone, `page_class`, UTM params, click IDs (`gclid`, `fbclid`, `msclkid`)
 
 ### 2. `scroll_depth`
 - **When**: User scrolls past 60% of page (fires once per page)
@@ -257,17 +273,34 @@ All events sent to `/track` include:
     "page_title": "Pricing - My Site",
     "utm_source": "google",
     "utm_medium": "cpc",
-    "utm_campaign": "spring_sale"
+    "utm_campaign": "spring_sale",
+    "gclid": "EAIaIQob...",
+    "fbclid": "IwAR...",
+    "msclkid": "123abc...",
+    "page_class": "pricing"
   }
 }
 ```
 
 ## Storage
 
-The tracker uses browser storage (no cookies):
+The tracker stores identifiers in browser storage by default (with cookie support/fallback):
 
-- **localStorage**: `do_intent_anonymous_id` (persistent UUID)
-- **sessionStorage**: `do_intent_session_id` (UUID per tab/session)
+- **Anonymous ID**
+  - `localStorage`: `do_intent_anonymous_id` (persistent UUID), or
+  - cookie: `do_intent_anonymous_id` (`Max-Age=365d`) when `useCookies=true` or storage unavailable
+- **Session ID**
+  - `sessionStorage`: `do_intent_session_id` (UUID), or
+  - cookie: `do_intent_session_id` (`Max-Age=1d`) in cookie mode
+- **Session activity timestamp**
+  - `sessionStorage`: `do_intent_session_ts`, or
+  - cookie: `do_intent_session_ts`
+
+### Session rotation timeout
+
+- Session rotates after **30 minutes of inactivity**.
+- Inactivity is measured by comparing current time to `do_intent_session_ts`.
+- On activity, timestamp is refreshed.
 
 ## Testing Checklist
 
@@ -287,6 +320,14 @@ Manual testing steps:
 
 5. **Identify**
    - Call `identify(email)` → Check for `POST /api/v1/identify` → Verify response includes `identity_id` and `total_identity_score`
+
+6. **Click IDs**
+   - Open URL with `?gclid=...&fbclid=...&msclkid=...`
+   - Check `POST /track` payload metadata includes all present click IDs
+
+7. **Session Timeout**
+   - Trigger an event, wait >30 minutes (or manually backdate `do_intent_session_ts`), trigger another event
+   - Verify a new `session_id` is sent
 
 ## Troubleshooting
 

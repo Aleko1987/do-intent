@@ -379,6 +379,7 @@ export function init(options: TrackerConfig = {}): void {
   config = {
     apiBase: options.apiBase,
     debug: options.debug ?? false,
+    useCookies: options.useCookies ?? false,
   };
   
   if (config.debug) {

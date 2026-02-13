@@ -43,6 +43,6 @@ Status legend:
 - [ ] Optional: qualification + teardown call flow
 
 ## G. Documentation + ops
-- [ ] Update `docs/WEBSITE_TRACKER.md` with session timeout + click IDs
-- [ ] Add `docs/STAGE1_ACCEPTANCE.md` with test criteria
+- [x] Update `docs/WEBSITE_TRACKER.md` with session timeout + click IDs
+- [x] Add `docs/STAGE1_ACCEPTANCE.md` with test criteria
 
