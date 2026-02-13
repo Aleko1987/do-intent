@@ -93,6 +93,35 @@ Key fields:
 
 ---
 
+## Canonical person (identity) vs marketing lead (pipeline record)
+
+DO-Intent has **two “person-like” concepts** that serve different jobs:
+
+- **`identities` (canonical person)**: the product’s global view of a human. It is created/updated via `/identify` and used for **identity-level scoring** (`intent_subject_scores.subject_type = 'identity'`).
+- **`marketing_leads` (pipeline record)**: a CRM/workflow object used by the marketing UI. It has ownership (`owner_user_id`), stage, and rollups (e.g. `lead_intent_rollups`).
+
+### How they map today (Stage 1)
+
+- **Primary key for mapping is normalized email**.
+- The database currently enforces **a unique lowercased email** in `marketing_leads` (`idx_marketing_leads_email`), so in practice this is **0-or-1 lead per email**.
+
+When `/identify` is called with an email:
+
+1. We upsert an `identity` for the email.
+2. We merge anonymous score into the identity score.
+3. If a `marketing_leads` row exists for that email, we **backfill `intent_events.lead_id`** for the matching `anonymous_id` (only where `lead_id` is null), then recompute lead rollups.
+
+This keeps **identity scoring** and **lead rollups** aligned without requiring `identities` to “own” pipeline semantics.
+
+### Future notes (multi-tenant)
+
+If/when we need true multi-tenant semantics (multiple pipeline records per email across owners), we should revisit:
+
+- Email uniqueness scope (global vs per `owner_user_id`)
+- A first-class mapping table (e.g. `identity_leads(identity_id, lead_id, owner_user_id)`)
+
+---
+
 ### Intent Scores
 Rolling, incremental intent state.
 

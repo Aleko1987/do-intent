@@ -17,7 +17,7 @@ Status legend:
 ## B. Identity + score merge
 - [x] Anonymous → identity promotion works via `/identify`
 - [x] Store top contributing events + reasons for explainability (per identity)
-- [ ] Document canonical person vs lead mapping (if needed beyond identities table)
+- [x] Document canonical person vs lead mapping (if needed beyond identities table)
 
 ## C. Scoring v1 upgrades
 - [ ] Add time-decay logic (half-life by event class)
