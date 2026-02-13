@@ -58,6 +58,17 @@ This document defines practical pass/fail checks for Stage 1 MVP.
 - **Metadata consistency**
   - Ingest paths consistently backfill `url/path/referrer/utm_*` and click IDs without overwriting existing values.
 
+## F. Lead magnet funnel (growth)
+
+- **CTA placement**
+  - Top nav includes a lead-magnet CTA.
+  - Exit-intent prompt appears on pricing/docs-intent routes and links to contact capture.
+- **Form capture flow**
+  - Contact lead-magnet form identifies via `/marketing/identify`.
+  - `form_submit` intent event is tracked after successful identify.
+- **Mini-report delivery**
+  - On successful submit, a mini-report is shown in-app and can be downloaded.
+
 ## SPA / Ops sanity checks
 
 - `GET /app` returns 200 HTML.

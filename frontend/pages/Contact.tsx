@@ -14,8 +14,38 @@ export default function Contact() {
   const [company, setCompany] = useState("");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [miniReport, setMiniReport] = useState<string | null>(null);
   const formStartedRef = useRef(false);
   const { toast } = useToast();
+
+  const buildMiniReport = () => {
+    const now = new Date().toISOString();
+    const summaryName = name.trim() || "there";
+    const summaryCompany = company.trim() || "your company";
+    const sourceHint =
+      new URLSearchParams(window.location.search).get("utm_source") || "direct";
+    return [
+      "DO-Intent Mini Report",
+      "=====================",
+      `Generated: ${now}`,
+      `Contact: ${summaryName} <${email.trim().toLowerCase()}>`,
+      `Company: ${summaryCompany}`,
+      "",
+      "Quick Intent Observations",
+      "-------------------------",
+      `- Acquisition source hint: ${sourceHint}`,
+      "- Pricing/contact engagement should be prioritized for follow-up.",
+      "- Keep conversion-path CTAs visible on high-intent pages.",
+      "",
+      "Recommended Next Steps",
+      "----------------------",
+      "1) Review top intent signals for this lead in Marketing > Intent Signals.",
+      "2) Trigger personalized outreach within 24h for hot/critical bands.",
+      "3) Validate campaign attribution (UTM + click IDs) in recent events.",
+      "",
+      "Need a deeper teardown? Reply to this report and request a full audit call.",
+    ].join("\n");
+  };
 
   // Track contact page view (only if lead_id exists)
   useEffect(() => {
@@ -56,12 +86,17 @@ export default function Contact() {
       // Step 3: Track form submission
       await trackEvent(lead_id, "form_submit", {
         form: "contact",
+        lead_magnet: "mini_report",
       });
+
+      // Step 4: Auto-deliver mini-report in-app (downloadable)
+      const report = buildMiniReport();
+      setMiniReport(report);
 
       // Show success message
       toast({
-        title: "Message sent!",
-        description: "We'll get back to you soon.",
+        title: "Mini report ready",
+        description: "Your free intent report has been generated below.",
       });
 
       // Reset form
@@ -85,9 +120,9 @@ export default function Contact() {
     <div className="min-h-screen bg-background p-6">
       <div className="mx-auto max-w-2xl">
         <div className="mb-6">
-          <h1 className="text-3xl font-bold text-foreground">Contact Us</h1>
+          <h1 className="text-3xl font-bold text-foreground">Get Your Free Intent Mini Report</h1>
           <p className="text-muted-foreground mt-2">
-            Get in touch with our team
+            Share your details and we&apos;ll generate an instant teardown starter report.
           </p>
         </div>
 
@@ -147,11 +182,38 @@ export default function Contact() {
               </div>
 
               <Button type="submit" disabled={submitting}>
-                {submitting ? "Sending..." : "Send Message"}
+                {submitting ? "Generating..." : "Generate Free Report"}
               </Button>
             </form>
           </CardContent>
         </Card>
+
+        {miniReport && (
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle>Your Mini Report</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <pre className="whitespace-pre-wrap rounded-md border bg-muted/40 p-4 text-xs leading-5">
+                {miniReport}
+              </pre>
+              <Button
+                type="button"
+                onClick={() => {
+                  const blob = new Blob([miniReport], { type: "text/plain;charset=utf-8" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "do-intent-mini-report.txt";
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                Download Report
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );

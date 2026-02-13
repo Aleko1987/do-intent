@@ -37,9 +37,9 @@ Status legend:
 - [x] Persist attribution fields in `intent_events` metadata consistently
 
 ## F. Lead magnet funnel (growth)
-- [ ] Add CTA placement (top nav + exit intent on pricing/docs)
-- [ ] Implement lead magnet form capture → `/marketing/identify`
-- [ ] Auto-deliver mini-report
+- [x] Add CTA placement (top nav + exit intent on pricing/docs)
+- [x] Implement lead magnet form capture → `/marketing/identify`
+- [x] Auto-deliver mini-report
 - [ ] Optional: qualification + teardown call flow
 
 ## G. Documentation + ops
