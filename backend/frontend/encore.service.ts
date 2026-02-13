@@ -58,6 +58,15 @@ function resolveAssetPath(pathname: string): string {
   return resolved;
 }
 
+async function readFileWithTimeout(path: string, timeoutMs: number): Promise<Uint8Array> {
+  return await Promise.race([
+    readFile(path),
+    new Promise<Uint8Array>((_, reject) =>
+      setTimeout(() => reject(new Error("read_timeout")), timeoutMs)
+    ),
+  ]);
+}
+
 async function serveSpa(req: Request): Promise<Response> {
   // Encore raw requests may provide relative URLs (e.g. "/app").
   const { pathname } = new URL(req.url, "http://localhost");
@@ -70,7 +79,7 @@ async function serveSpa(req: Request): Promise<Response> {
     : resolveAssetPath(pathname);
 
   try {
-    const body = await readFile(targetPath);
+    const body = await readFileWithTimeout(targetPath, 2000);
     const contentType =
       contentTypes[extname(targetPath).toLowerCase()] ??
       "application/octet-stream";
@@ -81,7 +90,16 @@ async function serveSpa(req: Request): Promise<Response> {
         "Content-Type": contentType,
       },
     });
-  } catch {
+  } catch (error) {
+    console.error("[frontend] Failed to serve SPA asset.", {
+      pathname,
+      distDir,
+      targetPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    if (error instanceof Error && error.message === "read_timeout") {
+      return new Response("Gateway Timeout", { status: 504 });
+    }
     return new Response("Not found", { status: 404 });
   }
 }
