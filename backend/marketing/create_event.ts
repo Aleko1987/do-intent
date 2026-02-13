@@ -13,6 +13,16 @@ interface CreateEventRequest {
   event_source: string;
   anonymous_id?: string;
   dedupe_key?: string;
+  url?: string;
+  path?: string;
+  referrer?: string;
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
+  utm_content?: string;
+  gclid?: string;
+  fbclid?: string;
+  msclkid?: string;
   metadata?: string;
   occurred_at?: string;
 }
@@ -29,6 +39,18 @@ function parseOptionalString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function setMetadataValue(
+  metadata: JsonObject,
+  key: string,
+  value: string | null
+): void {
+  if (value === null) return;
+  const existing = metadata[key];
+  if (existing === undefined || existing === null || existing === "") {
+    metadata[key] = value;
+  }
 }
 
 // Creates an intent event for a lead and triggers scoring.
@@ -53,6 +75,17 @@ export const createEvent = api<CreateEventRequest, CreateEventResponse>(
       metadata.anonymous_id = anonymousId;
     }
     const dedupeKey = parseOptionalString(req.dedupe_key);
+    setMetadataValue(metadata, "dedupe_key", dedupeKey);
+    setMetadataValue(metadata, "url", parseOptionalString(req.url));
+    setMetadataValue(metadata, "path", parseOptionalString(req.path));
+    setMetadataValue(metadata, "referrer", parseOptionalString(req.referrer));
+    setMetadataValue(metadata, "utm_source", parseOptionalString(req.utm_source));
+    setMetadataValue(metadata, "utm_medium", parseOptionalString(req.utm_medium));
+    setMetadataValue(metadata, "utm_campaign", parseOptionalString(req.utm_campaign));
+    setMetadataValue(metadata, "utm_content", parseOptionalString(req.utm_content));
+    setMetadataValue(metadata, "gclid", parseOptionalString(req.gclid));
+    setMetadataValue(metadata, "fbclid", parseOptionalString(req.fbclid));
+    setMetadataValue(metadata, "msclkid", parseOptionalString(req.msclkid));
     
     const lead = await db.queryRow<MarketingLead>`
       SELECT * FROM marketing_leads WHERE id = ${req.id} AND owner_user_id = ${authData.userID}

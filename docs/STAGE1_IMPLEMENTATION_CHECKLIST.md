@@ -33,8 +33,8 @@ Status legend:
 
 ## E. Marketing attribution capture
 - [~] UTMs captured in `doIntent.ts` and `doIntentTracker.ts`
-- [ ] Add click IDs to both lead-based ingest and anonymous tracking
-- [ ] Persist attribution fields in `intent_events` metadata consistently
+- [x] Add click IDs to both lead-based ingest and anonymous tracking
+- [x] Persist attribution fields in `intent_events` metadata consistently
 
 ## F. Lead magnet funnel (growth)
 - [ ] Add CTA placement (top nav + exit intent on pricing/docs)

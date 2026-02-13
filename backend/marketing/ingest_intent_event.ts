@@ -51,6 +51,9 @@ interface IngestIntentEventPayload {
   utm_medium?: string;
   utm_campaign?: string;
   utm_content?: string;
+  gclid?: string;
+  fbclid?: string;
+  msclkid?: string;
   metadata?: string;
 }
 
@@ -395,7 +398,7 @@ function validatePayload(
 
   // Ensure metadata stays stable; only backfill empty keys from payload fields.
   setMetadataValue(metadata, "anonymous_id", anonymousId);
-  setMetadataValue(metadata, "dedupe_key", payloadDedupeKey);
+  setMetadataValue(metadata, "dedupe_key", dedupeKey);
   setMetadataValue(metadata, "url", parseOptionalString(payload.url));
   setMetadataValue(metadata, "path", parseOptionalString(payload.path));
   setMetadataValue(metadata, "referrer", parseOptionalString(payload.referrer));
@@ -403,6 +406,9 @@ function validatePayload(
   setMetadataValue(metadata, "utm_medium", parseOptionalString(payload.utm_medium));
   setMetadataValue(metadata, "utm_campaign", parseOptionalString(payload.utm_campaign));
   setMetadataValue(metadata, "utm_content", parseOptionalString(payload.utm_content));
+  setMetadataValue(metadata, "gclid", parseOptionalString(payload.gclid));
+  setMetadataValue(metadata, "fbclid", parseOptionalString(payload.fbclid));
+  setMetadataValue(metadata, "msclkid", parseOptionalString(payload.msclkid));
 
   for (const key of Object.keys(metadata)) {
     if (metadata[key] === "") {

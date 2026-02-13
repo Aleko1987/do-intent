@@ -11,6 +11,16 @@ interface WebhookEventRequest {
   lead_phone?: string;
   event_type: string;
   event_source?: string;
+  url?: string;
+  path?: string;
+  referrer?: string;
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
+  utm_content?: string;
+  gclid?: string;
+  fbclid?: string;
+  msclkid?: string;
   metadata?: string;
   occurred_at?: string;
   dedupe_key?: string;
@@ -64,6 +74,18 @@ function parseOptionalString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function setMetadataValue(
+  metadata: JsonObject,
+  key: string,
+  value: string | null
+): void {
+  if (value === null) return;
+  const existing = metadata[key];
+  if (existing === undefined || existing === null || existing === "") {
+    metadata[key] = value;
+  }
+}
+
 export const webhookEvent = api<WebhookEventRequest, WebhookEventResponse>(
   { expose: true, method: "POST", path: "/marketing/events" },
   async (req) => {
@@ -86,6 +108,17 @@ export const webhookEvent = api<WebhookEventRequest, WebhookEventResponse>(
     if (anonymousId) {
       normalizedMetadata.anonymous_id = anonymousId;
     }
+    setMetadataValue(normalizedMetadata, "dedupe_key", parseOptionalString(req.dedupe_key));
+    setMetadataValue(normalizedMetadata, "url", parseOptionalString(req.url));
+    setMetadataValue(normalizedMetadata, "path", parseOptionalString(req.path));
+    setMetadataValue(normalizedMetadata, "referrer", parseOptionalString(req.referrer));
+    setMetadataValue(normalizedMetadata, "utm_source", parseOptionalString(req.utm_source));
+    setMetadataValue(normalizedMetadata, "utm_medium", parseOptionalString(req.utm_medium));
+    setMetadataValue(normalizedMetadata, "utm_campaign", parseOptionalString(req.utm_campaign));
+    setMetadataValue(normalizedMetadata, "utm_content", parseOptionalString(req.utm_content));
+    setMetadataValue(normalizedMetadata, "gclid", parseOptionalString(req.gclid));
+    setMetadataValue(normalizedMetadata, "fbclid", parseOptionalString(req.fbclid));
+    setMetadataValue(normalizedMetadata, "msclkid", parseOptionalString(req.msclkid));
     const eventSource = req.event_source || "webhook";
     
     let lead: MarketingLead | null = null;
