@@ -40,7 +40,7 @@ Status legend:
 - [x] Add CTA placement (top nav + exit intent on pricing/docs)
 - [x] Implement lead magnet form capture → `/marketing/identify`
 - [x] Auto-deliver mini-report
-- [ ] Optional: qualification + teardown call flow
+- [x] Optional: qualification + teardown call flow
 
 ## G. Documentation + ops
 - [x] Update `docs/WEBSITE_TRACKER.md` with session timeout + click IDs

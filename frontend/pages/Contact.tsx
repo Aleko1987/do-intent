@@ -15,6 +15,11 @@ export default function Contact() {
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [miniReport, setMiniReport] = useState<string | null>(null);
+  const [qualifying, setQualifying] = useState(false);
+  const [companySize, setCompanySize] = useState("");
+  const [timeline, setTimeline] = useState("");
+  const [monthlyTraffic, setMonthlyTraffic] = useState("");
+  const [requestTeardownCall, setRequestTeardownCall] = useState(false);
   const formStartedRef = useRef(false);
   const { toast } = useToast();
 
@@ -116,6 +121,52 @@ export default function Contact() {
     }
   };
 
+  const handleQualificationSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setQualifying(true);
+    try {
+      const leadId = getLeadId();
+      if (leadId) {
+        await trackEvent(leadId, "form_submit", {
+          form: "qualification",
+          lead_magnet: "mini_report",
+          company_size: companySize || undefined,
+          timeline: timeline || undefined,
+          monthly_traffic: monthlyTraffic || undefined,
+          teardown_call_requested: requestTeardownCall,
+        });
+
+        if (requestTeardownCall) {
+          await trackEvent(leadId, "link_click", {
+            cta_type: "teardown_call",
+            destination: "teardown_booking",
+          });
+        }
+      }
+
+      if (requestTeardownCall) {
+        const bookingUrl =
+          import.meta.env.VITE_TEARDOWN_CALL_URL || "https://calendly.com";
+        window.open(bookingUrl, "_blank", "noopener,noreferrer");
+      }
+
+      toast({
+        title: "Saved",
+        description: requestTeardownCall
+          ? "Qualification saved and call booking opened."
+          : "Qualification saved. We will follow up with recommendations.",
+      });
+    } catch (error) {
+      console.error("Qualification flow failed:", error);
+      toast({
+        title: "Saved",
+        description: "Qualification noted. We'll follow up shortly.",
+      });
+    } finally {
+      setQualifying(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background p-6">
       <div className="mx-auto max-w-2xl">
@@ -211,6 +262,60 @@ export default function Contact() {
               >
                 Download Report
               </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {miniReport && (
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle>Optional: Qualification + Teardown Call</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleQualificationSubmit} className="space-y-4">
+                <div>
+                  <Label htmlFor="company-size">Company size</Label>
+                  <Input
+                    id="company-size"
+                    value={companySize}
+                    onChange={(e) => setCompanySize(e.target.value)}
+                    placeholder="e.g. 1-10, 11-50, 51-200"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="timeline">Buying timeline</Label>
+                  <Input
+                    id="timeline"
+                    value={timeline}
+                    onChange={(e) => setTimeline(e.target.value)}
+                    placeholder="e.g. this month, this quarter"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="traffic">Monthly traffic estimate</Label>
+                  <Input
+                    id="traffic"
+                    value={monthlyTraffic}
+                    onChange={(e) => setMonthlyTraffic(e.target.value)}
+                    placeholder="e.g. 5k, 25k, 100k+"
+                  />
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={requestTeardownCall}
+                    onChange={(e) => setRequestTeardownCall(e.target.checked)}
+                  />
+                  Request a teardown call
+                </label>
+                <Button type="submit" disabled={qualifying}>
+                  {qualifying
+                    ? "Saving..."
+                    : requestTeardownCall
+                    ? "Save and Book Call"
+                    : "Save Qualification"}
+                </Button>
+              </form>
             </CardContent>
           </Card>
         )}

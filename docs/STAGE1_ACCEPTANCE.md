@@ -68,6 +68,9 @@ This document defines practical pass/fail checks for Stage 1 MVP.
   - `form_submit` intent event is tracked after successful identify.
 - **Mini-report delivery**
   - On successful submit, a mini-report is shown in-app and can be downloaded.
+- **Qualification + teardown call**
+  - After mini-report generation, optional qualification fields can be submitted.
+  - If teardown call is requested, a booking URL opens and a tracked CTA event is emitted.
 
 ## SPA / Ops sanity checks
 
