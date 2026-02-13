@@ -2,6 +2,7 @@ import { api } from "encore.dev/api";
 import { Service } from "encore.dev/service";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -67,10 +68,11 @@ async function readFileWithTimeout(path: string, timeoutMs: number): Promise<Uin
   ]);
 }
 
-async function serveSpa(req: Request): Promise<Response> {
-  // Encore raw requests may provide relative URLs (e.g. "/app").
-  const { pathname } = new URL(req.url, "http://localhost");
+async function serveSpa(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const url = req.url ?? "/";
+  const { pathname } = new URL(url, "http://localhost");
 
+  const isHead = (req.method ?? "GET").toUpperCase() === "HEAD";
   const shouldServeIndex =
     pathname === "/app" || pathname === "/app/" || !pathname.includes(".");
 
@@ -84,12 +86,16 @@ async function serveSpa(req: Request): Promise<Response> {
       contentTypes[extname(targetPath).toLowerCase()] ??
       "application/octet-stream";
 
-    return new Response(body, {
-      status: 200,
-      headers: {
-        "Content-Type": contentType,
-      },
-    });
+    res.statusCode = 200;
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", contentType.startsWith("text/html") ? "no-cache" : "public, max-age=31536000, immutable");
+
+    if (isHead) {
+      res.end();
+      return;
+    }
+
+    res.end(body);
   } catch (error) {
     console.error("[frontend] Failed to serve SPA asset.", {
       pathname,
@@ -97,10 +103,10 @@ async function serveSpa(req: Request): Promise<Response> {
       targetPath,
       error: error instanceof Error ? error.message : String(error),
     });
-    if (error instanceof Error && error.message === "read_timeout") {
-      return new Response("Gateway Timeout", { status: 504 });
-    }
-    return new Response("Not found", { status: 404 });
+
+    res.statusCode = error instanceof Error && error.message === "read_timeout" ? 504 : 404;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.end(res.statusCode === 504 ? "Gateway Timeout" : "Not found");
   }
 }
 
@@ -112,5 +118,15 @@ export const appRoot = api.raw(
 
 export const assets = api.raw(
   { expose: true, method: "GET", path: "/app/*path" },
+  serveSpa
+);
+
+export const appRootHead = api.raw(
+  { expose: true, method: "HEAD", path: "/app" },
+  serveSpa
+);
+
+export const assetsHead = api.raw(
+  { expose: true, method: "HEAD", path: "/app/*path" },
   serveSpa
 );
