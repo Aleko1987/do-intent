@@ -32,7 +32,7 @@ Status legend:
 - [x] Expose account rollup endpoint(s)
 
 ## E. Marketing attribution capture
-- [~] UTMs captured in `doIntent.ts` and `doIntentTracker.ts`
+- [x] UTMs captured in `doIntent.ts` and `doIntentTracker.ts`
 - [x] Add click IDs to both lead-based ingest and anonymous tracking
 - [x] Persist attribution fields in `intent_events` metadata consistently
 

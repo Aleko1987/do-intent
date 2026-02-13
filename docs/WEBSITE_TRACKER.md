@@ -354,7 +354,7 @@ Manual testing steps:
 
 ## Privacy & Compliance
 
-- No cookies used (localStorage/sessionStorage only)
+- First-party storage only: localStorage/sessionStorage by default; optional first-party cookies (`useCookies=true` or storage fallback)
 - No third-party analytics libraries
 - All data sent to your own API endpoint
 - Complies with GDPR (no automatic PII collection)
