@@ -352,6 +352,58 @@ Manual testing steps:
 3. Verify element has class containing "cta"
 4. Check browser console for click handler errors
 
+## External Site Integration (Custom Domain)
+
+Use this when your marketing site is hosted outside this app domain (for example WordPress/Webflow at a custom domain).
+
+### 1) Configure backend allowlist + key
+
+Set env vars on backend deploy:
+
+- `ALLOWED_INGEST_ORIGINS=earthcurebiodiesel.com,www.earthcurebiodiesel.com`
+- `INGEST_API_KEY=<strong-random-secret>` (or `ENCORE_SECRET_INGEST_API_KEY`)
+
+Then redeploy.
+
+### 2) Add tracker script to website
+
+On your external site:
+
+```html
+<script>
+  window.DO_INTENT_API_BASE = 'https://do-intent.onrender.com';
+  window.DO_INTENT_DEBUG = 'true'; // set 'false' after testing
+</script>
+<!-- paste docs/snippets/website-tracker.js inline or host and include it -->
+```
+
+### 3) Wire form submit to identify + lead ingest
+
+On confirmed email submit:
+
+1. Call anonymous identity merge endpoint (`/api/v1/identify`) to connect browsing history.
+2. Call marketing identify endpoint (`/marketing/identify`) to create/find a lead.
+3. Send lead event to `/marketing/ingest-intent-event`.
+
+Example payload fields to include in lead ingest:
+- `lead_id`, `event_type`, `event_source`, `url`, `path`, `referrer`
+- `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`
+- `gclid`, `fbclid`, `msclkid`
+
+### 4) Security note (recommended)
+
+Do not permanently expose ingest keys in public client JS. For production:
+
+- send lead ingest through a server-side proxy (Cloudflare Worker/serverless route),
+- inject `x-ingest-api-key` and `x-do-intent-key` server-side,
+- keep browser code keyless.
+
+### 5) Verify data lands in app
+
+- Open `https://do-intent.onrender.com/app/marketing` and check for new leads/events.
+- Check `Intent Signals` tab for scored activity.
+- Confirm attribution and click IDs appear in event metadata.
+
 ## Privacy & Compliance
 
 - First-party storage only: localStorage/sessionStorage by default; optional first-party cookies (`useCookies=true` or storage fallback)
