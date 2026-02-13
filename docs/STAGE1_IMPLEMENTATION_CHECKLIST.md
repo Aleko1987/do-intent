@@ -20,9 +20,9 @@ Status legend:
 - [x] Document canonical person vs lead mapping (if needed beyond identities table)
 
 ## C. Scoring v1 upgrades
-- [ ] Add time-decay logic (half-life by event class)
-- [ ] Add saturation/caps to prevent score inflation
-- [ ] Document decay parameters and caps in `docs/ARCHITECTURE.md`
+- [x] Add time-decay logic (half-life by event class)
+- [x] Add saturation/caps to prevent score inflation
+- [x] Document decay parameters and caps in `docs/ARCHITECTURE.md`
 
 ## D. Account rollup v1 (ABM)
 - [ ] Create `accounts` table + `account_members` mapping

@@ -185,6 +185,45 @@ Thresholds are evaluated after every score update.
 
 ---
 
+## Time-decay + caps (Scoring v1 upgrades)
+
+To prevent score inflation and reflect recency bias, DO-Intent applies **exponential time decay** to `intent_subject_scores.total_score` whenever a new scored event arrives.
+
+### Decay model
+
+Given:
+- $S$: previous total score
+- $\Delta t$: seconds since `last_event_at`
+- $h$: half-life in seconds (varies by event class)
+
+We compute:
+
+$$
+S_{decayed} = S \cdot 0.5^{\Delta t / h}
+$$
+
+Then we add the new event’s score delta (with saturation near the cap) and clamp to a maximum.
+
+### Event classes + half-life
+
+- **browse**: 2 days
+- **engagement**: 7 days
+- **conversion**: 21 days
+
+Classification heuristics (website events):
+- `form_submit` → conversion
+- `form_start`, `pricing_view`, pricing clicks → engagement
+- everything else → browse
+- `metadata.page_class` can bias classification (e.g. pricing/product → engagement; docs/blog → browse)
+
+### Caps / saturation
+
+- **Subject score cap**: 60 (hard clamp)
+- **Saturation near cap** (applied on update):
+  - at >= 60: delta becomes 0
+  - at >= 48 (80%): delta scaled to 20%
+  - at >= 36 (60%): delta scaled to 50%
+
 ## Threshold Emission Rules
 
 - A threshold is emitted only once per band per subject

@@ -237,14 +237,64 @@ function shouldDerivePricingView(eventType: string, url: string): boolean {
   return url.includes("/pricing");
 }
 
+type EventClass = "conversion" | "engagement" | "browse";
+
+function classifyEvent(
+  eventType: string,
+  url: string,
+  metadata: JsonObject
+): EventClass {
+  const pageClassRaw =
+    typeof metadata.page_class === "string" ? metadata.page_class : "";
+  const pageClass = pageClassRaw.toLowerCase();
+
+  if (eventType === "form_submit") return "conversion";
+  if (eventType === "form_start") return "engagement";
+  if (eventType === "pricing_view") return "engagement";
+  if (eventType === "click" && url.includes("/pricing")) return "engagement";
+
+  if (pageClass.includes("pricing") || pageClass.includes("product")) {
+    return "engagement";
+  }
+  if (pageClass.includes("docs") || pageClass.includes("blog")) {
+    return "browse";
+  }
+
+  return "browse";
+}
+
+function halfLifeSecondsForEventClass(eventClass: EventClass): number {
+  // Exponential decay half-lives (Stage 1 v1)
+  // - conversion: decays slowest (high intent)
+  // - engagement: medium
+  // - browse: fastest (low intent)
+  switch (eventClass) {
+    case "conversion":
+      return 21 * 24 * 60 * 60; // 21 days
+    case "engagement":
+      return 7 * 24 * 60 * 60; // 7 days
+    case "browse":
+    default:
+      return 2 * 24 * 60 * 60; // 2 days
+  }
+}
+
+const SUBJECT_SCORE_CAP = 60;
+
 async function upsertAnonymousSubjectScore(
   anonymousId: string,
   scoreDelta: number,
-  occurredAt: string
+  occurredAt: string,
+  eventType: string,
+  url: string,
+  metadata: JsonObject
 ): Promise<void> {
   if (scoreDelta === 0) {
     return;
   }
+  const eventClass = classifyEvent(eventType, url, metadata);
+  const halfLifeSeconds = halfLifeSecondsForEventClass(eventClass);
+  const delta = Math.max(0, Math.round(scoreDelta));
   await db.exec`
     INSERT INTO intent_subject_scores (
       subject_type,
@@ -255,12 +305,64 @@ async function upsertAnonymousSubjectScore(
     ) VALUES (
       'anonymous',
       ${anonymousId},
-      ${scoreDelta},
+      LEAST(${SUBJECT_SCORE_CAP}, ${delta}),
       ${occurredAt},
       now()
     )
     ON CONFLICT (subject_type, subject_id) DO UPDATE SET
-      total_score = intent_subject_scores.total_score + ${scoreDelta},
+      total_score = LEAST(
+        ${SUBJECT_SCORE_CAP},
+        ROUND(
+          GREATEST(
+            0,
+            CASE
+              WHEN intent_subject_scores.last_event_at IS NULL THEN intent_subject_scores.total_score
+              ELSE intent_subject_scores.total_score * POWER(
+                0.5,
+                GREATEST(
+                  0,
+                  EXTRACT(EPOCH FROM (${occurredAt}::timestamptz - intent_subject_scores.last_event_at))
+                ) / ${halfLifeSeconds}
+              )
+            END
+          )
+        ) + (
+          CASE
+            WHEN intent_subject_scores.last_event_at IS NULL THEN ${delta}
+            ELSE
+              CASE
+                WHEN (
+                  intent_subject_scores.total_score * POWER(
+                    0.5,
+                    GREATEST(
+                      0,
+                      EXTRACT(EPOCH FROM (${occurredAt}::timestamptz - intent_subject_scores.last_event_at))
+                    ) / ${halfLifeSeconds}
+                  )
+                ) >= ${SUBJECT_SCORE_CAP} THEN 0
+                WHEN (
+                  intent_subject_scores.total_score * POWER(
+                    0.5,
+                    GREATEST(
+                      0,
+                      EXTRACT(EPOCH FROM (${occurredAt}::timestamptz - intent_subject_scores.last_event_at))
+                    ) / ${halfLifeSeconds}
+                  )
+                ) >= ${SUBJECT_SCORE_CAP} * 0.8 THEN CEIL(${delta} * 0.2)
+                WHEN (
+                  intent_subject_scores.total_score * POWER(
+                    0.5,
+                    GREATEST(
+                      0,
+                      EXTRACT(EPOCH FROM (${occurredAt}::timestamptz - intent_subject_scores.last_event_at))
+                    ) / ${halfLifeSeconds}
+                  )
+                ) >= ${SUBJECT_SCORE_CAP} * 0.6 THEN CEIL(${delta} * 0.5)
+                ELSE ${delta}
+              END
+          END
+        )
+      ),
       last_event_at = GREATEST(intent_subject_scores.last_event_at, ${occurredAt}),
       updated_at = now()
   `;
@@ -343,7 +445,10 @@ async function insertIntentEvent(
 async function scoreAndUpdateSubject(
   intentEventId: string,
   anonymousId: string,
-  occurredAt: string
+  occurredAt: string,
+  eventType: string,
+  url: string,
+  metadata: JsonObject
 ): Promise<void> {
   try {
     await autoScoreEvent(intentEventId);
@@ -351,7 +456,14 @@ async function scoreAndUpdateSubject(
       SELECT score FROM intent_scores WHERE intent_event_id = ${intentEventId}
     `;
     if (scoreRow?.score !== null && scoreRow?.score !== undefined) {
-      await upsertAnonymousSubjectScore(anonymousId, Number(scoreRow.score), occurredAt);
+      await upsertAnonymousSubjectScore(
+        anonymousId,
+        Number(scoreRow.score),
+        occurredAt,
+        eventType,
+        url,
+        metadata
+      );
     }
   } catch (error) {
     console.warn("[track] Failed to score intent event.", {
@@ -518,7 +630,14 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
           dedupeKey: eventId ?? null,
         });
         if (intentEventId) {
-          await scoreAndUpdateSubject(intentEventId, anonymousId, occurredAt.toISOString());
+          await scoreAndUpdateSubject(
+            intentEventId,
+            anonymousId,
+            occurredAt.toISOString(),
+            event,
+            url,
+            metadataPayload
+          );
         }
       }
 
@@ -535,7 +654,17 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
           },
         });
         if (pricingEventId) {
-          await scoreAndUpdateSubject(pricingEventId, anonymousId, occurredAt.toISOString());
+          await scoreAndUpdateSubject(
+            pricingEventId,
+            anonymousId,
+            occurredAt.toISOString(),
+            "pricing_view",
+            url,
+            {
+              ...metadataPayload,
+              derived: true,
+            }
+          );
         }
       }
 
@@ -564,7 +693,17 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
             dedupeKey,
           });
           if (returnVisitId) {
-            await scoreAndUpdateSubject(returnVisitId, anonymousId, occurredAt.toISOString());
+            await scoreAndUpdateSubject(
+              returnVisitId,
+              anonymousId,
+              occurredAt.toISOString(),
+              "return_visit",
+              url,
+              {
+                ...metadataPayload,
+                derived: true,
+              }
+            );
           }
         }
       }

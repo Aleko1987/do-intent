@@ -265,7 +265,11 @@ async function identifyInternal(req: IdentifyRequest): Promise<IdentifyResponse>
   const previousIdentityScore = identityScoreBefore?.total_score ?? 0;
   const identityLastEventAt = identityScoreBefore?.last_event_at;
 
-  const totalIdentityScore = previousIdentityScore + previousAnonymousScore;
+  const SUBJECT_SCORE_CAP = 60;
+  const totalIdentityScore = Math.min(
+    SUBJECT_SCORE_CAP,
+    previousIdentityScore + previousAnonymousScore
+  );
 
   let mergedLastEventAt: Date | null = null;
   if (anonymousLastEventAt && identityLastEventAt) {
