@@ -25,11 +25,11 @@ Status legend:
 - [x] Document decay parameters and caps in `docs/ARCHITECTURE.md`
 
 ## D. Account rollup v1 (ABM)
-- [ ] Create `accounts` table + `account_members` mapping
-- [ ] Derive account from business email domain (exclude free email domains)
-- [ ] Compute `account_score = sum(top 3 person scores) + diversity bonus`
-- [ ] Add `active_people_14d` metric
-- [ ] Expose account rollup endpoint(s)
+- [x] Create `accounts` table + `account_members` mapping
+- [x] Derive account from business email domain (exclude free email domains)
+- [x] Compute `account_score = sum(top 3 person scores) + diversity bonus`
+- [x] Add `active_people_14d` metric
+- [x] Expose account rollup endpoint(s)
 
 ## E. Marketing attribution capture
 - [~] UTMs captured in `doIntent.ts` and `doIntentTracker.ts`

@@ -62,6 +62,49 @@ function isValidEmail(email: string): boolean {
   return emailRegex.test(email);
 }
 
+const FREE_EMAIL_DOMAINS = new Set([
+  "gmail.com",
+  "yahoo.com",
+  "outlook.com",
+  "hotmail.com",
+  "icloud.com",
+  "proton.me",
+  "protonmail.com",
+  "aol.com",
+  "gmx.com",
+  "live.com",
+  "msn.com",
+  "yandex.com",
+]);
+
+function getBusinessDomain(email: string): string | null {
+  const at = email.lastIndexOf("@");
+  if (at < 0) return null;
+  const domain = email.slice(at + 1).trim().toLowerCase();
+  if (!domain || !domain.includes(".")) return null;
+  if (FREE_EMAIL_DOMAINS.has(domain)) return null;
+  return domain;
+}
+
+async function upsertAccountForIdentity(identityId: string, email: string): Promise<void> {
+  const domain = getBusinessDomain(email);
+  if (!domain) return;
+
+  const account = await db.queryRow<{ id: string }>`
+    INSERT INTO accounts (domain, updated_at)
+    VALUES (${domain}, now())
+    ON CONFLICT (domain) DO UPDATE SET updated_at = now()
+    RETURNING id
+  `;
+  if (!account) return;
+
+  await db.exec`
+    INSERT INTO account_members (account_id, identity_id, updated_at)
+    VALUES (${account.id}, ${identityId}, now())
+    ON CONFLICT (account_id, identity_id) DO UPDATE SET updated_at = now()
+  `;
+}
+
 function normalizeJsonObject(value: unknown): JsonObject {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as JsonObject;
@@ -222,6 +265,9 @@ async function identifyInternal(req: IdentifyRequest): Promise<IdentifyResponse>
   }
 
   const identityId = identityResult.identity_id;
+
+  // ABM: ensure identity is mapped to an account by business email domain.
+  await upsertAccountForIdentity(identityId, req.email);
 
   // Step 2: Link sessions
   await db.exec`
