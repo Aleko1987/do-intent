@@ -27,24 +27,15 @@ interface IdentifyResponse {
   lead_created: boolean;
 }
 
-// Checks API key from header
-function checkApiKey(headerKey: string | undefined): void {
+// Returns true when the provided API key header is valid.
+function hasValidApiKey(headerKey: string | undefined): boolean {
   const expectedKey = resolveIngestApiKey();
-  const isProduction = process.env.NODE_ENV === "production";
 
-  if (isProduction) {
-    if (!expectedKey) {
-      throw APIError.internal("Ingest API key is required in production");
-    }
-    if (!headerKey || headerKey.trim() !== expectedKey) {
-      throw APIError.unauthenticated("missing or invalid x-do-intent-key header");
-    }
-  } else {
-    // In dev, enforce if secret is set, but allow if not set
-    if (expectedKey && (!headerKey || headerKey.trim() !== expectedKey)) {
-      throw APIError.unauthenticated("missing or invalid x-do-intent-key header");
-    }
+  if (!headerKey || !expectedKey) {
+    return false;
   }
+
+  return headerKey.trim() === expectedKey;
 }
 
 // Checks origin allowlist
@@ -79,7 +70,7 @@ function checkOrigin(origin: string | undefined, referer: string | undefined): v
 
   if (!hostname) {
     // No valid origin/referer, reject if allowlist is set
-    throw APIError.permissionDenied("origin or referer header required");
+    throw APIError.permissionDenied("API key or origin/referer header required");
   }
 
   // Check if hostname matches any allowed origin
@@ -97,11 +88,12 @@ function checkOrigin(origin: string | undefined, referer: string | undefined): v
 export const identify = api<IdentifyRequest, IdentifyResponse>(
   { expose: true, method: "POST", path: "/marketing/identify" },
   async (req) => {
-    // Check API key
-    checkApiKey(req["x-do-intent-key"]);
-
-    // Check origin allowlist
-    checkOrigin(req.origin, req.referer);
+    // Allow direct API usage with a valid key. Browser-style traffic without a
+    // valid key must satisfy origin/referer allowlist checks.
+    const validApiKey = hasValidApiKey(req["x-do-intent-key"]);
+    if (!validApiKey) {
+      checkOrigin(req.origin, req.referer);
+    }
 
     // Validate inputs
     if (!req.anonymous_id || typeof req.anonymous_id !== "string") {
