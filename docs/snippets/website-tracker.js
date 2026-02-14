@@ -155,10 +155,12 @@
   function sendTrackEvent(eventType, url, value, metadata) {
     const anonymousId = getAnonymousId();
     const sessionId = getSessionId();
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = new Date().toISOString();
+    const eventId = generateUUID();
     
     const payload = {
       event: eventType,
+      event_id: eventId,
       session_id: sessionId,
       anonymous_id: anonymousId,
       url: url,
@@ -170,7 +172,7 @@
       payload.value = value;
     }
     
-    payload.metadata = buildMetadata(metadata);
+    payload.metadata = JSON.stringify(buildMetadata(metadata));
     
     const endpoint = API_BASE + '/track';
     
@@ -358,43 +360,63 @@
     
     const payload = {
       anonymous_id: anonymousId,
-      identity: {
-        email: email.trim().toLowerCase(),
-        source: 'website',
-      },
+      email: email.trim().toLowerCase(),
+      source: 'website',
     };
     
     if (name) {
-      payload.identity.name = name.trim();
+      payload.name = name.trim();
     }
     
     if (DEBUG) {
       console.log('[DO-Intent] Identifying user:', payload);
     }
     
-    return fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    }).then(function(response) {
-      if (!response.ok) {
-        return response.text().then(function(errorText) {
-          throw new Error('Identify failed: ' + response.status + ' ' + errorText);
-        });
-      }
-      return response.json();
-    }).then(function(result) {
-      if (DEBUG) {
-        console.log('[DO-Intent] Identify success:', result);
-      }
-      return result;
-    }).catch(function(error) {
-      if (DEBUG) {
-        console.error('[DO-Intent] Identify error:', error);
-      }
-      throw error;
+    function attemptIdentify() {
+      return fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }).then(function(response) {
+        if (!response.ok) {
+          return response.text().then(function(errorText) {
+            throw new Error('Identify failed: ' + response.status + ' ' + errorText);
+          });
+        }
+        return response.json();
+      }).then(function(result) {
+        if (DEBUG) {
+          console.log('[DO-Intent] Identify success:', result);
+        }
+        return result;
+      });
+    }
+
+    return attemptIdentify().catch(function(error) {
+      return new Promise(function(resolve) {
+        setTimeout(resolve, 1200);
+      }).then(function() {
+        return attemptIdentify();
+      }).catch(function(retryError) {
+        try {
+          const url = window.location.pathname + window.location.search;
+          sendTrackEvent('identify_fallback', url, undefined, {
+            lead_email: email.trim().toLowerCase(),
+            lead_name: name ? name.trim() : undefined,
+            identify_error: String(retryError),
+          });
+        } catch (fallbackError) {
+          if (DEBUG) {
+            console.error('[DO-Intent] Identify fallback error:', fallbackError);
+          }
+        }
+        if (DEBUG) {
+          console.error('[DO-Intent] Identify error:', retryError);
+        }
+        throw retryError;
+      });
     });
   }
   

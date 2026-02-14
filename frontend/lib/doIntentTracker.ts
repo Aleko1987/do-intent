@@ -60,6 +60,10 @@ function generateUUID(): string {
   return generateUUIDFallback();
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function canUseLocalStorage(): boolean {
   try {
     return typeof window !== 'undefined' && !!window.localStorage;
@@ -330,7 +334,7 @@ async function sendTrackEvent(
     referrer: typeof document !== 'undefined' ? document.referrer : undefined,
     timestamp,
     ...(value !== undefined && { value }),
-    metadata: buildMetadata(metadata),
+    metadata: JSON.stringify(buildMetadata(metadata)),
   };
   
   const apiBase = getApiBaseUrl();
@@ -573,26 +577,56 @@ export async function identify(
   }
   
   try {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Identify failed: ${response.status} ${errorText}`);
+    const attemptIdentify = async (): Promise<{
+      ok: boolean;
+      identity_id: string;
+      merged: boolean;
+      total_identity_score: number;
+      band: 'cold' | 'warm' | 'hot' | 'critical';
+      threshold_emitted: boolean;
+    }> => {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Identify failed: ${response.status} ${errorText}`);
+      }
+      
+      const result = await response.json();
+      
+      if (config.debug) {
+        console.log('[DO-Intent] Identify success:', result);
+      }
+      
+      return result;
+    };
+
+    try {
+      return await attemptIdentify();
+    } catch (error) {
+      await sleep(1200);
+      try {
+        return await attemptIdentify();
+      } catch (retryError) {
+        if (typeof window !== 'undefined') {
+          const url = window.location.pathname + window.location.search;
+          sendTrackEvent('identify_fallback', url, undefined, {
+            lead_email: email.trim().toLowerCase(),
+            ...(name && { lead_name: name.trim() }),
+            identify_error: String(retryError),
+          }).catch(() => {
+            // Best-effort fallback
+          });
+        }
+        throw retryError;
+      }
     }
-    
-    const result = await response.json();
-    
-    if (config.debug) {
-      console.log('[DO-Intent] Identify success:', result);
-    }
-    
-    return result;
   } catch (error) {
     if (config.debug) {
       console.error('[DO-Intent] Identify error:', error);
