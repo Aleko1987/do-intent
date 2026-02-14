@@ -88,10 +88,19 @@ function checkOrigin(origin: string | undefined, referer: string | undefined): v
 export const identify = api<IdentifyRequest, IdentifyResponse>(
   { expose: true, method: "POST", path: "/marketing/identify" },
   async (req) => {
-    // Allow direct API usage with a valid key. Browser-style traffic without a
-    // valid key must satisfy origin/referer allowlist checks.
-    const validApiKey = hasValidApiKey(req["x-do-intent-key"]);
-    if (!validApiKey) {
+    // API key auth takes precedence and bypasses origin/referer checks.
+    const providedApiKey = req["x-do-intent-key"];
+    if (providedApiKey) {
+      if (!hasValidApiKey(providedApiKey)) {
+        throw APIError.permissionDenied("invalid API key");
+      }
+    } else {
+      // Browser-style traffic must include origin/referer headers.
+      if (!req.origin && !req.referer) {
+        throw APIError.permissionDenied("API key or origin/referer header required");
+      }
+
+      // Without API key, enforce origin allowlist checks.
       checkOrigin(req.origin, req.referer);
     }
 
