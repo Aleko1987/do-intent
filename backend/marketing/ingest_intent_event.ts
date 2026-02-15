@@ -70,6 +70,7 @@ interface IngestIntentEventResponse {
 
 interface IngestIntentEventRequest extends IngestIntentEventPayload {
   "x-ingest-api-key"?: Header<"x-ingest-api-key">;
+  "x-do-intent-key"?: Header<"x-do-intent-key">;
   "origin"?: Header<"origin">;
   "referer"?: Header<"referer">;
   "x-request-id"?: Header<"x-request-id">;
@@ -133,11 +134,12 @@ function constantTimeEquals(a: string, b: string): boolean {
 }
 
 function checkApiKey(
-  headerValue: string | undefined,
+  ingestHeaderValue: string | undefined,
+  doIntentHeaderValue: string | undefined,
   expectedKey: string
 ): {
   ok: true;
-  source: string | null;
+  source: "x-ingest-api-key" | "x-do-intent-key";
   headerReceived: boolean;
 } | {
   ok: false;
@@ -145,15 +147,18 @@ function checkApiKey(
   headerReceived: boolean;
   details: Record<string, string>;
 } {
-  const headerKey = (headerValue ?? "").trim();
+  const ingestHeaderKey = (ingestHeaderValue ?? "").trim();
+  const doIntentHeaderKey = (doIntentHeaderValue ?? "").trim();
+  const headerKey = ingestHeaderKey || doIntentHeaderKey;
+  const source = ingestHeaderKey ? "x-ingest-api-key" : "x-do-intent-key";
   const headerReceived = headerKey.length > 0;
 
   if (!headerReceived) {
     return {
       ok: false,
-      message: "missing x-ingest-api-key header",
+      message: "missing x-ingest-api-key or x-do-intent-key header",
       headerReceived,
-      details: { header: "x-ingest-api-key" },
+      details: { headers: "x-ingest-api-key,x-do-intent-key" },
     };
   }
 
@@ -162,11 +167,11 @@ function checkApiKey(
       ok: false,
       message: "invalid ingest api key",
       headerReceived,
-      details: { header: "x-ingest-api-key" },
+      details: { header: source },
     };
   }
 
-  return { ok: true, source: "x-ingest-api-key", headerReceived };
+  return { ok: true, source, headerReceived };
 }
 
 // Checks origin allowlist
@@ -450,8 +455,6 @@ async function handleIngestIntentEvent(
 
     console.info("[ingest] request received", {
       request_id,
-      method: req.method,
-      path: req.url,
       env: envFlags,
     });
 
@@ -462,8 +465,9 @@ async function handleIngestIntentEvent(
       throw APIError.internal("Ingest API key is not configured");
     }
 
+    let authenticatedWithApiKey = false;
     if (ingestKey) {
-      const authCheck = checkApiKey(req["x-ingest-api-key"], ingestKey);
+      const authCheck = checkApiKey(req["x-ingest-api-key"], req["x-do-intent-key"], ingestKey);
       if (!authCheck.ok) {
         console.info("[ingest] unauthorized", {
           request_id,
@@ -473,19 +477,22 @@ async function handleIngestIntentEvent(
       }
 
       if (authCheck.source) {
+        authenticatedWithApiKey = true;
         console.info(`[ingest] authenticated via ${authCheck.source} header`, {
           request_id,
         });
       }
     }
 
-    const originCheck = checkOrigin(req.origin, req.referer);
-    if (!originCheck.ok) {
-      console.info("[ingest] unauthorized origin", {
-        request_id,
-        db_write_attempted: false,
-      });
-      throw APIError.unauthenticated(originCheck.message);
+    if (!authenticatedWithApiKey) {
+      const originCheck = checkOrigin(req.origin, req.referer);
+      if (!originCheck.ok) {
+        console.info("[ingest] unauthorized origin", {
+          request_id,
+          db_write_attempted: false,
+        });
+        throw APIError.unauthenticated(originCheck.message);
+      }
     }
 
     const { normalized, errors } = validatePayload(req);
@@ -627,6 +634,9 @@ async function handleIngestIntentEvent(
       throw APIError.internal("db_error");
     }
   } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
     console.error("[ingest] unexpected error", {
       request_id,
       error,
