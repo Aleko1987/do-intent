@@ -29,7 +29,7 @@ interface IdentifyResponse {
 
 // Returns true when the provided API key header is valid.
 function hasValidApiKey(headerKey: string | undefined): boolean {
-  const expectedKey = resolveIngestApiKey();
+  const expectedKey = process.env.INGEST_API_KEY?.trim() || resolveIngestApiKey();
 
   if (!headerKey || !expectedKey) {
     return false;
@@ -88,14 +88,14 @@ function checkOrigin(origin: string | undefined, referer: string | undefined): v
 export const identify = api<IdentifyRequest, IdentifyResponse>(
   { expose: true, method: "POST", path: "/marketing/identify" },
   async (req) => {
-    // API key auth takes precedence and bypasses origin/referer checks.
+    // PRIORITY 1: If a valid API key is present, bypass origin/referer checks.
     const providedApiKey = req["x-do-intent-key"]?.trim();
-    if (providedApiKey) {
-      if (!hasValidApiKey(providedApiKey)) {
-        throw APIError.permissionDenied("invalid API key");
-      }
+    if (providedApiKey && hasValidApiKey(providedApiKey)) {
+      // Continue as authenticated API-key traffic.
+    } else if (providedApiKey) {
+      throw APIError.permissionDenied("invalid API key");
     } else {
-      // Browser-style traffic must include origin/referer headers.
+      // PRIORITY 2: No API key; require browser-style origin/referer checks.
       if (!req.origin && !req.referer) {
         throw APIError.permissionDenied("API key or origin/referer header required");
       }
