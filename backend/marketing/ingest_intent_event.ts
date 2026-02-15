@@ -9,7 +9,7 @@ import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
 import { resolveIngestApiKey } from "../internal/env_secrets";
-import { applyCorsHeaders, handleCorsPreflight, parseJsonBody } from "../internal/cors";
+import { setCorsHeaders, handleCorsPreflight, parseJsonBody } from "../lib/cors";
 import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
 import { updateLeadScoring } from "./scoring";
@@ -660,7 +660,7 @@ async function serveIngestIntent(req: IncomingMessage, res: ServerResponse): Pro
     return;
   }
 
-  applyCorsHeaders(req, res);
+  setCorsHeaders(req, res);
 
   try {
     const payload = await parseJsonBody<IngestIntentEventPayload>(req);
