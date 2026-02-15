@@ -89,7 +89,7 @@ export const identify = api<IdentifyRequest, IdentifyResponse>(
   { expose: true, method: "POST", path: "/marketing/identify" },
   async (req) => {
     // API key auth takes precedence and bypasses origin/referer checks.
-    const providedApiKey = req["x-do-intent-key"];
+    const providedApiKey = req["x-do-intent-key"]?.trim();
     if (providedApiKey) {
       if (!hasValidApiKey(providedApiKey)) {
         throw APIError.permissionDenied("invalid API key");
