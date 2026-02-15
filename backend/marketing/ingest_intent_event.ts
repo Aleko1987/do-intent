@@ -1,4 +1,5 @@
 import { api, APIError, Header } from "encore.dev/api";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
 interface EmptyRequest {
   dummy?: string;
@@ -8,6 +9,7 @@ import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
 import { resolveIngestApiKey } from "../internal/env_secrets";
+import { applyCorsHeaders, handleCorsPreflight, parseJsonBody } from "../internal/cors";
 import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
 import { updateLeadScoring } from "./scoring";
@@ -645,22 +647,68 @@ async function handleIngestIntentEvent(
   }
 }
 
-export const ingestIntentEvent = api<IngestIntentEventRequest, IngestIntentEventResponse>(
+function getHeaderValue(req: IncomingMessage, name: string): string | undefined {
+  const value = req.headers[name.toLowerCase()];
+  if (typeof value === "string") {
+    return value;
+  }
+  return undefined;
+}
+
+async function serveIngestIntent(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (handleCorsPreflight(req, res)) {
+    return;
+  }
+
+  applyCorsHeaders(req, res);
+
+  try {
+    const payload = await parseJsonBody<IngestIntentEventPayload>(req);
+    const request: IngestIntentEventRequest = {
+      ...payload,
+      "x-ingest-api-key": getHeaderValue(req, "x-ingest-api-key") as Header<"x-ingest-api-key"> | undefined,
+      "x-do-intent-key": getHeaderValue(req, "x-do-intent-key") as Header<"x-do-intent-key"> | undefined,
+      origin: getHeaderValue(req, "origin") as Header<"origin"> | undefined,
+      referer: getHeaderValue(req, "referer") as Header<"referer"> | undefined,
+      "x-request-id": getHeaderValue(req, "x-request-id") as Header<"x-request-id"> | undefined,
+    };
+
+    const response = await handleIngestIntentEvent(request);
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.end(JSON.stringify(response));
+  } catch (error) {
+    if (error instanceof APIError) {
+      const status = error.code === "invalid_argument" ? 400 :
+        error.code === "permission_denied" || error.code === "unauthenticated" ? 401 : 500;
+      res.statusCode = status;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(JSON.stringify({ code: error.code, message: error.message }));
+      return;
+    }
+
+    res.statusCode = 500;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.end(JSON.stringify({ code: "internal", message: "Internal Server Error" }));
+  }
+}
+
+export const ingestIntentEvent = api.raw(
   { expose: true, method: "POST", path: "/marketing/ingest-intent-event" },
-  handleIngestIntentEvent
+  serveIngestIntent
 );
 
-export const ingestIntentEventV1 = api<IngestIntentEventRequest, IngestIntentEventResponse>(
+export const ingestIntentEventV1 = api.raw(
   { expose: true, method: "POST", path: "/api/v1/ingest" },
-  handleIngestIntentEvent
+  serveIngestIntent
 );
 
-export const ingestIntentEventOptions = api<EmptyRequest, { message: string }>(
+export const ingestIntentEventOptions = api.raw(
   { expose: true, method: "OPTIONS", path: "/marketing/ingest-intent-event" },
-  async () => ({ message: "ok" })
+  serveIngestIntent
 );
 
-export const ingestIntentEventV1Options = api<EmptyRequest, { message: string }>(
+export const ingestIntentEventV1Options = api.raw(
   { expose: true, method: "OPTIONS", path: "/api/v1/ingest" },
-  async () => ({ message: "ok" })
+  serveIngestIntent
 );
