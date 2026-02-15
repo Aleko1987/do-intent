@@ -1,9 +1,10 @@
-import { api, Header, APIError } from "encore.dev/api";
+import { api, APIError } from "encore.dev/api";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { db } from "../db/db";
 import { resolveIngestApiKey } from "../internal/env_secrets";
+import { handleCorsPreflight, parseJsonBody, setCorsHeaders } from "../lib/cors";
 import type { MarketingLead } from "./types";
 
-// Parse allowed origins from environment
 function getAllowedOrigins(): string[] {
   const origins = process.env.ALLOWED_INGEST_ORIGINS;
   if (!origins) {
@@ -12,14 +13,17 @@ function getAllowedOrigins(): string[] {
   return origins.split(",").map((o) => o.trim()).filter((o) => o.length > 0);
 }
 
-interface IdentifyRequest {
-  "x-do-intent-key"?: Header<"x-do-intent-key">;
-  "origin"?: Header<"origin">;
-  "referer"?: Header<"referer">;
-  anonymous_id: string;
-  email: string;
+interface IdentifyPayload {
+  anonymous_id?: string;
+  email?: string;
   company_name?: string;
   contact_name?: string;
+}
+
+interface IdentifyRequest extends IdentifyPayload {
+  "x-do-intent-key"?: string;
+  origin?: string;
+  referer?: string;
 }
 
 interface IdentifyResponse {
@@ -27,7 +31,6 @@ interface IdentifyResponse {
   lead_created: boolean;
 }
 
-// Returns true when the provided API key header is valid.
 function hasValidApiKey(headerKey: string | undefined): boolean {
   const expectedKey = process.env.INGEST_API_KEY?.trim() || resolveIngestApiKey();
 
@@ -38,45 +41,28 @@ function hasValidApiKey(headerKey: string | undefined): boolean {
   return headerKey.trim() === expectedKey;
 }
 
-// Checks origin allowlist
 function checkOrigin(origin: string | undefined, referer: string | undefined): void {
   const allowedOrigins = getAllowedOrigins();
   if (allowedOrigins.length === 0) {
-    // If no allowlist configured, allow localhost in dev, otherwise allow all
-    if (process.env.NODE_ENV !== "production") {
-      return; // Allow all in dev if no allowlist
-    }
-    return; // In production without allowlist, allow all (admin's choice)
+    return;
   }
 
-  // Extract hostname from Origin or Referer
   let hostname: string | null = null;
-  if (origin) {
-    try {
-      const url = new URL(origin);
-      hostname = url.hostname;
-    } catch {
-      // Invalid origin format, ignore
-    }
+  if (origin && URL.canParse(origin)) {
+    const url = new URL(origin);
+    hostname = url.hostname;
   }
-  if (!hostname && referer) {
-    try {
-      const url = new URL(referer);
-      hostname = url.hostname;
-    } catch {
-      // Invalid referer format, ignore
-    }
+  if (!hostname && referer && URL.canParse(referer)) {
+    const url = new URL(referer);
+    hostname = url.hostname;
   }
 
   if (!hostname) {
-    // No valid origin/referer, reject if allowlist is set
     throw APIError.permissionDenied("API key or origin/referer header required");
   }
 
-  // Check if hostname matches any allowed origin
   const isAllowed = allowedOrigins.some((allowed) => {
-    // Exact match or subdomain match
-    return hostname === allowed || hostname!.endsWith(`.${allowed}`);
+    return hostname === allowed || hostname.endsWith(`.${allowed}`);
   });
 
   if (!isAllowed) {
@@ -84,104 +70,140 @@ function checkOrigin(origin: string | undefined, referer: string | undefined): v
   }
 }
 
-// POST endpoint for identifying users (find-or-create lead by email)
-export const identify = api<IdentifyRequest, IdentifyResponse>(
-  { expose: true, method: "POST", path: "/marketing/identify" },
-  async (req) => {
-    // PRIORITY 1: If a valid API key is present, bypass origin/referer checks.
-    const providedApiKey = req["x-do-intent-key"]?.trim();
-    if (providedApiKey && hasValidApiKey(providedApiKey)) {
-      // Continue as authenticated API-key traffic.
-    } else if (providedApiKey) {
-      throw APIError.permissionDenied("invalid API key");
-    } else {
-      // PRIORITY 2: No API key; require browser-style origin/referer checks.
-      if (!req.origin && !req.referer) {
-        throw APIError.permissionDenied("API key or origin/referer header required");
-      }
-
-      // Without API key, enforce origin allowlist checks.
-      checkOrigin(req.origin, req.referer);
+async function handleIdentify(req: IdentifyRequest): Promise<IdentifyResponse> {
+  const providedApiKey = req["x-do-intent-key"]?.trim();
+  if (providedApiKey && hasValidApiKey(providedApiKey)) {
+    // API-key traffic accepted.
+  } else if (providedApiKey) {
+    throw APIError.permissionDenied("invalid API key");
+  } else {
+    if (!req.origin && !req.referer) {
+      throw APIError.permissionDenied("API key or origin/referer header required");
     }
+    checkOrigin(req.origin, req.referer);
+  }
 
-    // Validate inputs
-    if (!req.anonymous_id || typeof req.anonymous_id !== "string") {
-      throw APIError.invalidArgument("anonymous_id is required and must be a string");
-    }
-    if (!req.email || typeof req.email !== "string") {
-      throw APIError.invalidArgument("email is required and must be a string");
-    }
+  if (!req.anonymous_id || typeof req.anonymous_id !== "string") {
+    throw APIError.invalidArgument("anonymous_id is required and must be a string");
+  }
+  if (!req.email || typeof req.email !== "string") {
+    throw APIError.invalidArgument("email is required and must be a string");
+  }
 
-    // Normalize email (lowercase, trim)
-    const email = req.email.toLowerCase().trim();
-    if (!email) {
-      throw APIError.invalidArgument("email cannot be empty");
-    }
+  const email = req.email.toLowerCase().trim();
+  if (!email) {
+    throw APIError.invalidArgument("email cannot be empty");
+  }
 
-    // Find or create lead by email (following webhook_event.ts pattern)
-    let lead = await db.queryRow<MarketingLead>`
-      SELECT * FROM marketing_leads
-      WHERE lower(email) = ${email}
-      LIMIT 1
+  let lead = await db.queryRow<MarketingLead>`
+    SELECT * FROM marketing_leads
+    WHERE lower(email) = ${email}
+    LIMIT 1
+  `;
+
+  let lead_created = false;
+
+  if (!lead) {
+    lead = await db.queryRow<MarketingLead>`
+      INSERT INTO marketing_leads (
+        company_name,
+        contact_name,
+        email,
+        source_type,
+        owner_user_id,
+        marketing_stage,
+        intent_score,
+        created_at,
+        updated_at
+      ) VALUES (
+        ${req.company_name || null},
+        ${req.contact_name || null},
+        ${email},
+        'website',
+        'system',
+        'M1',
+        0,
+        now(),
+        now()
+      )
+      RETURNING *
     `;
 
-    let lead_created = false;
-
     if (!lead) {
-      // Create new lead (following webhook_event.ts pattern)
-      lead = await db.queryRow<MarketingLead>`
-        INSERT INTO marketing_leads (
-          company_name,
-          contact_name,
-          email,
-          source_type,
-          owner_user_id,
-          marketing_stage,
-          intent_score,
-          created_at,
-          updated_at
-        ) VALUES (
-          ${req.company_name || null},
-          ${req.contact_name || null},
-          ${email},
-          'website',
-          'system',
-          'M1',
-          0,
-          now(),
-          now()
-        )
-        RETURNING *
-      `;
-
-      if (!lead) {
-        throw new Error("Failed to create lead");
-      }
-
-      lead_created = true;
-    } else {
-      // Update existing lead with provided info (if not already set)
-      if (req.company_name && !lead.company_name) {
-        await db.exec`
-          UPDATE marketing_leads
-          SET company_name = ${req.company_name}, updated_at = now()
-          WHERE id = ${lead.id}
-        `;
-        lead.company_name = req.company_name;
-      }
-      if (req.contact_name && !lead.contact_name) {
-        await db.exec`
-          UPDATE marketing_leads
-          SET contact_name = ${req.contact_name}, updated_at = now()
-          WHERE id = ${lead.id}
-        `;
-        lead.contact_name = req.contact_name;
-      }
+      throw new Error("Failed to create lead");
     }
 
-    return {
-      lead_id: lead.id,
-      lead_created,
-    };
+    lead_created = true;
+  } else {
+    if (req.company_name && !lead.company_name) {
+      await db.exec`
+        UPDATE marketing_leads
+        SET company_name = ${req.company_name}, updated_at = now()
+        WHERE id = ${lead.id}
+      `;
+    }
+    if (req.contact_name && !lead.contact_name) {
+      await db.exec`
+        UPDATE marketing_leads
+        SET contact_name = ${req.contact_name}, updated_at = now()
+        WHERE id = ${lead.id}
+      `;
+    }
   }
+
+  return {
+    lead_id: lead.id,
+    lead_created,
+  };
+}
+
+function getHeaderValue(req: IncomingMessage, name: string): string | undefined {
+  const value = req.headers[name.toLowerCase()];
+  return typeof value === "string" ? value : undefined;
+}
+
+async function serveIdentify(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (handleCorsPreflight(req, res)) {
+    return;
+  }
+
+  setCorsHeaders(req, res);
+
+  try {
+    const payload = await parseJsonBody<IdentifyPayload>(req);
+    const request: IdentifyRequest = {
+      ...payload,
+      "x-do-intent-key": getHeaderValue(req, "x-do-intent-key"),
+      origin: getHeaderValue(req, "origin"),
+      referer: getHeaderValue(req, "referer"),
+    };
+
+    const response = await handleIdentify(request);
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.end(JSON.stringify(response));
+  } catch (error) {
+    if (error instanceof APIError) {
+      const status = error.code === "invalid_argument" ? 400 :
+        error.code === "permission_denied" || error.code === "unauthenticated" ? 401 : 500;
+      res.statusCode = status;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(JSON.stringify({ code: error.code, message: error.message }));
+      return;
+    }
+
+    res.statusCode = 500;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.end(JSON.stringify({ code: "internal", message: "Internal Server Error" }));
+  }
+}
+
+export const identify = api.raw(
+  { expose: true, method: "POST", path: "/marketing/identify" },
+  serveIdentify
+);
+
+export const identifyOptions = api.raw(
+  { expose: true, method: "OPTIONS", path: "/marketing/identify" },
+  serveIdentify
 );

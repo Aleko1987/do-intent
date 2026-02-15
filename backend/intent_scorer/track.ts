@@ -10,7 +10,7 @@ import { randomUUID } from "crypto";
 import { autoScoreEvent } from "./auto_score";
 import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
-import { applyCorsHeaders, handleCorsPreflight, parseJsonBody } from "../internal/cors";
+import { setCorsHeaders, handleCorsPreflight, parseJsonBody } from "../lib/cors";
 
 interface TrackRequest {
   event?: string;
@@ -778,7 +778,7 @@ async function serveTrack(req: IncomingMessage, res: ServerResponse): Promise<vo
     return;
   }
 
-  applyCorsHeaders(req, res);
+  setCorsHeaders(req, res);
 
   try {
     const payload = await parseJsonBody<TrackRequest>(req);
