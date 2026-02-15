@@ -1,4 +1,5 @@
 import { api, APIError } from "encore.dev/api";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
 interface EmptyRequest {
   dummy?: string;
@@ -9,6 +10,7 @@ import { randomUUID } from "crypto";
 import { autoScoreEvent } from "./auto_score";
 import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
+import { applyCorsHeaders, handleCorsPreflight, parseJsonBody } from "../internal/cors";
 
 interface TrackRequest {
   event?: string;
@@ -771,14 +773,41 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
   }
 }
 
-export const track = api<TrackRequest, TrackResponse>(
+async function serveTrack(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (handleCorsPreflight(req, res)) {
+    return;
+  }
+
+  applyCorsHeaders(req, res);
+
+  try {
+    const payload = await parseJsonBody<TrackRequest>(req);
+    const response = await handleTrack(payload);
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.end(JSON.stringify(response));
+  } catch (error) {
+    if (error instanceof APIError && error.code === "invalid_argument") {
+      res.statusCode = 400;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(JSON.stringify({ code: error.code, message: error.message }));
+      return;
+    }
+
+    res.statusCode = 500;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.end(JSON.stringify({ code: "internal", message: "Internal Server Error" }));
+  }
+}
+
+export const track = api.raw(
   { expose: true, method: "POST", path: "/track" },
-  async (payload) => handleTrack(payload)
+  serveTrack
 );
 
-export const trackOptions = api<EmptyRequest, InfoResponse>(
+export const trackOptions = api.raw(
   { expose: true, method: "OPTIONS", path: "/track" },
-  async () => ({ message: "ok" })
+  serveTrack
 );
 
 export const trackGet = api<EmptyRequest, InfoResponse>(
@@ -786,12 +815,12 @@ export const trackGet = api<EmptyRequest, InfoResponse>(
   async () => ({ message: "use POST /track" })
 );
 
-export const trackV1 = api<TrackRequest, TrackResponse>(
+export const trackV1 = api.raw(
   { expose: true, method: "POST", path: "/api/v1/track" },
-  async (payload) => handleTrack(payload)
+  serveTrack
 );
 
-export const trackV1Options = api<EmptyRequest, InfoResponse>(
+export const trackV1Options = api.raw(
   { expose: true, method: "OPTIONS", path: "/api/v1/track" },
-  async () => ({ message: "ok" })
+  serveTrack
 );
