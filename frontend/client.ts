@@ -1106,4 +1106,13 @@ export enum ErrCode {
     Unauthenticated = "unauthenticated",
 }
 
-export default new Client(import.meta.env.VITE_CLIENT_TARGET, { requestInit: { credentials: "include" } });
+const defaultTarget = import.meta.env.PROD
+    ? "https://do-intent.onrender.com"
+    : Local
+
+const clientTarget =
+    import.meta.env.VITE_CLIENT_TARGET ||
+    import.meta.env.VITE_API_BASE_URL ||
+    defaultTarget
+
+export default new Client(clientTarget, { requestInit: { credentials: "include" } });
