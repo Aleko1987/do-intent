@@ -75,6 +75,7 @@ export class Client {
  * Import the auth handler to be able to derive the auth type
  */
 import type { auth as auth_auth } from "~backend/auth/auth";
+import { getClerkToken } from "./src/lib/clerkAuth";
 
 /**
  * ClientOptions allows you to override any default behaviour within the generated Encore client.
@@ -1121,4 +1122,14 @@ const clientTarget =
     import.meta.env.VITE_API_BASE_URL ||
     defaultTarget
 
-export default new Client(clientTarget, { requestInit: { credentials: "include" } });
+export default new Client(clientTarget, {
+    requestInit: { credentials: "include" },
+    auth: async () => {
+        const token = await getClerkToken();
+        if (!token) {
+            return undefined;
+        }
+
+        return { authorization: `Bearer ${token}` };
+    },
+});
