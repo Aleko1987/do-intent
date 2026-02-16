@@ -75,7 +75,6 @@ export class Client {
  * Import the auth handler to be able to derive the auth type
  */
 import type { auth as auth_auth } from "~backend/auth/auth";
-import { getClerkToken } from "./src/lib/clerkAuth";
 
 /**
  * ClientOptions allows you to override any default behaviour within the generated Encore client.
@@ -1117,19 +1116,48 @@ const browserOrigin =
 
 const defaultTarget = browserOrigin || Local
 
+// ============================================
+// AUTH INJECTION - DO NOT MODIFY ABOVE THIS LINE
+// ============================================
+
+// Helper to get Clerk token
+async function getClerkToken(): Promise<string | null> {
+  try {
+    // Wait for Clerk to be ready
+    if (typeof window !== 'undefined' && (window as any).Clerk?.session) {
+      return await (window as any).Clerk.session.getToken();
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Store original fetch
+const _originalFetch = window.fetch;
+
+// Override fetch to inject auth header
+window.fetch = async function(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  // Get token for API calls
+  const token = await getClerkToken();
+  
+  if (token) {
+    init = init || {};
+    init.headers = new Headers(init.headers);
+    (init.headers as Headers).set('Authorization', `Bearer ${token}`);
+  }
+  
+  return _originalFetch(input, init);
+};
+
+// Now create the client - it will use our modified fetch
 const clientTarget =
     import.meta.env.VITE_CLIENT_TARGET ||
     import.meta.env.VITE_API_BASE_URL ||
     defaultTarget
 
-export default new Client(clientTarget, {
-    requestInit: { credentials: "include" },
-    auth: async () => {
-        const token = await getClerkToken();
-        if (!token) {
-            return undefined;
-        }
-
-        return { authorization: `Bearer ${token}` };
-    },
+export default new Client(clientTarget, { 
+  requestInit: { 
+    credentials: "include" 
+  } 
 });
