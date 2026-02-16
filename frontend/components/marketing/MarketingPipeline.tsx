@@ -6,6 +6,7 @@ import LeadCard from "./LeadCard";
 import LeadDetailModal from "./LeadDetailModal";
 import { useToast } from "@/components/ui/use-toast";
 import { useBackend } from "@/lib/useBackend";
+import { useAuth } from "@clerk/clerk-react";
 
 const STAGES = [
   { id: "M1", name: "Seen" },
@@ -22,6 +23,7 @@ export default function MarketingPipeline() {
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
   const backend = useBackend();
+  const { isLoaded, isSignedIn } = useAuth();
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -32,8 +34,12 @@ export default function MarketingPipeline() {
   );
 
   useEffect(() => {
+    // Only load leads AFTER Clerk is fully loaded
+    if (!isLoaded) return;
+    if (!isSignedIn) return;
+
     loadLeads();
-  }, []);
+  }, [isLoaded, isSignedIn]);
 
   const loadLeads = async () => {
     try {

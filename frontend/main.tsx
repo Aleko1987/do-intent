@@ -4,6 +4,7 @@ import { ClerkProvider } from "@clerk/clerk-react";
 import App from "./App";
 import "./index.css";
 import { init } from "./lib/doIntentTracker";
+import "./src/lib/setupAuth";
 
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
