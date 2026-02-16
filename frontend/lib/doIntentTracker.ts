@@ -112,11 +112,8 @@ function getApiBaseUrl(): string {
     return envBase;
   }
 
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      return 'http://localhost:4000';
-    }
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
   }
 
   return '';

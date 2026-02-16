@@ -11,7 +11,10 @@ import type { CookieWithOptions } from "encore.dev/api";
  */
 export type BaseURL = string
 
-export const Local: BaseURL = "http://localhost:4000"
+export const Local: BaseURL =
+    typeof window !== "undefined" && window.location?.origin
+        ? window.location.origin
+        : "http://127.0.0.1:4000"
 
 /**
  * Environment returns a BaseURL for calling the cloud environment with the given name.
@@ -1111,10 +1114,7 @@ const browserOrigin =
         ? window.location.origin
         : ""
 
-const defaultTarget =
-    import.meta.env.PROD && browserOrigin
-        ? browserOrigin
-        : Local
+const defaultTarget = browserOrigin || Local
 
 const clientTarget =
     import.meta.env.VITE_CLIENT_TARGET ||
