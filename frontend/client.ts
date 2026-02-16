@@ -1120,35 +1120,7 @@ const defaultTarget = browserOrigin || Local
 // AUTH INJECTION - DO NOT MODIFY ABOVE THIS LINE
 // ============================================
 
-// Helper to get Clerk token
-async function getClerkToken(): Promise<string | null> {
-  try {
-    // Wait for Clerk to be ready
-    if (typeof window !== 'undefined' && (window as any).Clerk?.session) {
-      return await (window as any).Clerk.session.getToken();
-    }
-    return null;
-  } catch (e) {
-    return null;
-  }
-}
-
-// Store original fetch
-const _originalFetch = window.fetch;
-
-// Override fetch to inject auth header
-window.fetch = async function(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  // Get token for API calls
-  const token = await getClerkToken();
-  
-  if (token) {
-    init = init || {};
-    init.headers = new Headers(init.headers);
-    (init.headers as Headers).set('Authorization', `Bearer ${token}`);
-  }
-  
-  return _originalFetch(input, init);
-};
+// Fetch auth interceptor is configured in frontend/src/lib/setupAuth.ts
 
 // Now create the client - it will use our modified fetch
 const clientTarget =
