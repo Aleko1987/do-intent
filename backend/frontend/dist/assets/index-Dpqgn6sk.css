@@ -390,6 +390,10 @@
     pointer-events: none;
   }
 
+  .visible {
+    visibility: visible;
+  }
+
   .sr-only {
     clip-path: inset(50%);
     white-space: nowrap;
@@ -1330,6 +1334,11 @@
     line-height: var(--tw-leading, var(--text-xs--line-height));
   }
 
+  .leading-5 {
+    --tw-leading: calc(var(--spacing) * 5);
+    line-height: calc(var(--spacing) * 5);
+  }
+
   .leading-none {
     --tw-leading: 1;
     line-height: 1;
@@ -1357,6 +1366,10 @@
 
   .whitespace-nowrap {
     white-space: nowrap;
+  }
+
+  .whitespace-pre-wrap {
+    white-space: pre-wrap;
   }
 
   .text-card-foreground {

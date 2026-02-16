@@ -55,6 +55,13 @@ Add the following environment variables in the Render dashboard:
 - `ENABLE_DB` - Set to `true` to enable `/track` and `/api/v1/ingest` persistence
 
 - `CLERK_SECRET_KEY` - Your Clerk secret key for authentication
+  - Use your production secret key (`sk_live_...`) for production deployments
+
+- `VITE_CLERK_PUBLISHABLE_KEY` - Clerk publishable key consumed by the frontend
+  - Use your production publishable key (`pk_live_...`) for production deployments
+
+- `VITE_API_BASE_URL` - Frontend API base URL (recommended: `https://do-intent.onrender.com`)
+  - This ensures frontend requests do not fall back to `http://localhost:4000` in production
 
 - `INGEST_API_KEY` - API key for website ingestion endpoints (`x-ingest-api-key`)
 
