@@ -1106,9 +1106,15 @@ export enum ErrCode {
     Unauthenticated = "unauthenticated",
 }
 
-const defaultTarget = import.meta.env.PROD
-    ? "https://do-intent.onrender.com"
-    : Local
+const browserOrigin =
+    typeof window !== "undefined" && window.location?.origin
+        ? window.location.origin
+        : ""
+
+const defaultTarget =
+    import.meta.env.PROD && browserOrigin
+        ? browserOrigin
+        : Local
 
 const clientTarget =
     import.meta.env.VITE_CLIENT_TARGET ||
