@@ -4,7 +4,6 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useBackend } from "../lib/useBackend";
-import backend from "~backend/client";
 import type { LeadRollupsResponse, LeadRollupWithLead } from "~backend/intent_scorer/types";
 import LeadIntentDrawer from "../components/intent/LeadIntentDrawer";
 
@@ -14,7 +13,7 @@ export default function LeadIntent() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const { data, loading, error } = useBackend<LeadRollupsResponse>(
-    () => backend.intent_scorer.listLeadRollups({ search, limit: 50, offset: 0 }),
+    (backend) => backend.intent_scorer.listLeadRollups({ search, limit: 50, offset: 0 }),
     [search]
   );
 

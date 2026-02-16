@@ -12,6 +12,7 @@ export default function RulesTab() {
   const [editingRule, setEditingRule] = useState<string | null>(null);
   const [editPoints, setEditPoints] = useState<number>(0);
   const [editDescription, setEditDescription] = useState<string>("");
+  const backend = useBackend();
 
   const { data, loading, error, execute } = useBackend(
     async (backend) => {
@@ -30,7 +31,6 @@ export default function RulesTab() {
 
   const handleSave = async (ruleKey: string) => {
     try {
-      const backend = (await import("~backend/client")).default;
       await backend.intent_scorer.updateRule({
         rule_key: ruleKey,
         points: editPoints,
@@ -54,7 +54,6 @@ export default function RulesTab() {
 
   const handleToggle = async (ruleKey: string, currentState: boolean) => {
     try {
-      const backend = (await import("~backend/client")).default;
       await backend.intent_scorer.updateRule({
         rule_key: ruleKey,
         is_active: !currentState,

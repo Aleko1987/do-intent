@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import backend from "~backend/client";
+import { useBackend } from "@/lib/useBackend";
 import type { LeadRollupWithLead, LeadTrendResponse, LeadTopSignalsResponse } from "~backend/intent_scorer/types";
 
 interface LeadIntentDrawerProps {
@@ -14,6 +14,7 @@ interface LeadIntentDrawerProps {
 }
 
 export default function LeadIntentDrawer({ lead, open, onOpenChange }: LeadIntentDrawerProps) {
+  const backend = useBackend();
   const [trend, setTrend] = useState<LeadTrendResponse | null>(null);
   const [topSignals, setTopSignals] = useState<LeadTopSignalsResponse | null>(null);
   const [loading, setLoading] = useState(true);

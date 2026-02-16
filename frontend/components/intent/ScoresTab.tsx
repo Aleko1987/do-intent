@@ -15,6 +15,7 @@ export default function ScoresTab() {
   });
   const [recomputeDays, setRecomputeDays] = useState("30");
   const [isRecomputing, setIsRecomputing] = useState(false);
+  const backend = useBackend();
 
   const { data, loading, error, execute } = useBackend(
     async (backend) => {
@@ -29,7 +30,6 @@ export default function ScoresTab() {
   const handleRecompute = async () => {
     setIsRecomputing(true);
     try {
-      const backend = (await import("~backend/client")).default;
       const result = await backend.intent_scorer.recomputeScores({
         days: parseInt(recomputeDays, 10),
       });
