@@ -2,7 +2,7 @@ import { api, APIError } from "encore.dev/api";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { db } from "../db/db";
 import { resolveIngestApiKey } from "../internal/env_secrets";
-import { handleCorsPreflight, parseJsonBody, setCorsHeaders } from "../lib/cors";
+import { parseJsonBody } from "../internal/cors";
 import type { MarketingLead } from "./types";
 
 function getAllowedOrigins(): string[] {
@@ -71,90 +71,101 @@ function checkOrigin(origin: string | undefined, referer: string | undefined): v
 }
 
 async function handleIdentify(req: IdentifyRequest): Promise<IdentifyResponse> {
-  const providedApiKey = req["x-do-intent-key"]?.trim();
-  if (providedApiKey && hasValidApiKey(providedApiKey)) {
-    // API-key traffic accepted.
-  } else if (providedApiKey) {
-    throw APIError.permissionDenied("invalid API key");
-  } else {
-    if (!req.origin && !req.referer) {
-      throw APIError.permissionDenied("API key or origin/referer header required");
+  try {
+    console.info("[identify] Request", {
+      email: req.email,
+      anonymous_id: req.anonymous_id,
+      has_contact_name: !!req.contact_name,
+    });
+
+    const providedApiKey = req["x-do-intent-key"]?.trim();
+    if (providedApiKey && hasValidApiKey(providedApiKey)) {
+      // API-key traffic accepted.
+    } else if (providedApiKey) {
+      throw APIError.permissionDenied("invalid API key");
+    } else {
+      if (!req.origin && !req.referer) {
+        throw APIError.permissionDenied("API key or origin/referer header required");
+      }
+      checkOrigin(req.origin, req.referer);
     }
-    checkOrigin(req.origin, req.referer);
-  }
 
-  if (!req.anonymous_id || typeof req.anonymous_id !== "string") {
-    throw APIError.invalidArgument("anonymous_id is required and must be a string");
-  }
-  if (!req.email || typeof req.email !== "string") {
-    throw APIError.invalidArgument("email is required and must be a string");
-  }
+    if (!req.email || typeof req.email !== "string") {
+      throw APIError.invalidArgument("email is required");
+    }
+    if (!req.anonymous_id || typeof req.anonymous_id !== "string") {
+      throw APIError.invalidArgument("anonymous_id is required");
+    }
 
-  const email = req.email.toLowerCase().trim();
-  if (!email) {
-    throw APIError.invalidArgument("email cannot be empty");
-  }
+    const email = req.email.toLowerCase().trim();
+    if (!email) {
+      throw APIError.invalidArgument("email cannot be empty");
+    }
 
-  let lead = await db.queryRow<MarketingLead>`
-    SELECT * FROM marketing_leads
-    WHERE lower(email) = ${email}
-    LIMIT 1
-  `;
-
-  let lead_created = false;
-
-  if (!lead) {
-    lead = await db.queryRow<MarketingLead>`
-      INSERT INTO marketing_leads (
-        company_name,
-        contact_name,
-        email,
-        source_type,
-        owner_user_id,
-        marketing_stage,
-        intent_score,
-        created_at,
-        updated_at
-      ) VALUES (
-        ${req.company_name || null},
-        ${req.contact_name || null},
-        ${email},
-        'website',
-        'system',
-        'M1',
-        0,
-        now(),
-        now()
-      )
-      RETURNING *
+    let lead = await db.queryRow<MarketingLead>`
+      SELECT * FROM marketing_leads
+      WHERE lower(email) = ${email}
+      LIMIT 1
     `;
 
+    let lead_created = false;
+
     if (!lead) {
-      throw new Error("Failed to create lead");
+      lead = await db.queryRow<MarketingLead>`
+        INSERT INTO marketing_leads (
+          company_name,
+          contact_name,
+          email,
+          source_type,
+          owner_user_id,
+          marketing_stage,
+          intent_score,
+          created_at,
+          updated_at
+        ) VALUES (
+          ${req.company_name || null},
+          ${req.contact_name || null},
+          ${email},
+          'website',
+          'system',
+          'M1',
+          0,
+          now(),
+          now()
+        )
+        RETURNING *
+      `;
+
+      if (!lead) {
+        throw new Error("Failed to create lead");
+      }
+
+      lead_created = true;
+    } else {
+      if (req.company_name && !lead.company_name) {
+        await db.exec`
+          UPDATE marketing_leads
+          SET company_name = ${req.company_name}, updated_at = now()
+          WHERE id = ${lead.id}
+        `;
+      }
+      if (req.contact_name && !lead.contact_name) {
+        await db.exec`
+          UPDATE marketing_leads
+          SET contact_name = ${req.contact_name}, updated_at = now()
+          WHERE id = ${lead.id}
+        `;
+      }
     }
 
-    lead_created = true;
-  } else {
-    if (req.company_name && !lead.company_name) {
-      await db.exec`
-        UPDATE marketing_leads
-        SET company_name = ${req.company_name}, updated_at = now()
-        WHERE id = ${lead.id}
-      `;
-    }
-    if (req.contact_name && !lead.contact_name) {
-      await db.exec`
-        UPDATE marketing_leads
-        SET contact_name = ${req.contact_name}, updated_at = now()
-        WHERE id = ${lead.id}
-      `;
-    }
+    return {
+      lead_id: lead.id,
+      lead_created,
+    };
+  } catch (error) {
+    console.error("[identify] Error", error);
+    throw error;
   }
-
-  return {
-    lead_id: lead.id,
-    lead_created,
-  };
 }
 
 function getHeaderValue(req: IncomingMessage, name: string): string | undefined {
@@ -163,12 +174,6 @@ function getHeaderValue(req: IncomingMessage, name: string): string | undefined 
 }
 
 async function serveIdentify(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (handleCorsPreflight(req, res)) {
-    return;
-  }
-
-  setCorsHeaders(req, res);
-
   try {
     const payload = await parseJsonBody<IdentifyPayload>(req);
     const request: IdentifyRequest = {
@@ -203,7 +208,3 @@ export const identify = api.raw(
   serveIdentify
 );
 
-export const identifyOptions = api.raw(
-  { expose: true, method: "OPTIONS", path: "/marketing/identify" },
-  serveIdentify
-);

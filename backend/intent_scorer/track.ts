@@ -10,7 +10,7 @@ import { randomUUID } from "crypto";
 import { autoScoreEvent } from "./auto_score";
 import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
-import { setCorsHeaders, handleCorsPreflight, parseJsonBody } from "../lib/cors";
+import { parseJsonBody } from "../internal/cors";
 
 interface TrackRequest {
   event?: string;
@@ -131,10 +131,6 @@ function parseIsoTimestamp(value: unknown): Date | null {
   }
 
   return parsed;
-}
-
-function invalidUuidError(field: string): never {
-  throw APIError.invalidArgument(`${field} is required and must be a valid UUID`);
 }
 
 function warnDatabaseIssue(message: string, error?: unknown): void {
@@ -492,15 +488,18 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
   try {
     // Validate required fields
     const event = requireNonEmptyString(payload.event, "event");
-
-    if (!payload.session_id || !isValidUUID(payload.session_id)) {
-      throw APIError.invalidArgument("session_id is required and must be a valid UUID");
+    let sessionId = payload.session_id;
+    if (!sessionId || !isValidUUID(sessionId)) {
+      sessionId = randomUUID();
+      console.info("[track] Generated new session_id", {
+        request_id,
+        generated_session_id: sessionId,
+      });
     }
 
-    if (payload.anonymous_id && !isValidUUID(payload.anonymous_id)) {
-      throw APIError.invalidArgument(
-        "anonymous_id must be a valid UUID when provided"
-      );
+    let anonymousId = payload.anonymous_id;
+    if (!anonymousId || !isValidUUID(anonymousId)) {
+      anonymousId = sessionId;
     }
 
     const eventId = parseOptionalString(payload.event_id);
@@ -513,7 +512,6 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
     const occurredAt = parseIsoTimestamp(payload.timestamp) ?? new Date();
     const metadata = parseMetadata(payload.metadata);
     const eventValue = parseOptionalNumber(payload.value);
-    const anonymousId = payload.anonymous_id ?? payload.session_id;
 
     let clerkUserId: string | null = null;
     try {
@@ -529,7 +527,13 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
     if (clerkUserId) {
       storedMetadata.clerk_user_id = clerkUserId;
     }
-    storedMetadata.session_id = payload.session_id;
+    storedMetadata.session_id = sessionId;
+    if (payload.session_id && payload.session_id !== sessionId) {
+      storedMetadata.original_session_id = payload.session_id;
+    }
+    if (payload.anonymous_id && payload.anonymous_id !== anonymousId) {
+      storedMetadata.original_anonymous_id = payload.anonymous_id;
+    }
     storedMetadata.url = url;
     if (referrer) {
       storedMetadata.referrer = referrer;
@@ -564,7 +568,7 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
 
       const existingSession = await activePool.query(
         `SELECT 1 FROM sessions WHERE session_id = $1`,
-        [payload.session_id]
+        [sessionId]
       );
       const isNewSession = existingSession.rowCount === 0;
       let isReturnVisit = false;
@@ -578,9 +582,9 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
               AND last_seen_at >= now() - interval '30 days'
             LIMIT 1
           `,
-          [anonymousId, payload.session_id]
+          [anonymousId, sessionId]
         );
-        isReturnVisit = recentSession.rowCount > 0;
+        isReturnVisit = (recentSession.rowCount ?? 0) > 0;
       }
 
       await activePool.query(
@@ -594,7 +598,7 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
           SET anonymous_id = EXCLUDED.anonymous_id,
               last_seen_at = now()
         `,
-        [payload.session_id, anonymousId]
+        [sessionId, anonymousId]
       );
       await activePool.query(
         `
@@ -611,7 +615,7 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
         `,
         [
           event,
-          payload.session_id,
+          sessionId,
           anonymousId,
           url,
           referrer,
@@ -671,7 +675,7 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
       }
 
       if (isReturnVisit) {
-        const dedupeKey = `return_visit:${payload.session_id}`;
+        const dedupeKey = `return_visit:${sessionId}`;
         const existingReturnVisit = await activePool.query(
           `
             SELECT 1
@@ -774,12 +778,6 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
 }
 
 async function serveTrack(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (handleCorsPreflight(req, res)) {
-    return;
-  }
-
-  setCorsHeaders(req, res);
-
   try {
     const payload = await parseJsonBody<TrackRequest>(req);
     const response = await handleTrack(payload);
@@ -805,10 +803,6 @@ export const track = api.raw(
   serveTrack
 );
 
-export const trackOptions = api.raw(
-  { expose: true, method: "OPTIONS", path: "/track" },
-  serveTrack
-);
 
 export const trackGet = api<EmptyRequest, InfoResponse>(
   { expose: true, method: "GET", path: "/track" },
@@ -820,7 +814,3 @@ export const trackV1 = api.raw(
   serveTrack
 );
 
-export const trackV1Options = api.raw(
-  { expose: true, method: "OPTIONS", path: "/api/v1/track" },
-  serveTrack
-);

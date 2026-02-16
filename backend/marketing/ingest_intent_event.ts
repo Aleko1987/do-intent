@@ -9,7 +9,7 @@ import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
 import { resolveIngestApiKey } from "../internal/env_secrets";
-import { setCorsHeaders, handleCorsPreflight, parseJsonBody } from "../lib/cors";
+import { parseJsonBody } from "../internal/cors";
 import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
 import { updateLeadScoring } from "./scoring";
@@ -158,7 +158,7 @@ function checkApiKey(
   if (!headerReceived) {
     return {
       ok: false,
-      message: "missing x-ingest-api-key or x-do-intent-key header",
+      message: "Invalid or missing API key",
       headerReceived,
       details: { headers: "x-ingest-api-key,x-do-intent-key" },
     };
@@ -167,7 +167,7 @@ function checkApiKey(
   if (!constantTimeEquals(headerKey, expectedKey)) {
     return {
       ok: false,
-      message: "invalid ingest api key",
+      message: "Invalid or missing API key",
       headerReceived,
       details: { header: source },
     };
@@ -656,12 +656,6 @@ function getHeaderValue(req: IncomingMessage, name: string): string | undefined 
 }
 
 async function serveIngestIntent(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (handleCorsPreflight(req, res)) {
-    return;
-  }
-
-  setCorsHeaders(req, res);
-
   try {
     const payload = await parseJsonBody<IngestIntentEventPayload>(req);
     const request: IngestIntentEventRequest = {
@@ -703,12 +697,4 @@ export const ingestIntentEventV1 = api.raw(
   serveIngestIntent
 );
 
-export const ingestIntentEventOptions = api.raw(
-  { expose: true, method: "OPTIONS", path: "/marketing/ingest-intent-event" },
-  serveIngestIntent
-);
 
-export const ingestIntentEventV1Options = api.raw(
-  { expose: true, method: "OPTIONS", path: "/api/v1/ingest" },
-  serveIngestIntent
-);
