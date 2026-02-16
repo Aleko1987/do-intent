@@ -293,6 +293,7 @@ async function upsertAnonymousSubjectScore(
   const eventClass = classifyEvent(eventType, url, metadata);
   const halfLifeSeconds = halfLifeSecondsForEventClass(eventClass);
   const delta = Math.max(0, Math.round(scoreDelta));
+  const scoreCap = SUBJECT_SCORE_CAP;
   await db.exec`
     INSERT INTO intent_subject_scores (
       subject_type,
@@ -303,13 +304,13 @@ async function upsertAnonymousSubjectScore(
     ) VALUES (
       'anonymous',
       ${anonymousId},
-      LEAST(${SUBJECT_SCORE_CAP}, ${delta}),
+      LEAST(${scoreCap}::integer, ${delta}::integer),
       ${occurredAt},
       now()
     )
     ON CONFLICT (subject_type, subject_id) DO UPDATE SET
       total_score = LEAST(
-        ${SUBJECT_SCORE_CAP},
+        ${scoreCap}::integer,
         ROUND(
           GREATEST(
             0,
@@ -320,13 +321,13 @@ async function upsertAnonymousSubjectScore(
                 GREATEST(
                   0,
                   EXTRACT(EPOCH FROM (${occurredAt}::timestamptz - intent_subject_scores.last_event_at))
-                ) / ${halfLifeSeconds}
+                ) / ${halfLifeSeconds}::numeric
               )
             END
           )
         ) + (
           CASE
-            WHEN intent_subject_scores.last_event_at IS NULL THEN ${delta}
+            WHEN intent_subject_scores.last_event_at IS NULL THEN ${delta}::integer
             ELSE
               CASE
                 WHEN (
@@ -335,32 +336,32 @@ async function upsertAnonymousSubjectScore(
                     GREATEST(
                       0,
                       EXTRACT(EPOCH FROM (${occurredAt}::timestamptz - intent_subject_scores.last_event_at))
-                    ) / ${halfLifeSeconds}
+                    ) / ${halfLifeSeconds}::numeric
                   )
-                ) >= ${SUBJECT_SCORE_CAP} THEN 0
+                ) >= ${scoreCap}::integer THEN 0
                 WHEN (
                   intent_subject_scores.total_score * POWER(
                     0.5,
                     GREATEST(
                       0,
                       EXTRACT(EPOCH FROM (${occurredAt}::timestamptz - intent_subject_scores.last_event_at))
-                    ) / ${halfLifeSeconds}
+                    ) / ${halfLifeSeconds}::numeric
                   )
-                ) >= ${SUBJECT_SCORE_CAP} * 0.8 THEN CEIL(${delta} * 0.2)
+                ) >= ${scoreCap}::integer * 0.8 THEN CEIL(${delta}::numeric * 0.2)
                 WHEN (
                   intent_subject_scores.total_score * POWER(
                     0.5,
                     GREATEST(
                       0,
                       EXTRACT(EPOCH FROM (${occurredAt}::timestamptz - intent_subject_scores.last_event_at))
-                    ) / ${halfLifeSeconds}
+                    ) / ${halfLifeSeconds}::numeric
                   )
-                ) >= ${SUBJECT_SCORE_CAP} * 0.6 THEN CEIL(${delta} * 0.5)
-                ELSE ${delta}
+                ) >= ${scoreCap}::integer * 0.6 THEN CEIL(${delta}::numeric * 0.5)
+                ELSE ${delta}::integer
               END
           END
         )
-      ),
+      )::integer,
       last_event_at = GREATEST(intent_subject_scores.last_event_at, ${occurredAt}),
       updated_at = now()
   `;
@@ -813,4 +814,3 @@ export const trackV1 = api.raw(
   { expose: true, method: "POST", path: "/api/v1/track" },
   serveTrack
 );
-
