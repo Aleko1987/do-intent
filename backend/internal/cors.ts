@@ -38,6 +38,10 @@ export function applyCorsHeadersWithOptions(
   res: ServerResponse,
   options: CorsHeaderOptions
 ): void {
+  if (res.getHeader("Access-Control-Allow-Origin")) {
+    return;
+  }
+
   const allowlist = new Set(options.allowedOrigins ?? parseAllowedOrigins());
   const requestOrigin = typeof req.headers.origin === "string" ? req.headers.origin : "";
   const normalizedOrigin = requestOrigin ? normalizeOrigin(requestOrigin) : null;
