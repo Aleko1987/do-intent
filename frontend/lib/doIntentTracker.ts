@@ -119,6 +119,22 @@ function getApiBaseUrl(): string {
   return '';
 }
 
+function buildEncoreEndpoint(path: string): string {
+  const apiBase = getApiBaseUrl();
+  const trimmedBase = apiBase.replace(/\/$/, '');
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+
+  if (!trimmedBase) {
+    return normalizedPath;
+  }
+
+  if (trimmedBase.endsWith('/intent_scorer')) {
+    return `${trimmedBase}${normalizedPath}`;
+  }
+
+  return `${trimmedBase}/intent_scorer${normalizedPath}`;
+}
+
 /**
  * Get or create anonymous_id from localStorage
  */
@@ -334,9 +350,7 @@ async function sendTrackEvent(
     metadata: JSON.stringify(buildMetadata(metadata)),
   };
   
-  const apiBase = getApiBaseUrl();
-  const trimmedBase = apiBase.replace(/\/$/, '');
-  const endpoint = trimmedBase ? `${trimmedBase}/track` : '/track';
+  const endpoint = buildEncoreEndpoint('/track');
   
   if (config.debug) {
     console.log('[DO-Intent] Tracking event:', eventType, payload);
@@ -344,6 +358,8 @@ async function sendTrackEvent(
   }
   
   try {
+    console.log('[DO-Intent] Sending track request to URL:', endpoint);
+
     const response = await fetch(endpoint, {
       method: 'POST',
       credentials: 'include',
@@ -558,9 +574,7 @@ export async function identify(
   threshold_emitted: boolean;
 }> {
   const anonymousId = getAnonymousId();
-  const apiBase = getApiBaseUrl();
-  const trimmedBase = apiBase.replace(/\/$/, '');
-  const endpoint = trimmedBase ? `${trimmedBase}/api/v1/identify` : '/api/v1/identify';
+  const endpoint = buildEncoreEndpoint('/api/v1/identify');
   
   const payload = {
     anonymous_id: anonymousId,
