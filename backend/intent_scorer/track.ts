@@ -10,7 +10,11 @@ import { randomUUID } from "crypto";
 import { autoScoreEvent } from "./auto_score";
 import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
-import { parseJsonBody } from "../internal/cors";
+import {
+  parseJsonBody,
+  applyCorsHeaders,
+  handleCorsPreflight,
+} from "../internal/cors";
 
 interface TrackRequest {
   event?: string;
@@ -779,25 +783,21 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
 }
 
 async function serveTrack(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const origin = req.headers.origin;
-
-  if (req.method === "OPTIONS") {
-    addCorsHeaders(res, origin);
-    res.statusCode = 200;
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end();
+  // Handle OPTIONS preflight request
+  if (handleCorsPreflight(req, res)) {
     return;
   }
+
+  // Apply CORS headers
+  applyCorsHeaders(req, res);
 
   try {
     const payload = await parseJsonBody<TrackRequest>(req);
     const response = await handleTrack(payload);
-    addCorsHeaders(res, origin);
     res.statusCode = 200;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.end(JSON.stringify(response));
   } catch (error) {
-    addCorsHeaders(res, origin);
     if (error instanceof APIError && error.code === "invalid_argument") {
       res.statusCode = 400;
       res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -808,31 +808,6 @@ async function serveTrack(req: IncomingMessage, res: ServerResponse): Promise<vo
     res.statusCode = 500;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.end(JSON.stringify({ code: "internal", message: "Internal Server Error" }));
-  }
-}
-
-function addCorsHeaders(res: ServerResponse, origin: string | undefined): void {
-  const allowedOrigins = [
-    "https://earthcurebiodiesel.com",
-    "http://localhost:5173",
-    "http://localhost:3000",
-  ];
-
-  if (!res.getHeader("Access-Control-Allow-Origin")) {
-    if (origin && allowedOrigins.includes(origin)) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
-    }
-  }
-
-  if (!res.getHeader("Access-Control-Allow-Methods")) {
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  }
-
-  if (!res.getHeader("Access-Control-Allow-Headers")) {
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "Content-Type, Authorization, x-ingest-api-key, x-do-intent-key"
-    );
   }
 }
 
