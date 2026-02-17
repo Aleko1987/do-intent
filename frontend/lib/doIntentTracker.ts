@@ -123,16 +123,24 @@ function buildEncoreEndpoint(path: string): string {
   const apiBase = getApiBaseUrl();
   const trimmedBase = apiBase.replace(/\/$/, '');
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const intentScorerPrefix = '/intent_scorer';
 
   if (!trimmedBase) {
     return normalizedPath;
   }
 
-  if (trimmedBase.endsWith('/intent_scorer')) {
+  if (
+    normalizedPath === intentScorerPrefix ||
+    normalizedPath.startsWith(`${intentScorerPrefix}/`)
+  ) {
     return `${trimmedBase}${normalizedPath}`;
   }
 
-  return `${trimmedBase}/intent_scorer${normalizedPath}`;
+  if (trimmedBase.endsWith(intentScorerPrefix)) {
+    return `${trimmedBase}${normalizedPath}`;
+  }
+
+  return `${trimmedBase}${intentScorerPrefix}${normalizedPath}`;
 }
 
 /**
@@ -325,7 +333,7 @@ function buildMetadata(additional?: Record<string, any>): Record<string, any> {
 }
 
 /**
- * Send event to /track endpoint
+ * Send event to /intent_scorer/track endpoint
  */
 async function sendTrackEvent(
   eventType: string,
@@ -350,7 +358,7 @@ async function sendTrackEvent(
     metadata: JSON.stringify(buildMetadata(metadata)),
   };
   
-  const endpoint = buildEncoreEndpoint('/track');
+  const endpoint = buildEncoreEndpoint('/intent_scorer/track');
   
   if (config.debug) {
     console.log('[DO-Intent] Tracking event:', eventType, payload);
