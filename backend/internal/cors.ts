@@ -22,23 +22,44 @@ function normalizeOrigin(origin: string): string | null {
 }
 
 export function applyCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
-  const allowlist = parseAllowedOrigins();
+  applyCorsHeadersWithOptions(req, res, {});
+}
+
+interface CorsHeaderOptions {
+  allowedOrigins?: readonly string[];
+  allowAnyOriginFallback?: boolean;
+  allowCredentials?: boolean;
+  allowMethods?: string;
+  allowHeaders?: string;
+}
+
+export function applyCorsHeadersWithOptions(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: CorsHeaderOptions
+): void {
+  const allowlist = new Set(options.allowedOrigins ?? parseAllowedOrigins());
   const requestOrigin = typeof req.headers.origin === "string" ? req.headers.origin : "";
   const normalizedOrigin = requestOrigin ? normalizeOrigin(requestOrigin) : null;
+  const allowAnyOriginFallback = options.allowAnyOriginFallback ?? true;
+  const allowCredentials = options.allowCredentials ?? true;
+  const allowMethods = options.allowMethods ?? "GET,POST,OPTIONS";
+  const allowHeaders =
+    options.allowHeaders ??
+    "Content-Type, Authorization, x-ingest-api-key, x-do-intent-key, x-request-id";
 
   if (normalizedOrigin && allowlist.has(normalizedOrigin)) {
     res.setHeader("Access-Control-Allow-Origin", normalizedOrigin);
-    res.setHeader("Access-Control-Allow-Credentials", "true");
+    if (allowCredentials) {
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+    }
     res.setHeader("Vary", "Origin");
-  } else {
+  } else if (allowAnyOriginFallback) {
     res.setHeader("Access-Control-Allow-Origin", "*");
   }
 
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, x-ingest-api-key, x-do-intent-key, x-request-id"
-  );
+  res.setHeader("Access-Control-Allow-Methods", allowMethods);
+  res.setHeader("Access-Control-Allow-Headers", allowHeaders);
   res.setHeader("Access-Control-Max-Age", "86400");
 }
 
