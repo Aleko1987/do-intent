@@ -12,7 +12,6 @@ import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
 import {
   parseJsonBody,
-  applyCorsHeaders,
 } from "../internal/cors";
 
 interface TrackRequest {
@@ -782,8 +781,6 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
 }
 
 async function serveTrack(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  applyCorsHeaders(req, res);
-
   try {
     const payload = await parseJsonBody<TrackRequest>(req);
     const response = await handleTrack(payload);
@@ -812,7 +809,6 @@ export const track = api.raw(
 export const trackOptions = api.raw(
   { expose: true, method: "OPTIONS", path: "/track" },
   async (req: IncomingMessage, res: ServerResponse) => {
-    applyCorsHeaders(req, res);
     res.statusCode = 204;
     res.end();
   }
@@ -832,7 +828,6 @@ export const trackV1 = api.raw(
 export const trackV1Options = api.raw(
   { expose: true, method: "OPTIONS", path: "/api/v1/track" },
   async (req: IncomingMessage, res: ServerResponse) => {
-    applyCorsHeaders(req, res);
     res.statusCode = 204;
     res.end();
   }
