@@ -13,7 +13,6 @@ import type { JsonObject } from "../internal/json_types";
 import {
   parseJsonBody,
   applyCorsHeaders,
-  handleCorsPreflight,
 } from "../internal/cors";
 
 interface TrackRequest {
@@ -783,12 +782,6 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
 }
 
 async function serveTrack(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  // Handle OPTIONS preflight request
-  if (handleCorsPreflight(req, res)) {
-    return;
-  }
-
-  // Apply CORS headers
   applyCorsHeaders(req, res);
 
   try {
@@ -816,6 +809,15 @@ export const track = api.raw(
   serveTrack
 );
 
+export const trackOptions = api.raw(
+  { expose: true, method: "OPTIONS", path: "/track" },
+  async (req: IncomingMessage, res: ServerResponse) => {
+    applyCorsHeaders(req, res);
+    res.statusCode = 204;
+    res.end();
+  }
+);
+
 
 export const trackGet = api<EmptyRequest, InfoResponse>(
   { expose: true, method: "GET", path: "/track" },
@@ -825,4 +827,13 @@ export const trackGet = api<EmptyRequest, InfoResponse>(
 export const trackV1 = api.raw(
   { expose: true, method: "POST", path: "/api/v1/track" },
   serveTrack
+);
+
+export const trackV1Options = api.raw(
+  { expose: true, method: "OPTIONS", path: "/api/v1/track" },
+  async (req: IncomingMessage, res: ServerResponse) => {
+    applyCorsHeaders(req, res);
+    res.statusCode = 204;
+    res.end();
+  }
 );
