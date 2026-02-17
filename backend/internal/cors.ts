@@ -38,6 +38,7 @@ export function applyCorsHeadersWithOptions(
   res: ServerResponse,
   options: CorsHeaderOptions
 ): void {
+  // GUARD: Prevent duplicates if Encore or another middleware already set the header.
   if (res.getHeader("Access-Control-Allow-Origin")) {
     return;
   }
