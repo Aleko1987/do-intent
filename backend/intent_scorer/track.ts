@@ -1,6 +1,25 @@
 import { api, APIError } from "encore.dev/api";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+const ALLOWED_ORIGINS = [
+  "https://earthcurebiodiesel.com",
+  "http://localhost:5173",
+  "http://localhost:3000"
+];
+
+function getCorsHeaders(origin: string | undefined): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-ingest-api-key, x-do-intent-key",
+  };
+
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+  }
+
+  return headers;
+}
+
 interface EmptyRequest {
   dummy?: string;
 }
@@ -10,7 +29,7 @@ import { randomUUID } from "crypto";
 import { autoScoreEvent } from "./auto_score";
 import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
-import { applyCorsHeadersWithOptions, parseJsonBody } from "../internal/cors";
+import { parseJsonBody } from "../internal/cors";
 
 interface TrackRequest {
   event?: string;
@@ -779,25 +798,24 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
 }
 
 async function serveTrack(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const allowedOrigins = [
-    "https://earthcurebiodiesel.com",
-    "http://localhost:5173",
-    "http://localhost:3000",
-  ] as const;
+  const origin = req.headers.origin;
+  const corsHeaders = getCorsHeaders(origin);
 
-  applyCorsHeadersWithOptions(req, res, {
-    allowedOrigins,
-    allowAnyOriginFallback: false,
-    allowMethods: "GET, POST, OPTIONS",
-    allowHeaders:
-      "Content-Type, Authorization, x-ingest-api-key, x-do-intent-key",
-  });
-
-  if ((req.method ?? "").toUpperCase() === "OPTIONS") {
+  // Handle OPTIONS preflight request
+  if (req.method === "OPTIONS") {
     res.statusCode = 200;
+    Object.entries(corsHeaders).forEach(([key, value]) => {
+      res.setHeader(key, value);
+    });
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.end();
     return;
   }
+
+  // Add CORS headers to all responses
+  Object.entries(corsHeaders).forEach(([key, value]) => {
+    res.setHeader(key, value);
+  });
 
   try {
     const payload = await parseJsonBody<TrackRequest>(req);
