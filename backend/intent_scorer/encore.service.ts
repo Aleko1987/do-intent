@@ -1,6 +1,6 @@
 import { Service } from "encore.dev/service";
 
-export const service = new Service("intent_scorer", {
+export default new Service("intent_scorer", {
   cors: {
     allowedOrigins: [
       "https://earthcurebiodiesel.com",
