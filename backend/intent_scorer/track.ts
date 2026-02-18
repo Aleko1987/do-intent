@@ -42,8 +42,16 @@ interface InfoResponse {
 
 let pool: Pool | null = null;
 let warnedNoDatabase = false;
+let warnedMissingLeadLinkColumns = false;
 
 let bootstrapPromise: Promise<void> | null = null;
+let leadLinkColumnsPromise: Promise<LeadLinkColumns> | null = null;
+
+interface LeadLinkColumns {
+  anonymous_id: boolean;
+  clerk_id: boolean;
+  user_id: boolean;
+}
 
 function isValidUUID(uuid: string): boolean {
   const uuidRegex =
@@ -398,6 +406,7 @@ function parseMetadata(raw: unknown): JsonObject {
 async function insertIntentEvent(
   activePool: Pool,
   params: {
+    leadId: string | null;
     eventType: string;
     eventSource: string;
     eventValue: number | null;
@@ -429,7 +438,7 @@ async function insertIntentEvent(
       RETURNING id
     `,
     [
-      null,
+      params.leadId,
       params.anonymousId,
       params.eventType,
       params.eventSource,
@@ -441,6 +450,135 @@ async function insertIntentEvent(
   );
 
   return result.rows[0]?.id ?? null;
+}
+
+async function getLeadLinkColumns(activePool: Pool): Promise<LeadLinkColumns> {
+  if (!leadLinkColumnsPromise) {
+    leadLinkColumnsPromise = activePool
+      .query(
+        `
+          SELECT column_name
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'marketing_leads'
+            AND column_name = ANY($1::text[])
+        `,
+        [["anonymous_id", "clerk_id", "user_id"]]
+      )
+      .then((result) => {
+        const columns = new Set(
+          result.rows
+            .map((row) => row?.column_name)
+            .filter((columnName): columnName is string =>
+              typeof columnName === "string"
+            )
+        );
+
+        return {
+          anonymous_id: columns.has("anonymous_id"),
+          clerk_id: columns.has("clerk_id"),
+          user_id: columns.has("user_id"),
+        };
+      });
+  }
+
+  return leadLinkColumnsPromise;
+}
+
+async function upsertLead(
+  activePool: Pool,
+  params: {
+    anonymousId: string;
+    clerkUserId: string | null;
+    requestId: string;
+  }
+): Promise<string> {
+  const linkColumns = await getLeadLinkColumns(activePool);
+
+  let existingLeadId: string | null = null;
+
+  if (params.clerkUserId) {
+    if (linkColumns.clerk_id) {
+      const existingByClerk = await activePool.query(
+        `SELECT id FROM marketing_leads WHERE clerk_id = $1 LIMIT 1`,
+        [params.clerkUserId]
+      );
+      existingLeadId = existingByClerk.rows[0]?.id ?? null;
+    } else if (linkColumns.user_id) {
+      const existingByUserId = await activePool.query(
+        `SELECT id FROM marketing_leads WHERE user_id = $1 LIMIT 1`,
+        [params.clerkUserId]
+      );
+      existingLeadId = existingByUserId.rows[0]?.id ?? null;
+    }
+  }
+
+  if (!existingLeadId && linkColumns.anonymous_id) {
+    const existingByAnonymousId = await activePool.query(
+      `SELECT id FROM marketing_leads WHERE anonymous_id = $1 LIMIT 1`,
+      [params.anonymousId]
+    );
+    existingLeadId = existingByAnonymousId.rows[0]?.id ?? null;
+  }
+
+  if (existingLeadId) {
+    return existingLeadId;
+  }
+
+  const insertColumns = [
+    "source_type",
+    "owner_user_id",
+    "marketing_stage",
+    "intent_score",
+  ];
+  const insertValues: Array<string | number> = ["website", "system", "M1", 0];
+
+  if (params.clerkUserId && linkColumns.clerk_id) {
+    insertColumns.push("clerk_id");
+    insertValues.push(params.clerkUserId);
+  } else if (params.clerkUserId && linkColumns.user_id) {
+    insertColumns.push("user_id");
+    insertValues.push(params.clerkUserId);
+  }
+
+  if (linkColumns.anonymous_id) {
+    insertColumns.push("anonymous_id");
+    insertValues.push(params.anonymousId);
+  }
+
+  if (
+    !warnedMissingLeadLinkColumns &&
+    !linkColumns.anonymous_id &&
+    !linkColumns.clerk_id &&
+    !linkColumns.user_id
+  ) {
+    warnedMissingLeadLinkColumns = true;
+    console.warn(
+      "[track] marketing_leads is missing anonymous_id/clerk_id/user_id columns. Consider a migration that adds anonymous_id and/or clerk_id for deterministic lead upserts.",
+      { request_id: params.requestId }
+    );
+  }
+
+  const placeholders = insertColumns.map((_, index) => `$${index + 1}`).join(", ");
+
+  const createdLead = await activePool.query(
+    `
+      INSERT INTO marketing_leads (
+        ${insertColumns.join(", ")}
+      ) VALUES (
+        ${placeholders}
+      )
+      RETURNING id
+    `,
+    insertValues
+  );
+
+  const leadId = createdLead.rows[0]?.id;
+  if (!leadId) {
+    throw new Error("Failed to create marketing lead");
+  }
+
+  return leadId;
 }
 
 async function scoreAndUpdateSubject(
@@ -628,8 +766,15 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
         ]
       );
 
+      const leadId = await upsertLead(activePool, {
+        anonymousId,
+        clerkUserId,
+        requestId: request_id,
+      });
+
       if (shouldCreateIntentEvent(event, eventValue)) {
         const intentEventId = await insertIntentEvent(activePool, {
+          leadId,
           eventType: event,
           eventSource: "website",
           eventValue,
@@ -652,6 +797,7 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
 
       if (shouldDerivePricingView(event, url)) {
         const pricingEventId = await insertIntentEvent(activePool, {
+          leadId,
           eventType: "pricing_view",
           eventSource: "website",
           eventValue: null,
@@ -690,6 +836,7 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
         );
         if (existingReturnVisit.rowCount === 0) {
           const returnVisitId = await insertIntentEvent(activePool, {
+            leadId,
             eventType: "return_visit",
             eventSource: "website",
             eventValue: null,
