@@ -540,106 +540,148 @@ async function upsertLead(
     requestId: string;
   }
 ): Promise<string> {
-  const linkColumns = await getLeadLinkColumns(activePool);
+  try {
+    const linkColumns = await getLeadLinkColumns(activePool);
 
-  let existingLeadId: string | null = null;
+    if (params.clerkUserId && linkColumns.clerk_id && linkColumns.anonymous_id) {
+      const insertResult = await activePool.query(
+        `
+          INSERT INTO marketing_leads (
+            anonymous_id,
+            clerk_id,
+            owner_user_id
+          )
+          VALUES ($1, $2, $3)
+          ON CONFLICT (anonymous_id) DO UPDATE
+          SET clerk_id = EXCLUDED.clerk_id,
+              owner_user_id = EXCLUDED.owner_user_id
+          RETURNING id
+        `,
+        [params.anonymousId, params.clerkUserId, TRACKING_OWNER_USER_ID]
+      );
 
-  if (params.clerkUserId) {
-    if (linkColumns.clerk_id) {
-      const existingByClerk = await activePool.query(
-        `SELECT id FROM marketing_leads WHERE clerk_id = $1 LIMIT 1`,
-        [params.clerkUserId]
-      );
-      existingLeadId = existingByClerk.rows[0]?.id ?? null;
-    } else if (linkColumns.user_id) {
-      const existingByUserId = await activePool.query(
-        `SELECT id FROM marketing_leads WHERE user_id = $1 LIMIT 1`,
-        [params.clerkUserId]
-      );
-      existingLeadId = existingByUserId.rows[0]?.id ?? null;
+      const upsertedLeadId = insertResult.rows[0]?.id;
+      if (!upsertedLeadId) {
+        throw new Error("Failed to upsert marketing lead");
+      }
+      return upsertedLeadId;
     }
-  }
 
-  if (!existingLeadId && linkColumns.anonymous_id) {
-    const existingByAnonymousId = await activePool.query(
-      `SELECT id FROM marketing_leads WHERE anonymous_id = $1 LIMIT 1`,
-      [params.anonymousId]
-    );
-    existingLeadId = existingByAnonymousId.rows[0]?.id ?? null;
-  }
+    let existingLeadId: string | null = null;
 
-  if (existingLeadId) {
-    await activePool.query(
+    if (params.clerkUserId) {
+      if (linkColumns.clerk_id) {
+        const existingByClerk = await activePool.query(
+          `SELECT id FROM marketing_leads WHERE clerk_id = $1 LIMIT 1`,
+          [params.clerkUserId]
+        );
+        existingLeadId = existingByClerk.rows[0]?.id ?? null;
+      } else if (linkColumns.user_id) {
+        const existingByUserId = await activePool.query(
+          `SELECT id FROM marketing_leads WHERE user_id = $1 LIMIT 1`,
+          [params.clerkUserId]
+        );
+        existingLeadId = existingByUserId.rows[0]?.id ?? null;
+      }
+    }
+
+    if (!existingLeadId && linkColumns.anonymous_id) {
+      const existingByAnonymousId = await activePool.query(
+        `SELECT id FROM marketing_leads WHERE anonymous_id = $1 LIMIT 1`,
+        [params.anonymousId]
+      );
+      existingLeadId = existingByAnonymousId.rows[0]?.id ?? null;
+    }
+
+    if (existingLeadId) {
+      await activePool.query(
+        `
+          UPDATE marketing_leads
+          SET owner_user_id = $2,
+              updated_at = now()
+          WHERE id = $1
+        `,
+        [existingLeadId, TRACKING_OWNER_USER_ID]
+      );
+      return existingLeadId;
+    }
+
+    const insertColumns = [
+      "source_type",
+      "owner_user_id",
+      "marketing_stage",
+      "intent_score",
+    ];
+    const insertValues: Array<string | number> = [
+      "website",
+      TRACKING_OWNER_USER_ID,
+      "M1",
+      0,
+    ];
+
+    if (params.clerkUserId && linkColumns.clerk_id) {
+      insertColumns.push("clerk_id");
+      insertValues.push(params.clerkUserId);
+    } else if (params.clerkUserId && linkColumns.user_id) {
+      insertColumns.push("user_id");
+      insertValues.push(params.clerkUserId);
+    }
+
+    if (linkColumns.anonymous_id) {
+      insertColumns.push("anonymous_id");
+      insertValues.push(params.anonymousId);
+    }
+
+    if (
+      !warnedMissingLeadLinkColumns &&
+      !linkColumns.anonymous_id &&
+      !linkColumns.clerk_id &&
+      !linkColumns.user_id
+    ) {
+      warnedMissingLeadLinkColumns = true;
+      console.warn(
+        "[track] marketing_leads is missing anonymous_id/clerk_id/user_id columns. Consider a migration that adds anonymous_id and/or clerk_id for deterministic lead upserts.",
+        { request_id: params.requestId }
+      );
+    }
+
+    const placeholders = insertColumns.map((_, index) => `$${index + 1}`).join(", ");
+
+    const createdLead = await activePool.query(
       `
-        UPDATE marketing_leads
-        SET owner_user_id = $2,
-            updated_at = now()
-        WHERE id = $1
+        INSERT INTO marketing_leads (
+          ${insertColumns.join(", ")}
+        ) VALUES (
+          ${placeholders}
+        )
+        RETURNING id
       `,
-      [existingLeadId, TRACKING_OWNER_USER_ID]
+      insertValues
     );
-    return existingLeadId;
+
+    const leadId = createdLead.rows[0]?.id;
+    if (!leadId) {
+      throw new Error("Failed to create marketing lead");
+    }
+
+    return leadId;
+  } catch (err) {
+    console.error("[track] Failed to upsert marketing_lead", {
+      request_id: params.requestId,
+      error: err instanceof Error ? err.message : String(err),
+      code: err && typeof err === "object" && "code" in err ? (err as any).code : undefined,
+      column:
+        err && typeof err === "object" && "column" in err
+          ? (err as any).column
+          : undefined,
+      detail:
+        err && typeof err === "object" && "detail" in err
+          ? (err as any).detail
+          : undefined,
+      hint: err && typeof err === "object" && "hint" in err ? (err as any).hint : undefined,
+    });
+    throw err;
   }
-
-  const insertColumns = [
-    "source_type",
-    "owner_user_id",
-    "marketing_stage",
-    "intent_score",
-  ];
-  const insertValues: Array<string | number> = [
-    "website",
-    TRACKING_OWNER_USER_ID,
-    "M1",
-    0,
-  ];
-
-  if (params.clerkUserId && linkColumns.clerk_id) {
-    insertColumns.push("clerk_id");
-    insertValues.push(params.clerkUserId);
-  } else if (params.clerkUserId && linkColumns.user_id) {
-    insertColumns.push("user_id");
-    insertValues.push(params.clerkUserId);
-  }
-
-  if (linkColumns.anonymous_id) {
-    insertColumns.push("anonymous_id");
-    insertValues.push(params.anonymousId);
-  }
-
-  if (
-    !warnedMissingLeadLinkColumns &&
-    !linkColumns.anonymous_id &&
-    !linkColumns.clerk_id &&
-    !linkColumns.user_id
-  ) {
-    warnedMissingLeadLinkColumns = true;
-    console.warn(
-      "[track] marketing_leads is missing anonymous_id/clerk_id/user_id columns. Consider a migration that adds anonymous_id and/or clerk_id for deterministic lead upserts.",
-      { request_id: params.requestId }
-    );
-  }
-
-  const placeholders = insertColumns.map((_, index) => `$${index + 1}`).join(", ");
-
-  const createdLead = await activePool.query(
-    `
-      INSERT INTO marketing_leads (
-        ${insertColumns.join(", ")}
-      ) VALUES (
-        ${placeholders}
-      )
-      RETURNING id
-    `,
-    insertValues
-  );
-
-  const leadId = createdLead.rows[0]?.id;
-  if (!leadId) {
-    throw new Error("Failed to create marketing lead");
-  }
-
-  return leadId;
 }
 
 async function scoreAndUpdateSubject(
