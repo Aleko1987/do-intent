@@ -113,6 +113,21 @@ async function ensureTrackingTables(activePool: Pool | null): Promise<void> {
           ON events (anonymous_id, occurred_at DESC);
         `)
       )
+      .then(() =>
+        activePool.query(`
+          ALTER TABLE marketing_leads
+            ADD COLUMN IF NOT EXISTS anonymous_id TEXT,
+            ADD COLUMN IF NOT EXISTS clerk_id TEXT;
+
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_marketing_leads_anonymous_id
+            ON marketing_leads(anonymous_id)
+            WHERE anonymous_id IS NOT NULL;
+
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_marketing_leads_clerk_id
+            ON marketing_leads(clerk_id)
+            WHERE clerk_id IS NOT NULL;
+        `)
+      )
       .then(() => undefined);
   }
 
