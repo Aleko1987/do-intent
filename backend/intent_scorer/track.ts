@@ -113,25 +113,50 @@ async function ensureTrackingTables(activePool: Pool | null): Promise<void> {
           ON events (anonymous_id, occurred_at DESC);
         `)
       )
-      .then(() =>
-        activePool.query(`
-          ALTER TABLE marketing_leads
-            ADD COLUMN IF NOT EXISTS anonymous_id TEXT,
-            ADD COLUMN IF NOT EXISTS clerk_id TEXT;
-
-          CREATE UNIQUE INDEX IF NOT EXISTS idx_marketing_leads_anonymous_id
-            ON marketing_leads(anonymous_id)
-            WHERE anonymous_id IS NOT NULL;
-
-          CREATE UNIQUE INDEX IF NOT EXISTS idx_marketing_leads_clerk_id
-            ON marketing_leads(clerk_id)
-            WHERE clerk_id IS NOT NULL;
-        `)
-      )
+      .then(() => ensureMarketingLeadColumns(activePool))
       .then(() => undefined);
   }
 
   await bootstrapPromise;
+}
+
+async function ensureMarketingLeadColumns(activePool: Pool): Promise<void> {
+  try {
+    const checkCol = await activePool.query(`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'marketing_leads'
+        AND column_name = 'anonymous_id'
+    `);
+
+    if (checkCol.rowCount === 0) {
+      console.info("[DB Patch] Adding anonymous_id and clerk_id to marketing_leads...");
+      await activePool.query(`
+        ALTER TABLE marketing_leads
+        ADD COLUMN IF NOT EXISTS anonymous_id TEXT,
+        ADD COLUMN IF NOT EXISTS clerk_id TEXT
+      `);
+      console.info("[DB Patch] Columns added successfully.");
+    }
+
+    await activePool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_marketing_leads_anonymous_id
+      ON marketing_leads(anonymous_id)
+      WHERE anonymous_id IS NOT NULL
+    `);
+
+    await activePool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_marketing_leads_clerk_id
+      ON marketing_leads(clerk_id)
+      WHERE clerk_id IS NOT NULL
+    `);
+  } catch (err) {
+    console.error(
+      "[DB Patch] Failed to patch marketing_leads schema (non-fatal):",
+      err
+    );
+  }
 }
 
 function requireNonEmptyString(value: unknown, field: string): string {
