@@ -38,6 +38,8 @@ let config: TrackerConfig = {
   useCookies: false,
 };
 
+const DEFAULT_API_BASE_URL = 'https://do-intent.onrender.com';
+
 // Tracked flags (fire-once per page)
 let scrollDepthTracked = false;
 let timeOnPageTracked = false;
@@ -112,11 +114,11 @@ function getApiBaseUrl(): string {
     return envBase;
   }
 
-  if (typeof window !== 'undefined' && window.location?.origin) {
+  if (typeof window !== 'undefined' && window.location?.origin?.includes('localhost')) {
     return window.location.origin;
   }
 
-  return '';
+  return DEFAULT_API_BASE_URL;
 }
 
 function buildEncoreEndpoint(path: string): string {
