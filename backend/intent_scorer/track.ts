@@ -801,8 +801,13 @@ async function serveTrack(req: IncomingMessage, res: ServerResponse): Promise<vo
   }
 }
 
+// Frontend sends POST requests to this route.
 export const track = api.raw(
-  { expose: true, method: "POST", path: "/track" },
+  {
+    expose: true,
+    method: "POST",
+    path: "/track",
+  },
   serveTrack
 );
 
