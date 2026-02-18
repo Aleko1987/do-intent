@@ -832,3 +832,17 @@ export const trackV1Options = api.raw(
     res.end();
   }
 );
+
+// Explicit alias for clients that call service-scoped paths directly.
+export const trackServiceScoped = api.raw(
+  { expose: true, method: "POST", path: "/intent_scorer/track" },
+  serveTrack
+);
+
+export const trackServiceScopedOptions = api.raw(
+  { expose: true, method: "OPTIONS", path: "/intent_scorer/track" },
+  async (req: IncomingMessage, res: ServerResponse) => {
+    res.statusCode = 204;
+    res.end();
+  }
+);
