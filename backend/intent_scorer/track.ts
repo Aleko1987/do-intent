@@ -40,6 +40,12 @@ interface InfoResponse {
   message: string;
 }
 
+interface FixDbResponse {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
 let pool: Pool | null = null;
 let warnedNoDatabase = false;
 let warnedMissingLeadLinkColumns = false;
@@ -1036,5 +1042,37 @@ export const trackServiceScopedOptions = api.raw(
   async (req: IncomingMessage, res: ServerResponse) => {
     res.statusCode = 204;
     res.end();
+  }
+);
+
+export const fixDb = api<EmptyRequest, FixDbResponse>(
+  { method: "GET", path: "/intent_scorer/fix-db", expose: true },
+  async () => {
+    try {
+      const activePool = getPool();
+      if (!activePool) {
+        return {
+          success: false,
+          error: "Database unavailable",
+        };
+      }
+
+      await activePool.query(`
+        ALTER TABLE marketing_leads
+        ADD COLUMN IF NOT EXISTS anonymous_id TEXT,
+        ADD COLUMN IF NOT EXISTS clerk_id TEXT
+      `);
+
+      return {
+        success: true,
+        message: "Columns added",
+      };
+    } catch (err) {
+      console.error("[fix-db] Failed", err);
+      return {
+        success: false,
+        error: String(err),
+      };
+    }
   }
 );
