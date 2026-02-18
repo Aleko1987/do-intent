@@ -334,6 +334,7 @@ function halfLifeSecondsForEventClass(eventClass: EventClass): number {
 }
 
 const SUBJECT_SCORE_CAP = 60;
+const TRACKING_OWNER_USER_ID = "user_39kcwJnyCHbVS0fuYG6a5fJsD2O";
 
 async function upsertAnonymousSubjectScore(
   anonymousId: string,
@@ -568,6 +569,15 @@ async function upsertLead(
   }
 
   if (existingLeadId) {
+    await activePool.query(
+      `
+        UPDATE marketing_leads
+        SET owner_user_id = $2,
+            updated_at = now()
+        WHERE id = $1
+      `,
+      [existingLeadId, TRACKING_OWNER_USER_ID]
+    );
     return existingLeadId;
   }
 
@@ -577,7 +587,12 @@ async function upsertLead(
     "marketing_stage",
     "intent_score",
   ];
-  const insertValues: Array<string | number> = ["website", "system", "M1", 0];
+  const insertValues: Array<string | number> = [
+    "website",
+    TRACKING_OWNER_USER_ID,
+    "M1",
+    0,
+  ];
 
   if (params.clerkUserId && linkColumns.clerk_id) {
     insertColumns.push("clerk_id");
