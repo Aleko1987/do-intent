@@ -977,15 +977,23 @@ export const fixDb = api<EmptyRequest, FixDbResponse>(
         };
       }
 
+      // 1. Add columns
       await activePool.query(`
         ALTER TABLE marketing_leads
         ADD COLUMN IF NOT EXISTS anonymous_id TEXT,
         ADD COLUMN IF NOT EXISTS clerk_id TEXT
       `);
 
+      // 2. Add unique index (Critical for ON CONFLICT)
+      await activePool.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_marketing_leads_anonymous_id
+        ON marketing_leads(anonymous_id)
+        WHERE anonymous_id IS NOT NULL
+      `);
+
       return {
         success: true,
-        message: "Columns added",
+        message: "Schema patched and index added",
       };
     } catch (err) {
       console.error("[fix-db] Failed", err);
