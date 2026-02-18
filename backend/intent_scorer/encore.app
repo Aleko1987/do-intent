@@ -1,4 +1,4 @@
 {
-  "id": "intent_scorer",
-  "expose": true
+  "expose": true,
+  "id": "intent_scorer"
 }
