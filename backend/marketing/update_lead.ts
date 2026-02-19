@@ -1,4 +1,4 @@
-import { api } from "encore.dev/api";
+import { api, APIError } from "encore.dev/api";
 import { getAuthData } from "~encore/auth";
 import { db } from "../db/db";
 import type { MarketingLead } from "./types";
@@ -10,16 +10,28 @@ interface UpdateLeadRequest {
   email?: string;
   phone?: string;
   marketing_stage?: string;
+  stage_id?: string;
+  status?: string;
   auto_push_enabled?: boolean;
+}
+
+const VALID_MARKETING_STAGES = new Set(["M1", "M2", "M3", "M4", "M5"]);
+
+function normalizeMarketingStage(req: UpdateLeadRequest): string | undefined {
+  return req.marketing_stage ?? req.stage_id ?? req.status;
 }
 
 // Updates a marketing lead.
 export const update = api<UpdateLeadRequest, MarketingLead>(
   { expose: true, method: "PATCH", path: "/marketing/leads/:id", auth: true },
   async (req) => {
-    const authData = getAuthData()!;
+    const authData = getAuthData();
+    if (!authData?.userID) {
+      throw APIError.unauthenticated("missing auth context");
+    }
+
     const updates: string[] = [];
-    const params: any[] = [req.id];
+    const params: unknown[] = [req.id];
     let paramIndex = 2;
 
     if (req.company_name !== undefined) {
@@ -46,9 +58,16 @@ export const update = api<UpdateLeadRequest, MarketingLead>(
       paramIndex++;
     }
 
-    if (req.marketing_stage !== undefined) {
+    const requestedStage = normalizeMarketingStage(req);
+    if (requestedStage !== undefined) {
+      if (!VALID_MARKETING_STAGES.has(requestedStage)) {
+        throw APIError.invalidArgument(
+          "marketing_stage must be one of: M1, M2, M3, M4, M5"
+        );
+      }
+
       updates.push(`marketing_stage = $${paramIndex}`);
-      params.push(req.marketing_stage);
+      params.push(requestedStage);
       paramIndex++;
     }
 
@@ -56,6 +75,12 @@ export const update = api<UpdateLeadRequest, MarketingLead>(
       updates.push(`auto_push_enabled = $${paramIndex}`);
       params.push(req.auto_push_enabled);
       paramIndex++;
+    }
+
+    if (updates.length === 0) {
+      throw APIError.invalidArgument(
+        "no updatable fields provided in request body"
+      );
     }
 
     updates.push("updated_at = now()");
@@ -68,10 +93,20 @@ export const update = api<UpdateLeadRequest, MarketingLead>(
       RETURNING *
     `;
 
-    const lead = await db.rawQueryRow<MarketingLead>(query, ...params);
+    let lead: MarketingLead | null;
+    try {
+      lead = await db.rawQueryRow<MarketingLead>(query, ...params);
+    } catch (error) {
+      console.error("Failed to update marketing lead", {
+        leadId: req.id,
+        userId: authData.userID,
+        error,
+      });
+      throw APIError.internal("failed to update lead");
+    }
 
     if (!lead) {
-      throw new Error("Lead not found");
+      throw APIError.notFound("lead not found");
     }
 
     return lead;
