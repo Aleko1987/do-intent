@@ -2,8 +2,20 @@ import { api, APIError } from "encore.dev/api";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { db } from "../db/db";
 import { resolveIngestApiKey } from "../internal/env_secrets";
-import { parseJsonBody } from "../internal/cors";
+import {
+  applyCorsHeadersWithOptions,
+  parseJsonBody,
+} from "../internal/cors";
 import type { MarketingLead } from "./types";
+
+const WEBSITE_ALLOWED_ORIGINS = ["https://earthcurebiodiesel.com"] as const;
+
+function applyWebsiteCors(req: IncomingMessage, res: ServerResponse): void {
+  applyCorsHeadersWithOptions(req, res, {
+    allowedOrigins: WEBSITE_ALLOWED_ORIGINS,
+    allowAnyOriginFallback: false,
+  });
+}
 
 function getAllowedOrigins(): string[] {
   const origins = process.env.ALLOWED_INGEST_ORIGINS;
@@ -174,6 +186,7 @@ function getHeaderValue(req: IncomingMessage, name: string): string | undefined 
 }
 
 async function serveIdentify(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  applyWebsiteCors(req, res);
   try {
     const payload = await parseJsonBody<IdentifyPayload>(req);
     const request: IdentifyRequest = {
@@ -208,3 +221,11 @@ export const identify = api.raw(
   serveIdentify
 );
 
+export const identifyOptions = api.raw(
+  { expose: true, method: "OPTIONS", path: "/marketing/identify" },
+  async (req: IncomingMessage, res: ServerResponse) => {
+    applyWebsiteCors(req, res);
+    res.statusCode = 204;
+    res.end();
+  }
+);

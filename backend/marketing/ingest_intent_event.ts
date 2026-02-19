@@ -9,11 +9,23 @@ import { v4 as uuidv4 } from "uuid";
 import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
 import { resolveIngestApiKey } from "../internal/env_secrets";
-import { parseJsonBody } from "../internal/cors";
+import {
+  applyCorsHeadersWithOptions,
+  parseJsonBody,
+} from "../internal/cors";
 import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
 import { updateLeadScoring } from "./scoring";
 import { checkAndPushToSales } from "./auto_push";
+
+const WEBSITE_ALLOWED_ORIGINS = ["https://earthcurebiodiesel.com"] as const;
+
+function applyWebsiteCors(req: IncomingMessage, res: ServerResponse): void {
+  applyCorsHeadersWithOptions(req, res, {
+    allowedOrigins: WEBSITE_ALLOWED_ORIGINS,
+    allowAnyOriginFallback: false,
+  });
+}
 
 // Parse allowed origins from environment
 function getAllowedOrigins(): string[] {
@@ -656,6 +668,7 @@ function getHeaderValue(req: IncomingMessage, name: string): string | undefined 
 }
 
 async function serveIngestIntent(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  applyWebsiteCors(req, res);
   try {
     const payload = await parseJsonBody<IngestIntentEventPayload>(req);
     const request: IngestIntentEventRequest = {
@@ -698,3 +711,21 @@ export const ingestIntentEventV1 = api.raw(
 );
 
 
+
+export const ingestIntentEventOptions = api.raw(
+  { expose: true, method: "OPTIONS", path: "/marketing/ingest-intent-event" },
+  async (req: IncomingMessage, res: ServerResponse) => {
+    applyWebsiteCors(req, res);
+    res.statusCode = 204;
+    res.end();
+  }
+);
+
+export const ingestIntentEventV1Options = api.raw(
+  { expose: true, method: "OPTIONS", path: "/api/v1/ingest" },
+  async (req: IncomingMessage, res: ServerResponse) => {
+    applyWebsiteCors(req, res);
+    res.statusCode = 204;
+    res.end();
+  }
+);
