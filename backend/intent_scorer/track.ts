@@ -44,6 +44,13 @@ interface FixDbResponse {
   success: boolean;
   message?: string;
   error?: string;
+  leads_found?: number;
+  leads?: Array<{
+    id: string;
+    anonymous_id: string | null;
+    owner_user_id: string | null;
+    created_at: string;
+  }>;
 }
 
 let pool: Pool | null = null;
@@ -969,31 +976,41 @@ export const fixDb = api<EmptyRequest, FixDbResponse>(
   { method: "GET", path: "/intent_scorer/fix-db", expose: true },
   async () => {
     try {
-      const activePool = getPool();
-      if (!activePool) {
+      const pool = getPool();
+      if (!pool) {
         return {
           success: false,
           error: "Database unavailable",
         };
       }
 
-      // 1. Add columns
-      await activePool.query(`
+      // 1. Ensure columns exist (safe to run again)
+      await pool.query(`
         ALTER TABLE marketing_leads
         ADD COLUMN IF NOT EXISTS anonymous_id TEXT,
         ADD COLUMN IF NOT EXISTS clerk_id TEXT
       `);
 
-      // 2. Add unique index (Critical for ON CONFLICT)
-      await activePool.query(`
+      // 2. Ensure index exists
+      await pool.query(`
         CREATE UNIQUE INDEX IF NOT EXISTS idx_marketing_leads_anonymous_id
         ON marketing_leads(anonymous_id)
         WHERE anonymous_id IS NOT NULL
       `);
 
+      // 3. DEBUG: Fetch all leads to see if they exist
+      const result = await pool.query(`
+        SELECT id, anonymous_id, owner_user_id, created_at
+        FROM marketing_leads
+        ORDER BY created_at DESC
+        LIMIT 5
+      `);
+
       return {
         success: true,
-        message: "Schema patched and index added",
+        message: "Schema patched",
+        leads_found: result.rows.length,
+        leads: result.rows,
       };
     } catch (err) {
       console.error("[fix-db] Failed", err);
