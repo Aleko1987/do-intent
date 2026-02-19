@@ -68,7 +68,19 @@ export default function MarketingPipeline() {
     if (!over || active.id === over.id) return;
 
     const leadId = active.id as string;
-    const newStage = over.id as string;
+    const dropTargetId = over.id as string;
+    const newStage = STAGES.some((stage) => stage.id === dropTargetId)
+      ? dropTargetId
+      : leads.find((lead) => lead.id === dropTargetId)?.marketing_stage;
+
+    if (!newStage) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Unable to determine target stage",
+      });
+      return;
+    }
 
     try {
       await backend.marketing.update({ id: leadId, marketing_stage: newStage });
