@@ -11,8 +11,18 @@ import { autoScoreEvent } from "./auto_score";
 import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
 import {
+  applyCorsHeadersWithOptions,
   parseJsonBody,
 } from "../internal/cors";
+
+const WEBSITE_ALLOWED_ORIGINS = ["https://earthcurebiodiesel.com"] as const;
+
+function applyWebsiteCors(req: IncomingMessage, res: ServerResponse): void {
+  applyCorsHeadersWithOptions(req, res, {
+    allowedOrigins: WEBSITE_ALLOWED_ORIGINS,
+    allowAnyOriginFallback: false,
+  });
+}
 
 interface TrackRequest {
   event?: string;
@@ -901,6 +911,7 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
 }
 
 async function serveTrack(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  applyWebsiteCors(req, res);
   try {
     const payload = await parseJsonBody<TrackRequest>(req);
     const response = await handleTrack(payload);
@@ -934,6 +945,7 @@ export const track = api.raw(
 export const trackOptions = api.raw(
   { expose: true, method: "OPTIONS", path: "/track" },
   async (req: IncomingMessage, res: ServerResponse) => {
+    applyWebsiteCors(req, res);
     res.statusCode = 204;
     res.end();
   }
@@ -953,6 +965,7 @@ export const trackV1 = api.raw(
 export const trackV1Options = api.raw(
   { expose: true, method: "OPTIONS", path: "/api/v1/track" },
   async (req: IncomingMessage, res: ServerResponse) => {
+    applyWebsiteCors(req, res);
     res.statusCode = 204;
     res.end();
   }
@@ -967,6 +980,7 @@ export const trackServiceScoped = api.raw(
 export const trackServiceScopedOptions = api.raw(
   { expose: true, method: "OPTIONS", path: "/intent_scorer/track" },
   async (req: IncomingMessage, res: ServerResponse) => {
+    applyWebsiteCors(req, res);
     res.statusCode = 204;
     res.end();
   }
