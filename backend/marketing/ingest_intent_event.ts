@@ -150,7 +150,8 @@ function constantTimeEquals(a: string, b: string): boolean {
 function checkApiKey(
   ingestHeaderValue: string | undefined,
   doIntentHeaderValue: string | undefined,
-  expectedKey: string
+  expectedKey: string,
+  acceptedHeaders: Array<"x-ingest-api-key" | "x-do-intent-key"> = ["x-ingest-api-key", "x-do-intent-key"]
 ): {
   ok: true;
   source: "x-ingest-api-key" | "x-do-intent-key";
@@ -163,8 +164,19 @@ function checkApiKey(
 } {
   const ingestHeaderKey = (ingestHeaderValue ?? "").trim();
   const doIntentHeaderKey = (doIntentHeaderValue ?? "").trim();
-  const headerKey = ingestHeaderKey || doIntentHeaderKey;
-  const source = ingestHeaderKey ? "x-ingest-api-key" : "x-do-intent-key";
+  const orderedCandidates: Array<{ key: string; source: "x-ingest-api-key" | "x-do-intent-key" }> = [];
+
+  for (const headerName of acceptedHeaders) {
+    if (headerName === "x-ingest-api-key") {
+      orderedCandidates.push({ key: ingestHeaderKey, source: "x-ingest-api-key" });
+    } else {
+      orderedCandidates.push({ key: doIntentHeaderKey, source: "x-do-intent-key" });
+    }
+  }
+
+  const firstProvidedHeader = orderedCandidates.find((candidate) => candidate.key.length > 0);
+  const headerKey = firstProvidedHeader?.key ?? "";
+  const source = firstProvidedHeader?.source ?? acceptedHeaders[0] ?? "x-do-intent-key";
   const headerReceived = headerKey.length > 0;
 
   if (!headerReceived) {
@@ -172,7 +184,7 @@ function checkApiKey(
       ok: false,
       message: "Invalid or missing API key",
       headerReceived,
-      details: { headers: "x-ingest-api-key,x-do-intent-key" },
+      details: { headers: acceptedHeaders.join(",") },
     };
   }
 
@@ -455,7 +467,8 @@ function validatePayload(
 }
 
 async function handleIngestIntentEvent(
-  req: IngestIntentEventRequest
+  req: IngestIntentEventRequest,
+  acceptedHeaders: Array<"x-ingest-api-key" | "x-do-intent-key"> = ["x-ingest-api-key", "x-do-intent-key"]
 ): Promise<IngestIntentEventResponse> {
   const request_id = getRequestId(req["x-request-id"]);
   try {
@@ -481,7 +494,12 @@ async function handleIngestIntentEvent(
 
     let authenticatedWithApiKey = false;
     if (ingestKey) {
-      const authCheck = checkApiKey(req["x-ingest-api-key"], req["x-do-intent-key"], ingestKey);
+      const authCheck = checkApiKey(
+        req["x-ingest-api-key"],
+        req["x-do-intent-key"],
+        ingestKey,
+        acceptedHeaders
+      );
       if (!authCheck.ok) {
         console.info("[ingest] unauthorized", {
           request_id,
@@ -667,7 +685,11 @@ function getHeaderValue(req: IncomingMessage, name: string): string | undefined 
   return undefined;
 }
 
-async function serveIngestIntent(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function serveIngestIntent(
+  req: IncomingMessage,
+  res: ServerResponse,
+  acceptedHeaders: Array<"x-ingest-api-key" | "x-do-intent-key"> = ["x-ingest-api-key", "x-do-intent-key"]
+): Promise<void> {
   applyWebsiteCors(req, res);
   try {
     const payload = await parseJsonBody<IngestIntentEventPayload>(req);
@@ -680,7 +702,7 @@ async function serveIngestIntent(req: IncomingMessage, res: ServerResponse): Pro
       "x-request-id": getHeaderValue(req, "x-request-id") as Header<"x-request-id"> | undefined,
     };
 
-    const response = await handleIngestIntentEvent(request);
+    const response = await handleIngestIntentEvent(request, acceptedHeaders);
     res.statusCode = 200;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.end(JSON.stringify(response));
@@ -700,14 +722,22 @@ async function serveIngestIntent(req: IncomingMessage, res: ServerResponse): Pro
   }
 }
 
+export async function serveMarketingIngestIntent(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  return serveIngestIntent(req, res, ["x-do-intent-key"]);
+}
+
+export async function serveIngestIntentV1(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  return serveIngestIntent(req, res, ["x-ingest-api-key", "x-do-intent-key"]);
+}
+
 export const ingestIntentEvent = api.raw(
   { expose: true, method: "POST", path: "/marketing/ingest-intent-event" },
-  serveIngestIntent
+  serveMarketingIngestIntent
 );
 
 export const ingestIntentEventV1 = api.raw(
   { expose: true, method: "POST", path: "/api/v1/ingest" },
-  serveIngestIntent
+  serveIngestIntentV1
 );
 
 
