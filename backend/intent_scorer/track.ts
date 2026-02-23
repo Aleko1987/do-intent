@@ -33,16 +33,25 @@ interface TrackRequest {
   referrer?: string;
   timestamp?: string;
   value?: number;
-  metadata?: string;
+  metadata?: unknown;
 }
 
-interface TrackResponse {
+interface TrackSuccessResponse {
   ok: true;
-  stored?: boolean;
-  reason?: "db_disabled" | "db_error";
-  error_code?: string;
-  error_message?: string;
+}
+
+interface TrackErrorResponse {
+  ok: false;
+  code: "internal";
+  message: string;
+  corr: string;
+}
+
+interface HandleTrackResult {
+  ok: boolean;
   request_id: string;
+  code?: string;
+  message?: string;
 }
 
 interface InfoResponse {
@@ -445,18 +454,39 @@ function parseMetadata(raw: unknown): JsonObject {
   if (raw === undefined || raw === null || raw === "") {
     return {};
   }
-  if (typeof raw !== "string") {
-    throw APIError.invalidArgument("metadata must be a JSON string");
-  }
-  try {
-    const parsed = JSON.parse(raw) as JsonObject;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw) as JsonObject;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return { raw_metadata: raw };
     }
-  } catch {
-    // fall through
+    return { raw_metadata: raw };
   }
-  throw APIError.invalidArgument("metadata must be a JSON object string");
+  if (typeof raw === "object" && !Array.isArray(raw)) {
+    return { ...(raw as JsonObject) };
+  }
+  return { raw_metadata: String(raw) };
+}
+
+const DB_CALL_TIMEOUT_MS = 2500;
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("db_timeout")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 async function insertIntentEvent(
@@ -595,7 +625,7 @@ async function scoreAndUpdateSubject(
   }
 }
 
-async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
+async function handleTrack(payload: TrackRequest): Promise<HandleTrackResult> {
   // Generate request_id for correlation
   const request_id = randomUUID();
 
@@ -603,8 +633,6 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
     console.info("[track] DB disabled via ENABLE_DB flag.", { request_id });
     return {
       ok: true,
-      stored: false,
-      reason: "db_disabled",
       request_id,
     };
   }
@@ -678,27 +706,27 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
         error_code: errorCode,
       });
       return {
-        ok: true,
-        stored,
-        reason: "db_error",
-        error_code: errorCode,
-        error_message: errorMessage,
+        ok: false,
+        code: errorCode,
+        message: errorMessage,
         request_id,
       };
     }
 
     try {
-      await ensureTrackingTables(activePool);
+      await withTimeout(
+        (async () => {
+          await ensureTrackingTables(activePool);
 
-      const existingSession = await activePool.query(
-        `SELECT 1 FROM sessions WHERE session_id = $1`,
-        [sessionId]
-      );
-      const isNewSession = existingSession.rowCount === 0;
-      let isReturnVisit = false;
-      if (isNewSession) {
-        const recentSession = await activePool.query(
-          `
+          const existingSession = await activePool.query(
+            `SELECT 1 FROM sessions WHERE session_id = $1`,
+            [sessionId]
+          );
+          const isNewSession = existingSession.rowCount === 0;
+          let isReturnVisit = false;
+          if (isNewSession) {
+            const recentSession = await activePool.query(
+              `
             SELECT 1
             FROM sessions
             WHERE anonymous_id = $1
@@ -706,13 +734,13 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
               AND last_seen_at >= now() - interval '30 days'
             LIMIT 1
           `,
-          [anonymousId, sessionId]
-        );
-        isReturnVisit = (recentSession.rowCount ?? 0) > 0;
-      }
+              [anonymousId, sessionId]
+            );
+            isReturnVisit = (recentSession.rowCount ?? 0) > 0;
+          }
 
-      await activePool.query(
-        `
+          await activePool.query(
+            `
           INSERT INTO sessions (
             session_id,
             anonymous_id,
@@ -722,10 +750,10 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
           SET anonymous_id = EXCLUDED.anonymous_id,
               last_seen_at = now()
         `,
-        [sessionId, anonymousId]
-      );
-      await activePool.query(
-        `
+            [sessionId, anonymousId]
+          );
+          await activePool.query(
+            `
           INSERT INTO events (
             event_type,
             session_id,
@@ -737,26 +765,26 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
             metadata
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         `,
-        [
-          event,
-          sessionId,
-          anonymousId,
-          url,
-          referrer,
-          occurredAt.toISOString(),
-          eventValue ?? null,
-          JSON.stringify(metadataPayload),
-        ]
-      );
+            [
+              event,
+              sessionId,
+              anonymousId,
+              url,
+              referrer,
+              occurredAt.toISOString(),
+              eventValue ?? null,
+              JSON.stringify(metadataPayload),
+            ]
+          );
 
-      const leadId = await upsertLead(activePool, {
-        anonymousId,
-        clerkUserId,
-        requestId: request_id,
-      });
+          const leadId = await upsertLead(activePool, {
+            anonymousId,
+            clerkUserId,
+            requestId: request_id,
+          });
 
-      if (shouldCreateIntentEvent(event, eventValue)) {
-        const intentEventId = await insertIntentEvent(activePool, {
+          if (shouldCreateIntentEvent(event, eventValue)) {
+            const intentEventId = await insertIntentEvent(activePool, {
           leadId,
           eventType: event,
           eventSource: "website",
@@ -766,20 +794,20 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
           metadata: metadataPayload,
           dedupeKey: eventId ?? null,
         });
-        if (intentEventId) {
-          await scoreAndUpdateSubject(
+            if (intentEventId) {
+              await scoreAndUpdateSubject(
             intentEventId,
             anonymousId,
             occurredAt.toISOString(),
             event,
             url,
             metadataPayload
-          );
-        }
-      }
+              );
+            }
+          }
 
-      if (shouldDerivePricingView(event, url)) {
-        const pricingEventId = await insertIntentEvent(activePool, {
+          if (shouldDerivePricingView(event, url)) {
+            const pricingEventId = await insertIntentEvent(activePool, {
           leadId,
           eventType: "pricing_view",
           eventSource: "website",
@@ -791,8 +819,8 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
             derived: true,
           },
         });
-        if (pricingEventId) {
-          await scoreAndUpdateSubject(
+            if (pricingEventId) {
+              await scoreAndUpdateSubject(
             pricingEventId,
             anonymousId,
             occurredAt.toISOString(),
@@ -802,13 +830,13 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
               ...metadataPayload,
               derived: true,
             }
-          );
-        }
-      }
+              );
+            }
+          }
 
-      if (isReturnVisit) {
-        const dedupeKey = `return_visit:${sessionId}`;
-        const existingReturnVisit = await activePool.query(
+          if (isReturnVisit) {
+            const dedupeKey = `return_visit:${sessionId}`;
+            const existingReturnVisit = await activePool.query(
           `
             SELECT 1
             FROM intent_events
@@ -817,8 +845,8 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
           `,
           [dedupeKey]
         );
-        if (existingReturnVisit.rowCount === 0) {
-          const returnVisitId = await insertIntentEvent(activePool, {
+            if (existingReturnVisit.rowCount === 0) {
+              const returnVisitId = await insertIntentEvent(activePool, {
             leadId,
             eventType: "return_visit",
             eventSource: "website",
@@ -831,8 +859,8 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
             },
             dedupeKey,
           });
-          if (returnVisitId) {
-            await scoreAndUpdateSubject(
+              if (returnVisitId) {
+                await scoreAndUpdateSubject(
               returnVisitId,
               anonymousId,
               occurredAt.toISOString(),
@@ -842,12 +870,16 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
                 ...metadataPayload,
                 derived: true,
               }
-            );
+                );
+              }
+            }
           }
-        }
-      }
 
-      stored = true;
+          stored = true;
+        })(),
+        DB_CALL_TIMEOUT_MS
+      );
+
     } catch (error) {
       // DB errors are non-fatal - log but don't fail the request
       bootstrapPromise = null;
@@ -863,20 +895,12 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
     }
 
     return {
-      ok: true,
-      stored,
-      reason: stored ? undefined : "db_error",
-      error_code: stored ? undefined : errorCode ?? "db_query_failed",
-      error_message: stored ? undefined : errorMessage ?? "Database query failed",
+      ok: stored,
+      code: stored ? undefined : errorCode ?? "db_query_failed",
+      message: stored ? undefined : errorMessage ?? "Database query failed",
       request_id,
     };
   } catch (error) {
-    // Handle validation errors (400)
-    if (error instanceof APIError && error.code === "invalid_argument") {
-      throw error;
-    }
-
-    // Handle internal errors (500)
     const fallbackError = error instanceof Error ? error : new Error(String(error));
     const pgError = error && typeof error === "object" && "code" in error ? {
       code: (error as any).code,
@@ -901,10 +925,9 @@ async function handleTrack(payload: TrackRequest): Promise<TrackResponse> {
     });
 
     return {
-      ok: true,
-      stored: false,
-      reason: "db_error",
-      error_message: fallbackError.message,
+      ok: false,
+      code: "internal",
+      message: fallbackError.message,
       request_id,
     };
   }
@@ -915,20 +938,34 @@ async function serveTrack(req: IncomingMessage, res: ServerResponse): Promise<vo
   try {
     const payload = await parseJsonBody<TrackRequest>(req);
     const response = await handleTrack(payload);
-    res.statusCode = 200;
+    res.statusCode = response.ok ? 200 : 500;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(JSON.stringify(response));
-  } catch (error) {
-    if (error instanceof APIError && error.code === "invalid_argument") {
-      res.statusCode = 400;
-      res.setHeader("Content-Type", "application/json; charset=utf-8");
-      res.end(JSON.stringify({ code: error.code, message: error.message }));
+    if (response.ok) {
+      const successResponse: TrackSuccessResponse = { ok: true };
+      res.end(JSON.stringify(successResponse));
       return;
     }
 
+    const errorResponse: TrackErrorResponse = {
+      ok: false,
+      code: "internal",
+      message: response.message ?? "Internal Server Error",
+      corr: response.request_id,
+    };
+    res.end(JSON.stringify(errorResponse));
+  } catch (error) {
+    const corr = randomUUID();
+    const message =
+      error instanceof APIError && error.code === "invalid_argument"
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : "Internal Server Error";
     res.statusCode = 500;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(JSON.stringify({ code: "internal", message: "Internal Server Error" }));
+    res.end(
+      JSON.stringify({ ok: false, code: "internal", message, corr } satisfies TrackErrorResponse)
+    );
   }
 }
 
