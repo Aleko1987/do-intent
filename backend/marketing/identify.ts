@@ -44,6 +44,8 @@ interface IdentifyResponse {
   lead_created: boolean;
 }
 
+type AuthHeaderName = "x-do-intent-key" | "x-ingest-api-key" | "authorization";
+
 function hasValidApiKey(headerKey: string | undefined): boolean {
   const expectedKey = process.env.INGEST_API_KEY?.trim() || resolveIngestApiKey();
 
@@ -92,11 +94,24 @@ async function handleIdentify(req: IdentifyRequest): Promise<IdentifyResponse> {
     });
 
     const providedApiKey = req["x-do-intent-key"]?.trim();
+    const authHeaderNameUsed: AuthHeaderName = "x-do-intent-key";
     if (providedApiKey && hasValidApiKey(providedApiKey)) {
+      console.info("[identify] auth check", {
+        authHeaderNameUsed,
+        authPassed: true,
+      });
       // API-key traffic accepted.
     } else if (providedApiKey) {
+      console.info("[identify] auth check", {
+        authHeaderNameUsed,
+        authPassed: false,
+      });
       throw APIError.permissionDenied("invalid API key");
     } else {
+      console.info("[identify] auth check", {
+        authHeaderNameUsed,
+        authPassed: false,
+      });
       if (!req.origin && !req.referer) {
         throw APIError.permissionDenied("API key or origin/referer header required");
       }
@@ -195,7 +210,8 @@ async function serveIdentify(req: IncomingMessage, res: ServerResponse): Promise
   try {
     const payload = await parseJsonBody<IdentifyPayload>(req);
     const apiKeyHeader = getHeaderValue(req, "x-do-intent-key");
-    const authHeaderNameUsed = apiKeyHeader ? "x-do-intent-key" : undefined;
+    // Keep this explicit so auth logs always name the key header expected by this endpoint.
+    const authHeaderNameUsed: AuthHeaderName = "x-do-intent-key";
     console.info("[identify] start", {
       corr,
       method: req.method,

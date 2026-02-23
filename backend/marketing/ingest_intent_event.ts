@@ -83,6 +83,8 @@ interface IngestIntentEventResponse {
   request_id: string;
 }
 
+type AuthHeaderName = "x-do-intent-key" | "x-ingest-api-key" | "authorization";
+
 interface IngestIntentEventRequest extends IngestIntentEventPayload {
   "x-ingest-api-key"?: Header<"x-ingest-api-key">;
   "x-do-intent-key"?: Header<"x-do-intent-key">;
@@ -157,10 +159,12 @@ function checkApiKey(
   ok: true;
   source: "x-ingest-api-key" | "x-do-intent-key";
   headerReceived: boolean;
+  authHeaderNameUsed: AuthHeaderName;
 } | {
   ok: false;
   message: string;
   headerReceived: boolean;
+  authHeaderNameUsed: AuthHeaderName;
   details: Record<string, string>;
 } {
   const ingestHeaderKey = (ingestHeaderValue ?? "").trim();
@@ -179,12 +183,14 @@ function checkApiKey(
   const headerKey = firstProvidedHeader?.key ?? "";
   const source = firstProvidedHeader?.source ?? acceptedHeaders[0] ?? "x-do-intent-key";
   const headerReceived = headerKey.length > 0;
+  const authHeaderNameUsed: AuthHeaderName = source;
 
   if (!headerReceived) {
     return {
       ok: false,
       message: "Invalid or missing API key",
       headerReceived,
+      authHeaderNameUsed,
       details: { headers: acceptedHeaders.join(",") },
     };
   }
@@ -194,11 +200,12 @@ function checkApiKey(
       ok: false,
       message: "Invalid or missing API key",
       headerReceived,
+      authHeaderNameUsed,
       details: { header: source },
     };
   }
 
-  return { ok: true, source, headerReceived };
+  return { ok: true, source, headerReceived, authHeaderNameUsed };
 }
 
 // Checks origin allowlist
@@ -504,6 +511,11 @@ async function handleIngestIntentEvent(
       );
       if (authCheck.ok === false) {
         const checkedHeader = (authCheck.details.header ?? authCheck.details.headers ?? acceptedHeaders.join(",")) as string;
+        console.info("[ingest] auth check", {
+          corr: corr ?? request_id,
+          authHeaderNameUsed: authCheck.authHeaderNameUsed,
+          authPassed: false,
+        });
         console.info("[ingest] auth failed", {
           corr: corr ?? request_id,
           reason: authCheck.headerReceived ? "invalid key" : "missing key",
@@ -518,6 +530,11 @@ async function handleIngestIntentEvent(
 
       if (authCheck.source) {
         authenticatedWithApiKey = true;
+        console.info("[ingest] auth check", {
+          corr: corr ?? request_id,
+          authHeaderNameUsed: authCheck.authHeaderNameUsed,
+          authPassed: true,
+        });
         console.info(`[ingest] authenticated via ${authCheck.source} header`, {
           request_id,
         });
@@ -722,7 +739,8 @@ async function serveIngestIntent(
     const payload = await parseJsonBody<IngestIntentEventPayload>(req);
     const hasIngestKey = !!getHeaderValue(req, "x-ingest-api-key");
     const hasDoIntentKey = !!getHeaderValue(req, "x-do-intent-key");
-    const authHeaderNameUsed = hasIngestKey ? "x-ingest-api-key" : hasDoIntentKey ? "x-do-intent-key" : undefined;
+    // Log the specific auth header this endpoint prioritizes, even when missing.
+    const authHeaderNameUsed: AuthHeaderName = hasIngestKey ? "x-ingest-api-key" : hasDoIntentKey ? "x-do-intent-key" : acceptedHeaders[0] ?? "x-do-intent-key";
 
     console.info("[ingest] start", {
       corr,
@@ -760,10 +778,13 @@ async function serveIngestIntent(
         error.code === "permission_denied" || error.code === "unauthenticated" ? 401 : 500;
       if (status === 401) {
         const checkedHeader = acceptedHeaders.join(",");
+        const authHeaderNameUsed: AuthHeaderName = acceptedHeaders[0] ?? "x-do-intent-key";
         console.info("[ingest] auth failed", {
           corr,
           reason: error.message.toLowerCase().includes("invalid") ? "invalid key" : "missing key",
           headerChecked: checkedHeader,
+          authHeaderNameUsed,
+          authPassed: false,
         });
       }
       res.statusCode = status;
