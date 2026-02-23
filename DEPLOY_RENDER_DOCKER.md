@@ -119,6 +119,32 @@ The workflow builds the frontend assets (`backend/frontend/dist`) before creatin
 image. If SPA routes return 500s, confirm the GitHub Actions workflow ran and completed
 the `Build frontend assets for SPA` step.
 
+
+## Running Database Migrations
+
+This repository includes SQL migrations under `backend/db/migrations` and a runner script (`npm --prefix backend run migrate`).
+
+### Local
+
+```bash
+cd backend
+npm run migrate
+```
+
+### Render Production
+
+Run migrations as a one-off shell command against the same environment variables used by the web service:
+
+```bash
+cd /opt/render/project/src
+npm --prefix backend run migrate
+```
+
+Recommended flow for deploys:
+1. Deploy new image.
+2. Run `npm --prefix backend run migrate` in Render Shell (or a Render job using the same image/env).
+3. Verify logs show `Applied migration` (or `Skipping already applied`) and no errors.
+
 ## Troubleshooting
 
 ### Image Not Found
