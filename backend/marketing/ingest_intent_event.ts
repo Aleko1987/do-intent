@@ -13,6 +13,7 @@ import {
   applyCorsHeadersWithOptions,
   parseJsonBody,
 } from "../internal/cors";
+import { applyCorrelationId } from "../internal/correlation";
 import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
 import { updateLeadScoring } from "./scoring";
@@ -468,7 +469,8 @@ function validatePayload(
 
 async function handleIngestIntentEvent(
   req: IngestIntentEventRequest,
-  acceptedHeaders: Array<"x-ingest-api-key" | "x-do-intent-key"> = ["x-ingest-api-key", "x-do-intent-key"]
+  acceptedHeaders: Array<"x-ingest-api-key" | "x-do-intent-key"> = ["x-ingest-api-key", "x-do-intent-key"],
+  corr?: string
 ): Promise<IngestIntentEventResponse> {
   const request_id = getRequestId(req["x-request-id"]);
   try {
@@ -500,7 +502,13 @@ async function handleIngestIntentEvent(
         ingestKey,
         acceptedHeaders
       );
-      if (!authCheck.ok) {
+      if (authCheck.ok === false) {
+        const checkedHeader = (authCheck.details.header ?? authCheck.details.headers ?? acceptedHeaders.join(",")) as string;
+        console.info("[ingest] auth failed", {
+          corr: corr ?? request_id,
+          reason: authCheck.headerReceived ? "invalid key" : "missing key",
+          headerChecked: checkedHeader,
+        });
         console.info("[ingest] unauthorized", {
           request_id,
           db_write_attempted: false,
@@ -518,7 +526,7 @@ async function handleIngestIntentEvent(
 
     if (!authenticatedWithApiKey) {
       const originCheck = checkOrigin(req.origin, req.referer);
-      if (!originCheck.ok) {
+      if (originCheck.ok === false) {
         console.info("[ingest] unauthorized origin", {
           request_id,
           db_write_attempted: false,
@@ -529,9 +537,24 @@ async function handleIngestIntentEvent(
 
     const { normalized, errors } = validatePayload(req);
     if (Object.keys(errors).length > 0) {
+      const missing = new Set<string>();
+      for (const [field, message] of Object.entries(errors)) {
+        if (!message.includes("is required")) {
+          continue;
+        }
+        if (field === "lead_id") {
+          missing.add("lead_id");
+          missing.add("anonymous_id");
+        } else if (field === "url") {
+          missing.add("url");
+          missing.add("path");
+        } else {
+          missing.add(field);
+        }
+      }
       console.info("[ingest] validation failed", {
-        request_id,
-        db_write_attempted: false,
+        corr: corr ?? request_id,
+        missing: Array.from(missing),
       });
       throw APIError.invalidArgument("invalid request payload");
     }
@@ -690,9 +713,33 @@ async function serveIngestIntent(
   res: ServerResponse,
   acceptedHeaders: Array<"x-ingest-api-key" | "x-do-intent-key"> = ["x-ingest-api-key", "x-do-intent-key"]
 ): Promise<void> {
+  const startedAt = Date.now();
+  const corr = applyCorrelationId(req, res);
   applyWebsiteCors(req, res);
+  let errorCode: string | undefined;
+
   try {
     const payload = await parseJsonBody<IngestIntentEventPayload>(req);
+    const hasIngestKey = !!getHeaderValue(req, "x-ingest-api-key");
+    const hasDoIntentKey = !!getHeaderValue(req, "x-do-intent-key");
+    const authHeaderNameUsed = hasIngestKey ? "x-ingest-api-key" : hasDoIntentKey ? "x-do-intent-key" : undefined;
+
+    console.info("[ingest] start", {
+      corr,
+      method: req.method,
+      path: req.url,
+      hasAuthHeader: hasIngestKey || hasDoIntentKey,
+      authHeaderNameUsed,
+      bodyShape: {
+        hasEmail: false,
+        hasAnonymousId: !!payload?.anonymous_id,
+        hasContactName: false,
+        hasCompanyName: false,
+        hasLeadId: !!payload?.lead_id,
+        hasEventType: !!payload?.event_type,
+      },
+    });
+
     const request: IngestIntentEventRequest = {
       ...payload,
       "x-ingest-api-key": getHeaderValue(req, "x-ingest-api-key") as Header<"x-ingest-api-key"> | undefined,
@@ -702,23 +749,57 @@ async function serveIngestIntent(
       "x-request-id": getHeaderValue(req, "x-request-id") as Header<"x-request-id"> | undefined,
     };
 
-    const response = await handleIngestIntentEvent(request, acceptedHeaders);
+    const response = await handleIngestIntentEvent(request, acceptedHeaders, corr);
     res.statusCode = 200;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.end(JSON.stringify(response));
   } catch (error) {
     if (error instanceof APIError) {
+      errorCode = error.code;
       const status = error.code === "invalid_argument" ? 400 :
         error.code === "permission_denied" || error.code === "unauthenticated" ? 401 : 500;
+      if (status === 401) {
+        const checkedHeader = acceptedHeaders.join(",");
+        console.info("[ingest] auth failed", {
+          corr,
+          reason: error.message.toLowerCase().includes("invalid") ? "invalid key" : "missing key",
+          headerChecked: checkedHeader,
+        });
+      }
       res.statusCode = status;
       res.setHeader("Content-Type", "application/json; charset=utf-8");
-      res.end(JSON.stringify({ code: error.code, message: error.message }));
+      res.end(JSON.stringify({ code: error.code, message: error.message, error: error.message, corr }));
+
+      if (status >= 500) {
+        console.error("[ingest] server error", {
+          corr,
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+        });
+      }
       return;
     }
 
+    errorCode = "internal";
+    const err = error instanceof Error ? error : new Error("unknown error");
+    console.error("[ingest] server error", {
+      corr,
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+    });
+
     res.statusCode = 500;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(JSON.stringify({ code: "internal", message: "Internal Server Error" }));
+    res.end(JSON.stringify({ code: "internal", message: "Internal Server Error", error: "Internal Server Error", corr }));
+  } finally {
+    console.info("[ingest] end", {
+      corr,
+      statusCode: res.statusCode,
+      durationMs: Date.now() - startedAt,
+      errorCode,
+    });
   }
 }
 
