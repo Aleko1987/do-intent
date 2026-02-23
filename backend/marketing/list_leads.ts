@@ -12,6 +12,22 @@ interface ListLeadsResponse {
   leads: MarketingLead[];
 }
 
+function pickLeadDisplayName(lead: MarketingLead): string {
+  const withLegacyFields = lead as MarketingLead & {
+    company?: string | null;
+    anonymous_id?: string | null;
+  };
+
+  return (
+    lead.contact_name?.trim() ||
+    withLegacyFields.company?.trim() ||
+    lead.company_name?.trim() ||
+    lead.email?.trim() ||
+    withLegacyFields.anonymous_id?.trim() ||
+    "Unknown"
+  );
+}
+
 // Lists all marketing leads, optionally filtered by stage.
 export const list = api<ListLeadsParams, ListLeadsResponse>(
   { expose: true, method: "GET", path: "/marketing/leads", auth: true },
@@ -37,7 +53,11 @@ export const list = api<ListLeadsParams, ListLeadsResponse>(
     }
 
     const leads = await db.rawQueryAll<MarketingLead>(query, ...queryParams);
+    const leadsWithDisplayName = leads.map((lead) => ({
+      ...lead,
+      display_name: pickLeadDisplayName(lead),
+    }));
 
-    return { leads };
+    return { leads: leadsWithDisplayName };
   }
 );

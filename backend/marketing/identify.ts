@@ -96,6 +96,7 @@ async function upsertLead(
 ): Promise<{ lead: MarketingLead; lead_created: boolean }> {
   const fullUpsert = db.queryRow<MarketingLead>`
     INSERT INTO marketing_leads (
+      company,
       company_name,
       contact_name,
       email,
@@ -108,6 +109,7 @@ async function upsertLead(
       updated_at
     ) VALUES (
       ${req.company_name || null},
+      ${req.company_name || null},
       ${req.contact_name || null},
       ${email},
       ${req.anonymous_id},
@@ -119,6 +121,7 @@ async function upsertLead(
       now()
     ) ON CONFLICT (lower(email)) DO UPDATE
     SET
+      company = COALESCE(marketing_leads.company, EXCLUDED.company),
       company_name = COALESCE(marketing_leads.company_name, EXCLUDED.company_name),
       contact_name = COALESCE(marketing_leads.contact_name, EXCLUDED.contact_name),
       anonymous_id = COALESCE(marketing_leads.anonymous_id, EXCLUDED.anonymous_id),
