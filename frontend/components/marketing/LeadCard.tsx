@@ -25,6 +25,7 @@ export default function LeadCard({ lead, onClick }: LeadCardProps) {
     anonymous_id?: string | null;
   };
   const title =
+    lead.display_name?.trim() ||
     lead.contact_name?.trim() ||
     leadWithFallbackFields.company?.trim() ||
     lead.company_name?.trim() ||

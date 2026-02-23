@@ -2,10 +2,13 @@ import type { JsonObject } from "../internal/json_types";
 
 export interface MarketingLead {
   id: string;
+  company?: string | null;
   company_name: string | null;
   contact_name: string | null;
   email: string | null;
   phone: string | null;
+  anonymous_id?: string | null;
+  display_name?: string | null;
   source_type: string | null;
   apollo_lead_id: string | null;
   marketing_stage: string;
