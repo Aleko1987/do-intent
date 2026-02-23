@@ -6,6 +6,7 @@ import {
   applyCorsHeadersWithOptions,
   parseJsonBody,
 } from "../internal/cors";
+import { applyCorrelationId } from "../internal/correlation";
 import type { MarketingLead } from "./types";
 
 const WEBSITE_ALLOWED_ORIGINS = ["https://earthcurebiodiesel.com"] as const;
@@ -85,7 +86,7 @@ function checkOrigin(origin: string | undefined, referer: string | undefined): v
 async function handleIdentify(req: IdentifyRequest): Promise<IdentifyResponse> {
   try {
     console.info("[identify] Request", {
-      email: req.email,
+      has_email: !!req.email,
       anonymous_id: req.anonymous_id,
       has_contact_name: !!req.contact_name,
     });
@@ -186,15 +187,67 @@ function getHeaderValue(req: IncomingMessage, name: string): string | undefined 
 }
 
 async function serveIdentify(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const startedAt = Date.now();
+  const corr = applyCorrelationId(req, res);
   applyWebsiteCors(req, res);
+  let errorCode: string | undefined;
+
   try {
     const payload = await parseJsonBody<IdentifyPayload>(req);
+    const apiKeyHeader = getHeaderValue(req, "x-do-intent-key");
+    const authHeaderNameUsed = apiKeyHeader ? "x-do-intent-key" : undefined;
+    console.info("[identify] start", {
+      corr,
+      method: req.method,
+      path: req.url,
+      hasAuthHeader: !!apiKeyHeader,
+      authHeaderNameUsed,
+      bodyShape: {
+        hasEmail: !!payload?.email,
+        hasAnonymousId: !!payload?.anonymous_id,
+        hasContactName: !!payload?.contact_name,
+        hasCompanyName: !!payload?.company_name,
+        hasLeadId: false,
+        hasEventType: false,
+      },
+    });
+
     const request: IdentifyRequest = {
       ...payload,
-      "x-do-intent-key": getHeaderValue(req, "x-do-intent-key"),
+      "x-do-intent-key": apiKeyHeader,
       origin: getHeaderValue(req, "origin"),
       referer: getHeaderValue(req, "referer"),
     };
+
+    const providedApiKey = request["x-do-intent-key"]?.trim();
+    if (providedApiKey && !hasValidApiKey(providedApiKey)) {
+      console.info("[identify] auth failed", {
+        corr,
+        reason: "invalid key",
+        headerChecked: "x-do-intent-key",
+      });
+    }
+    if (!providedApiKey && !request.origin && !request.referer) {
+      console.info("[identify] auth failed", {
+        corr,
+        reason: "missing key",
+        headerChecked: "x-do-intent-key",
+      });
+    }
+
+    const missing: string[] = [];
+    if (!request.email || typeof request.email !== "string") {
+      missing.push("email");
+    }
+    if (!request.anonymous_id || typeof request.anonymous_id !== "string") {
+      missing.push("anonymous_id");
+    }
+    if (missing.length > 0) {
+      console.info("[identify] validation failed", {
+        corr,
+        missing,
+      });
+    }
 
     const response = await handleIdentify(request);
     res.statusCode = 200;
@@ -202,17 +255,50 @@ async function serveIdentify(req: IncomingMessage, res: ServerResponse): Promise
     res.end(JSON.stringify(response));
   } catch (error) {
     if (error instanceof APIError) {
+      errorCode = error.code;
       const status = error.code === "invalid_argument" ? 400 :
         error.code === "permission_denied" || error.code === "unauthenticated" ? 401 : 500;
+      if (status === 401) {
+        console.info("[identify] auth failed", {
+          corr,
+          reason: error.message.includes("invalid API key") ? "invalid key" : "missing key",
+          headerChecked: "x-do-intent-key",
+        });
+      }
       res.statusCode = status;
       res.setHeader("Content-Type", "application/json; charset=utf-8");
-      res.end(JSON.stringify({ code: error.code, message: error.message }));
+      res.end(JSON.stringify({ code: error.code, message: error.message, error: error.message, corr }));
+
+      if (status >= 500) {
+        console.error("[identify] server error", {
+          corr,
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+        });
+      }
       return;
     }
 
+    errorCode = "internal";
+    const err = error instanceof Error ? error : new Error("unknown error");
+    console.error("[identify] server error", {
+      corr,
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+    });
+
     res.statusCode = 500;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(JSON.stringify({ code: "internal", message: "Internal Server Error" }));
+    res.end(JSON.stringify({ code: "internal", message: "Internal Server Error", error: "Internal Server Error", corr }));
+  } finally {
+    console.info("[identify] end", {
+      corr,
+      statusCode: res.statusCode,
+      durationMs: Date.now() - startedAt,
+      errorCode,
+    });
   }
 }
 
