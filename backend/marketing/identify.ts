@@ -46,15 +46,6 @@ interface IdentifyResponse {
 
 type AuthHeaderName = "x-do-intent-key" | "x-ingest-api-key" | "authorization";
 
-function isCompanyNameDbError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  const maybePgError = error as Error & { code?: string; message: string };
-  return maybePgError.code === "42703" || maybePgError.message.toLowerCase().includes("company_name");
-}
-
 function hasValidApiKey(headerKey: string | undefined): boolean {
   const expectedKey = process.env.INGEST_API_KEY?.trim() || resolveIngestApiKey();
 
@@ -94,7 +85,7 @@ function checkOrigin(origin: string | undefined, referer: string | undefined): v
   }
 }
 
-async function handleIdentify(req: IdentifyRequest, corr: string): Promise<IdentifyResponse> {
+async function handleIdentify(req: IdentifyRequest): Promise<IdentifyResponse> {
   try {
     console.info("[identify] Request", {
       has_email: !!req.email,
@@ -148,65 +139,30 @@ async function handleIdentify(req: IdentifyRequest, corr: string): Promise<Ident
     let lead_created = false;
 
     if (!lead) {
-      try {
-        lead = await db.queryRow<MarketingLead>`
-          INSERT INTO marketing_leads (
-            company_name,
-            contact_name,
-            email,
-            source_type,
-            owner_user_id,
-            marketing_stage,
-            intent_score,
-            created_at,
-            updated_at
-          ) VALUES (
-            ${req.company_name || null},
-            ${req.contact_name || null},
-            ${email},
-            'website',
-            'system',
-            'M1',
-            0,
-            now(),
-            now()
-          )
-          RETURNING *
-        `;
-      } catch (error) {
-        if (!req.company_name || !isCompanyNameDbError(error)) {
-          throw error;
-        }
-
-        console.warn("[identify] company_name persistence skipped", {
-          corr,
-          reason: "company_name DB field unavailable",
-          error: error instanceof Error ? error.message : String(error),
-        });
-
-        lead = await db.queryRow<MarketingLead>`
-          INSERT INTO marketing_leads (
-            contact_name,
-            email,
-            source_type,
-            owner_user_id,
-            marketing_stage,
-            intent_score,
-            created_at,
-            updated_at
-          ) VALUES (
-            ${req.contact_name || null},
-            ${email},
-            'website',
-            'system',
-            'M1',
-            0,
-            now(),
-            now()
-          )
-          RETURNING *
-        `;
-      }
+      lead = await db.queryRow<MarketingLead>`
+        INSERT INTO marketing_leads (
+          company_name,
+          contact_name,
+          email,
+          source_type,
+          owner_user_id,
+          marketing_stage,
+          intent_score,
+          created_at,
+          updated_at
+        ) VALUES (
+          ${req.company_name || null},
+          ${req.contact_name || null},
+          ${email},
+          'website',
+          'system',
+          'M1',
+          0,
+          now(),
+          now()
+        )
+        RETURNING *
+      `;
 
       if (!lead) {
         throw new Error("Failed to create lead");
@@ -215,23 +171,11 @@ async function handleIdentify(req: IdentifyRequest, corr: string): Promise<Ident
       lead_created = true;
     } else {
       if (req.company_name && !lead.company_name) {
-        try {
-          await db.exec`
-            UPDATE marketing_leads
-            SET company_name = ${req.company_name}, updated_at = now()
-            WHERE id = ${lead.id}
-          `;
-        } catch (error) {
-          if (!isCompanyNameDbError(error)) {
-            throw error;
-          }
-
-          console.warn("[identify] company_name persistence skipped", {
-            corr,
-            reason: "company_name DB field unavailable",
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
+        await db.exec`
+          UPDATE marketing_leads
+          SET company_name = ${req.company_name}, updated_at = now()
+          WHERE id = ${lead.id}
+        `;
       }
       if (req.contact_name && !lead.contact_name) {
         await db.exec`
@@ -321,7 +265,7 @@ async function serveIdentify(req: IncomingMessage, res: ServerResponse): Promise
       });
     }
 
-    const response = await handleIdentify(request, corr);
+    const response = await handleIdentify(request);
     res.statusCode = 200;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.end(JSON.stringify(response));
