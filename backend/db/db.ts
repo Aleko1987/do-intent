@@ -6,6 +6,7 @@ type SqlQuery = { text: string; values: unknown[] };
 let pool: Pool | null = null;
 let warnedMissingConfig = false;
 let didLogMarketingLeadsSchema = false;
+let didEnsureMarketingLeadsSchema = false;
 
 interface MarketingLeadsSchemaColumn {
   column_name: string;
@@ -44,6 +45,62 @@ function logMarketingLeadsSchemaAtStartup(activePool: Pool): void {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[schema] introspection failed: ${message}`);
     });
+}
+
+// TEMP: Remove this once migrations run properly in all environments.
+function ensureMarketingLeadsSchemaAtStartup(activePool: Pool): void {
+  if (didEnsureMarketingLeadsSchema) {
+    return;
+  }
+  didEnsureMarketingLeadsSchema = true;
+
+  void (async () => {
+    let hadFailure = false;
+
+    try {
+      await activePool.query(
+        "ALTER TABLE marketing_leads ADD COLUMN IF NOT EXISTS company_name text"
+      );
+    } catch (error: unknown) {
+      hadFailure = true;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[schema] ensure failed: ${message}`);
+    }
+
+    try {
+      await activePool.query(
+        "ALTER TABLE marketing_leads ADD COLUMN IF NOT EXISTS source_type text"
+      );
+    } catch (error: unknown) {
+      hadFailure = true;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[schema] ensure failed: ${message}`);
+    }
+
+    try {
+      await activePool.query(
+        "ALTER TABLE marketing_leads ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now()"
+      );
+    } catch (error: unknown) {
+      hadFailure = true;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[schema] ensure failed: ${message}`);
+    }
+
+    try {
+      await activePool.query(
+        "ALTER TABLE marketing_leads ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()"
+      );
+    } catch (error: unknown) {
+      hadFailure = true;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[schema] ensure failed: ${message}`);
+    }
+
+    if (!hadFailure) {
+      console.info("[schema] ensured marketing_leads columns ok");
+    }
+  })();
 }
 
 function isLocalHostname(hostname: string): boolean {
@@ -135,6 +192,7 @@ export function getPool(): Pool {
         ? { rejectUnauthorized: false }
         : undefined,
     });
+    ensureMarketingLeadsSchemaAtStartup(pool);
     logMarketingLeadsSchemaAtStartup(pool);
   }
   return pool;
