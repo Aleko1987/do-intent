@@ -26,6 +26,13 @@ app.use(express.json({ limit: "1mb" }));
 
 let pool: Pool | null = null;
 
+type MarketingLeadColumn = {
+  column_name: string;
+  data_type: string;
+  is_nullable: string;
+  column_default: string | null;
+};
+
 function isDbEnabled(): boolean {
   return (process.env.ENABLE_DB || "").toLowerCase() === "true";
 }
@@ -42,6 +49,36 @@ function getPool(): Pool | null {
   }
 
   return pool;
+}
+
+async function logMarketingLeadsSchema(): Promise<void> {
+  const activePool = getPool();
+  if (!activePool) {
+    return;
+  }
+
+  try {
+    const result = await activePool.query<MarketingLeadColumn>(
+      `
+        select column_name, data_type, is_nullable, column_default
+        from information_schema.columns
+        where table_schema='public' and table_name='marketing_leads'
+        order by ordinal_position
+      `
+    );
+
+    if (result.rows.length === 0) {
+      console.log("[schema] marketing_leads: table not found");
+      return;
+    }
+
+    console.log(
+      `[schema] marketing_leads columns: ${JSON.stringify(result.rows)}`
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[schema] marketing_leads introspection failed: ${message}`);
+  }
 }
 
 function logRequest({
@@ -181,4 +218,5 @@ app.post("/track", async (req, res) => {
 const port = Number(process.env.PORT) || 10000;
 app.listen(port, "0.0.0.0", () => {
   console.log(`[web] listening on ${port}`);
+  void logMarketingLeadsSchema();
 });
