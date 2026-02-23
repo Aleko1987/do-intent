@@ -5,6 +5,46 @@ type SqlQuery = { text: string; values: unknown[] };
 // pg Pool for database connections
 let pool: Pool | null = null;
 let warnedMissingConfig = false;
+let didLogMarketingLeadsSchema = false;
+
+interface MarketingLeadsSchemaColumn {
+  column_name: string;
+  data_type: string;
+  is_nullable: string;
+  column_default: string | null;
+}
+
+function logMarketingLeadsSchemaAtStartup(activePool: Pool): void {
+  if (didLogMarketingLeadsSchema) {
+    return;
+  }
+  didLogMarketingLeadsSchema = true;
+
+  void activePool
+    .query<MarketingLeadsSchemaColumn>(
+      `select column_name, data_type, is_nullable, column_default
+       from information_schema.columns
+       where table_schema='public' and table_name='marketing_leads'
+       order by ordinal_position`
+    )
+    .then((result) => {
+      if (result.rows.length === 0) {
+        console.info("[schema] marketing_leads: table not found");
+        return;
+      }
+
+      const lines = result.rows.map(
+        (column) =>
+          `- ${column.column_name} ${column.data_type} nullable=${column.is_nullable} default=${column.column_default ?? "null"}`
+      );
+
+      console.info(["[schema] marketing_leads columns:", ...lines].join("\n"));
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[schema] introspection failed: ${message}`);
+    });
+}
 
 function isLocalHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1";
@@ -95,6 +135,7 @@ export function getPool(): Pool {
         ? { rejectUnauthorized: false }
         : undefined,
     });
+    logMarketingLeadsSchemaAtStartup(pool);
   }
   return pool;
 }
