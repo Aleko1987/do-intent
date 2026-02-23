@@ -44,6 +44,10 @@ interface IdentifyResponse {
   lead_created: boolean;
 }
 
+interface PgError extends Error {
+  code?: string;
+}
+
 type AuthHeaderName = "x-do-intent-key" | "x-ingest-api-key" | "authorization";
 
 function hasValidApiKey(headerKey: string | undefined): boolean {
@@ -85,7 +89,79 @@ function checkOrigin(origin: string | undefined, referer: string | undefined): v
   }
 }
 
-async function handleIdentify(req: IdentifyRequest): Promise<IdentifyResponse> {
+async function upsertLead(
+  req: IdentifyRequest,
+  email: string,
+  attempt: "full" | "fallback"
+): Promise<{ lead: MarketingLead; lead_created: boolean }> {
+  const fullUpsert = db.queryRow<MarketingLead>`
+    INSERT INTO marketing_leads (
+      company_name,
+      contact_name,
+      email,
+      anonymous_id,
+      source_type,
+      owner_user_id,
+      marketing_stage,
+      intent_score,
+      created_at,
+      updated_at
+    ) VALUES (
+      ${req.company_name || null},
+      ${req.contact_name || null},
+      ${email},
+      ${req.anonymous_id},
+      'website',
+      'system',
+      'M1',
+      0,
+      now(),
+      now()
+    ) ON CONFLICT (lower(email)) DO UPDATE
+    SET
+      company_name = COALESCE(marketing_leads.company_name, EXCLUDED.company_name),
+      contact_name = COALESCE(marketing_leads.contact_name, EXCLUDED.contact_name),
+      anonymous_id = COALESCE(marketing_leads.anonymous_id, EXCLUDED.anonymous_id),
+      updated_at = now()
+    RETURNING *, (xmax = 0) AS lead_created
+  `;
+
+  const fallbackUpsert = db.queryRow<MarketingLead>`
+    INSERT INTO marketing_leads (
+      contact_name,
+      email,
+      anonymous_id,
+      owner_user_id,
+      created_at,
+      updated_at
+    ) VALUES (
+      ${req.contact_name || null},
+      ${email},
+      ${req.anonymous_id},
+      'system',
+      now(),
+      now()
+    ) ON CONFLICT (lower(email)) DO UPDATE
+    SET
+      contact_name = COALESCE(marketing_leads.contact_name, EXCLUDED.contact_name),
+      anonymous_id = COALESCE(marketing_leads.anonymous_id, EXCLUDED.anonymous_id),
+      updated_at = now()
+    RETURNING *, (xmax = 0) AS lead_created
+  `;
+
+  const result = attempt === "full" ? await fullUpsert : await fallbackUpsert;
+  if (!result) {
+    throw new Error("Failed to upsert lead");
+  }
+
+  const leadCreatedRaw = (result as MarketingLead & { lead_created?: unknown }).lead_created;
+  return {
+    lead: result,
+    lead_created: leadCreatedRaw === true,
+  };
+}
+
+async function handleIdentify(req: IdentifyRequest, corr?: string): Promise<IdentifyResponse> {
   try {
     console.info("[identify] Request", {
       has_email: !!req.email,
@@ -130,65 +206,38 @@ async function handleIdentify(req: IdentifyRequest): Promise<IdentifyResponse> {
       throw APIError.invalidArgument("email cannot be empty");
     }
 
-    let lead = await db.queryRow<MarketingLead>`
-      SELECT * FROM marketing_leads
-      WHERE lower(email) = ${email}
-      LIMIT 1
-    `;
+    let upsertResult: { lead: MarketingLead; lead_created: boolean };
 
-    let lead_created = false;
+    try {
+      upsertResult = await upsertLead(req, email, "full");
+    } catch (error) {
+      const pgError = error as PgError;
+      console.warn("[identify] lead upsert warning", {
+        corr,
+        attempt: "full",
+        message: pgError.message,
+      });
 
-    if (!lead) {
-      lead = await db.queryRow<MarketingLead>`
-        INSERT INTO marketing_leads (
-          company_name,
-          contact_name,
-          email,
-          source_type,
-          owner_user_id,
-          marketing_stage,
-          intent_score,
-          created_at,
-          updated_at
-        ) VALUES (
-          ${req.company_name || null},
-          ${req.contact_name || null},
-          ${email},
-          'website',
-          'system',
-          'M1',
-          0,
-          now(),
-          now()
-        )
-        RETURNING *
-      `;
-
-      if (!lead) {
-        throw new Error("Failed to create lead");
+      if (pgError.code !== "42703") {
+        throw error;
       }
 
-      lead_created = true;
-    } else {
-      if (req.company_name && !lead.company_name) {
-        await db.exec`
-          UPDATE marketing_leads
-          SET company_name = ${req.company_name}, updated_at = now()
-          WHERE id = ${lead.id}
-        `;
-      }
-      if (req.contact_name && !lead.contact_name) {
-        await db.exec`
-          UPDATE marketing_leads
-          SET contact_name = ${req.contact_name}, updated_at = now()
-          WHERE id = ${lead.id}
-        `;
+      try {
+        upsertResult = await upsertLead(req, email, "fallback");
+      } catch (fallbackError) {
+        const fallbackPgError = fallbackError as PgError;
+        console.warn("[identify] lead upsert warning", {
+          corr,
+          attempt: "fallback",
+          message: fallbackPgError.message,
+        });
+        throw fallbackError;
       }
     }
 
     return {
-      lead_id: lead.id,
-      lead_created,
+      lead_id: upsertResult.lead.id,
+      lead_created: upsertResult.lead_created,
     };
   } catch (error) {
     console.error("[identify] Error", error);
@@ -265,7 +314,7 @@ async function serveIdentify(req: IncomingMessage, res: ServerResponse): Promise
       });
     }
 
-    const response = await handleIdentify(request);
+    const response = await handleIdentify(request, corr);
     res.statusCode = 200;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.end(JSON.stringify(response));
