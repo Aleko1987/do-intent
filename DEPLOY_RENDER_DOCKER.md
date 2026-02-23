@@ -145,6 +145,8 @@ Recommended flow for deploys:
 2. Run `npm --prefix backend run migrate` in Render Shell (or a Render job using the same image/env).
 3. Verify logs show `Applied migration` (or `Skipping already applied`) and no errors.
 
+For this change, the new migration file `backend/db/migrations/019_add_marketing_leads_company_name_source_type.up.sql` is picked up by the same `npm --prefix backend run migrate` command because the runner automatically loads all `\d{3}_*.up.sql` files in order.
+
 ## Troubleshooting
 
 ### Image Not Found
@@ -179,3 +181,27 @@ To manually trigger a new deployment:
 1. Go to your Render service dashboard
 2. Click **Manual Deploy** → **Deploy latest image**
 3. Or update the image tag to a specific commit SHA: `ghcr.io/<OWNER>/do-intent:<SHA>`
+
+### Quick verification (migration + identify persistence)
+
+After running migrations, confirm columns exist:
+
+```bash
+psql "$DATABASE_URL" -c "\d+ marketing_leads"
+```
+
+And confirm identify persists and returns `lead_id`:
+
+```bash
+curl -sS -X POST "https://<your-render-service>/api/v1/identify" \
+  -H "Content-Type: application/json" \
+  -H "x-do-intent-key: $INGEST_API_KEY" \
+  -d '{
+    "anonymous_id": "11111111-1111-1111-1111-111111111111",
+    "email": "render-verify@example.com",
+    "company_name": "Render Verify Co",
+    "contact_name": "Render Verify"
+  }'
+```
+
+Expected response includes `{ "lead_id": "...", "lead_created": true|false }`.
