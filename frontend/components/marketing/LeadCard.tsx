@@ -20,6 +20,18 @@ export default function LeadCard({ lead, onClick }: LeadCardProps) {
       }
     : undefined;
 
+  const leadWithFallbackFields = lead as MarketingLead & {
+    company?: string | null;
+    anonymous_id?: string | null;
+  };
+  const title =
+    lead.contact_name?.trim() ||
+    leadWithFallbackFields.company?.trim() ||
+    lead.company_name?.trim() ||
+    lead.email?.trim() ||
+    leadWithFallbackFields.anonymous_id?.trim() ||
+    "Unknown";
+
   return (
     <Card
       ref={setNodeRef}
@@ -38,7 +50,7 @@ export default function LeadCard({ lead, onClick }: LeadCardProps) {
         <div className="flex items-start justify-between">
           <div className="flex-1 min-w-0">
             <h4 className="font-semibold text-sm text-foreground truncate">
-              {lead.company_name || "Unknown Company"}
+              {title}
             </h4>
             {lead.contact_name && (
               <p className="text-xs text-muted-foreground truncate">{lead.contact_name}</p>
