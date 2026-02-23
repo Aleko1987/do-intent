@@ -113,6 +113,17 @@ interface NormalizedDbError {
   column?: string;
 }
 
+interface ValidationInvalidField {
+  field: string;
+  reason: string;
+}
+
+interface ValidationFailureLogDetails {
+  missing: string[];
+  invalid: ValidationInvalidField[];
+  receivedTypes: Record<string, string>;
+}
+
 function makeRequestId(): string {
   return uuidv4();
 }
@@ -474,6 +485,43 @@ function validatePayload(
   };
 }
 
+function buildValidationFailureLogDetails(
+  payload: IngestIntentEventPayload,
+  errors: Record<string, string>
+): ValidationFailureLogDetails {
+  const missing = new Set<string>();
+  const invalid: ValidationInvalidField[] = [];
+
+  for (const [field, message] of Object.entries(errors)) {
+    if (message.includes("is required")) {
+      if (field === "lead_id") {
+        missing.add("lead_id");
+        missing.add("anonymous_id");
+      } else if (field === "url") {
+        missing.add("url");
+        missing.add("path");
+      } else {
+        missing.add(field);
+      }
+      continue;
+    }
+
+    invalid.push({ field, reason: message });
+  }
+
+  const receivedTypes: Record<string, string> = {};
+  for (const key of Object.keys(payload)) {
+    const value = payload[key as keyof IngestIntentEventPayload];
+    receivedTypes[key] = Array.isArray(value) ? "array" : typeof value;
+  }
+
+  return {
+    missing: Array.from(missing),
+    invalid,
+    receivedTypes,
+  };
+}
+
 async function handleIngestIntentEvent(
   req: IngestIntentEventRequest,
   acceptedHeaders: Array<"x-ingest-api-key" | "x-do-intent-key"> = ["x-ingest-api-key", "x-do-intent-key"],
@@ -554,24 +602,12 @@ async function handleIngestIntentEvent(
 
     const { normalized, errors } = validatePayload(req);
     if (Object.keys(errors).length > 0) {
-      const missing = new Set<string>();
-      for (const [field, message] of Object.entries(errors)) {
-        if (!message.includes("is required")) {
-          continue;
-        }
-        if (field === "lead_id") {
-          missing.add("lead_id");
-          missing.add("anonymous_id");
-        } else if (field === "url") {
-          missing.add("url");
-          missing.add("path");
-        } else {
-          missing.add(field);
-        }
-      }
+      const validation = buildValidationFailureLogDetails(req, errors);
       console.info("[ingest] validation failed", {
         corr: corr ?? request_id,
-        missing: Array.from(missing),
+        missing: validation.missing,
+        invalid: validation.invalid,
+        receivedTypes: validation.receivedTypes,
       });
       throw APIError.invalidArgument("invalid request payload");
     }
