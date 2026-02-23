@@ -81,6 +81,32 @@ async function logMarketingLeadsSchema(): Promise<void> {
   }
 }
 
+async function ensureMarketingLeadsSchema(): Promise<void> {
+  const activePool = getPool();
+  if (!activePool) {
+    return;
+  }
+
+  // TEMP: remove once migrations are fixed
+  const statements = [
+    "alter table marketing_leads add column if not exists company_name text",
+    "alter table marketing_leads add column if not exists source_type text",
+    "alter table marketing_leads add column if not exists created_at timestamptz default now()",
+    "alter table marketing_leads add column if not exists updated_at timestamptz default now()",
+  ];
+
+  for (const statement of statements) {
+    try {
+      await activePool.query(statement);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[schema] marketing_leads ensure failed: ${message}`);
+    }
+  }
+
+  console.log("[schema] ensured marketing_leads columns ok");
+}
+
 function logRequest({
   requestId,
   stored,
@@ -219,4 +245,5 @@ const port = Number(process.env.PORT) || 10000;
 app.listen(port, "0.0.0.0", () => {
   console.log(`[web] listening on ${port}`);
   void logMarketingLeadsSchema();
+  void ensureMarketingLeadsSchema();
 });
