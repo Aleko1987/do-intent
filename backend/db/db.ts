@@ -15,8 +15,8 @@ interface MarketingLeadsSchemaColumn {
   column_default: string | null;
 }
 
-function logMarketingLeadsSchemaAtStartup(activePool: Pool): void {
-  if (didLogMarketingLeadsSchema) {
+function logMarketingLeadsSchemaAtStartup(activePool: Pool, force = false): void {
+  if (didLogMarketingLeadsSchema && !force) {
     return;
   }
   didLogMarketingLeadsSchema = true;
@@ -79,6 +79,26 @@ function ensureMarketingLeadsSchemaAtStartup(activePool: Pool): void {
 
     try {
       await activePool.query(
+        "ALTER TABLE marketing_leads ADD COLUMN IF NOT EXISTS apollo_lead_id text"
+      );
+    } catch (error: unknown) {
+      hadFailure = true;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[schema] ensure failed: ${message}`);
+    }
+
+    try {
+      await activePool.query(
+        "ALTER TABLE marketing_leads ADD COLUMN IF NOT EXISTS auto_push_enabled boolean DEFAULT false"
+      );
+    } catch (error: unknown) {
+      hadFailure = true;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[schema] ensure failed: ${message}`);
+    }
+
+    try {
+      await activePool.query(
         "ALTER TABLE marketing_leads ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now()"
       );
     } catch (error: unknown) {
@@ -100,6 +120,8 @@ function ensureMarketingLeadsSchemaAtStartup(activePool: Pool): void {
     if (!hadFailure) {
       console.info("[schema] ensured marketing_leads columns ok");
     }
+
+    logMarketingLeadsSchemaAtStartup(activePool, true);
   })();
 }
 
