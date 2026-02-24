@@ -2,7 +2,7 @@ import { useDraggable } from "@dnd-kit/core";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { MarketingLead } from "~backend/marketing/types";
-import { Building2, Mail, Phone, TrendingUp } from "lucide-react";
+import { Mail, Phone } from "lucide-react";
 
 interface LeadCardProps {
   lead: MarketingLead;
@@ -24,6 +24,7 @@ export default function LeadCard({ lead, onClick }: LeadCardProps) {
     company?: string | null;
     anonymous_id?: string | null;
   };
+
   const title =
     lead.display_name ||
     lead.contact_name ||
