@@ -18,15 +18,41 @@ type PgError = Error & {
   message: string;
 };
 
-function pickLeadDisplayName(lead: MarketingLead): string {
-  return (
-    lead.contact_name?.trim() ||
-    lead.company?.trim() ||
-    lead.company_name?.trim() ||
-    lead.email?.trim() ||
-    lead.anonymous_id?.trim() ||
-    lead.id
-  );
+type DisplayNameSource =
+  | "contact_name"
+  | "company"
+  | "company_name"
+  | "email"
+  | "anonymous_id"
+  | "id";
+
+function resolveLeadDisplayName(lead: MarketingLead): { displayName: string; source: DisplayNameSource } {
+  const contactName = lead.contact_name?.trim();
+  if (contactName) {
+    return { displayName: contactName, source: "contact_name" };
+  }
+
+  const company = lead.company?.trim();
+  if (company) {
+    return { displayName: company, source: "company" };
+  }
+
+  const companyName = lead.company_name?.trim();
+  if (companyName) {
+    return { displayName: companyName, source: "company_name" };
+  }
+
+  const email = lead.email?.trim();
+  if (email) {
+    return { displayName: email, source: "email" };
+  }
+
+  const anonymousId = lead.anonymous_id?.trim();
+  if (anonymousId) {
+    return { displayName: anonymousId, source: "anonymous_id" };
+  }
+
+  return { displayName: lead.id, source: "id" };
 }
 
 // Lists all marketing leads, optionally filtered by stage.
@@ -118,10 +144,11 @@ ${selectColumns}
         company: lead.company ?? "",
         company_name: lead.company_name ?? "",
       };
+      const { displayName } = resolveLeadDisplayName(normalizedLead);
 
       return {
         ...normalizedLead,
-        display_name: pickLeadDisplayName(normalizedLead),
+        display_name: displayName,
       };
     });
 
@@ -140,10 +167,16 @@ ${selectColumns}
         "display_name",
       ] as const;
 
-      console.info("[marketing.list_leads] sample lead field presence", {
+      const sampleResolved = resolveLeadDisplayName(sampleLead);
+      console.info("[marketing.list_leads] sample lead display_name resolution", {
         has_leads: leadsWithDisplayName.length > 0,
         fields_present: expectedFields.filter((field) => field in sampleLead),
         has_display_name: !!sampleLead.display_name,
+        has_contact_name: !!sampleLead.contact_name?.trim(),
+        has_company: !!sampleLead.company?.trim(),
+        has_company_name: !!sampleLead.company_name?.trim(),
+        has_email: !!sampleLead.email?.trim(),
+        display_name_source: sampleResolved.source,
       });
     }
 
