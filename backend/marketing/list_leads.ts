@@ -1,5 +1,6 @@
 import { api } from "encore.dev/api";
 import { getAuthData } from "~encore/auth";
+import { randomUUID } from "node:crypto";
 import { db } from "../db/db";
 import type { MarketingLead } from "./types";
 
@@ -11,6 +12,11 @@ interface ListLeadsParams {
 interface ListLeadsResponse {
   leads: MarketingLead[];
 }
+
+type PgError = Error & {
+  code?: string;
+  message: string;
+};
 
 function pickLeadDisplayName(lead: MarketingLead): string {
   const withLegacyFields = lead as MarketingLead & {
@@ -33,8 +39,8 @@ export const list = api<ListLeadsParams, ListLeadsResponse>(
   { expose: true, method: "GET", path: "/marketing/leads", auth: true },
   async (params) => {
     const authData = getAuthData()!;
-    let query = `
-      SELECT
+    const corr = randomUUID();
+    const baseSelectColumns = `
         id,
         COALESCE(company, '') AS company,
         COALESCE(company_name, '') AS company_name,
@@ -43,7 +49,6 @@ export const list = api<ListLeadsParams, ListLeadsResponse>(
         phone,
         COALESCE(anonymous_id, '') AS anonymous_id,
         source_type,
-        apollo_lead_id,
         marketing_stage,
         intent_score,
         last_signal_at,
@@ -52,25 +57,64 @@ export const list = api<ListLeadsParams, ListLeadsResponse>(
         sales_customer_id,
         created_at,
         updated_at
+    `;
+
+    const buildQuery = (includeApolloLeadId: boolean): string => {
+      const selectColumns = includeApolloLeadId
+        ? `${baseSelectColumns.trimEnd()},\n        apollo_lead_id`
+        : baseSelectColumns;
+
+      let query = `
+      SELECT
+${selectColumns}
       FROM marketing_leads
       WHERE owner_user_id = $1
     `;
+
+      if (params.stage) {
+        query += ` AND marketing_stage = $2`;
+      }
+
+      query += ` ORDER BY last_signal_at DESC NULLS LAST, created_at DESC`;
+
+      if (params.limit) {
+        const limitParamIndex = params.stage ? 3 : 2;
+        query += ` LIMIT $${limitParamIndex}`;
+      }
+
+      return query;
+    };
 
     const queryParams: any[] = [authData.userID];
 
     if (params.stage) {
       queryParams.push(params.stage);
-      query += ` AND marketing_stage = $${queryParams.length}`;
     }
-
-    query += ` ORDER BY last_signal_at DESC NULLS LAST, created_at DESC`;
 
     if (params.limit) {
       queryParams.push(params.limit);
-      query += ` LIMIT $${queryParams.length}`;
     }
 
-    const leads = await db.rawQueryAll<MarketingLead>(query, ...queryParams);
+    let leads: MarketingLead[];
+
+    try {
+      leads = await db.rawQueryAll<MarketingLead>(buildQuery(true), ...queryParams);
+    } catch (error) {
+      const pgError = error as PgError;
+      const missingApolloLeadId =
+        pgError.code === "42703" && pgError.message.toLowerCase().includes("apollo_lead_id");
+      if (!missingApolloLeadId) {
+        throw error;
+      }
+
+      console.warn("[marketing.list_leads] missing optional column, retrying query", {
+        corr,
+        code: pgError.code,
+      });
+
+      leads = await db.rawQueryAll<MarketingLead>(buildQuery(false), ...queryParams);
+    }
+
     const leadsWithDisplayName = leads.map((lead) => ({
       ...lead,
       display_name: pickLeadDisplayName(lead),
