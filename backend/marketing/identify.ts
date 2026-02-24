@@ -95,6 +95,7 @@ async function upsertLead(
   attempt: "full" | "fallback"
 ): Promise<{ lead: MarketingLead; lead_created: boolean }> {
   const companyName = req.company_name?.trim() || null;
+  const company = companyName;
   const contactName = req.contact_name?.trim() || null;
   const anonymousId = req.anonymous_id?.trim() || null;
 
@@ -112,7 +113,7 @@ async function upsertLead(
       created_at,
       updated_at
     ) VALUES (
-      ${companyName},
+      ${company},
       ${companyName},
       ${contactName},
       ${email},
