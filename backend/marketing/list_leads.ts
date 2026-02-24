@@ -19,17 +19,12 @@ type PgError = Error & {
 };
 
 function pickLeadDisplayName(lead: MarketingLead): string {
-  const withLegacyFields = lead as MarketingLead & {
-    company?: string | null;
-    anonymous_id?: string | null;
-  };
-
   return (
     lead.contact_name?.trim() ||
-    withLegacyFields.company?.trim() ||
+    lead.company?.trim() ||
     lead.company_name?.trim() ||
     lead.email?.trim() ||
-    withLegacyFields.anonymous_id?.trim() ||
+    lead.anonymous_id?.trim() ||
     lead.id
   );
 }
@@ -115,10 +110,20 @@ ${selectColumns}
       leads = await db.rawQueryAll<MarketingLead>(buildQuery(false), ...queryParams);
     }
 
-    const leadsWithDisplayName = leads.map((lead) => ({
-      ...lead,
-      display_name: pickLeadDisplayName(lead),
-    }));
+    const leadsWithDisplayName = leads.map((lead) => {
+      const normalizedLead: MarketingLead = {
+        ...lead,
+        email: lead.email ?? "",
+        contact_name: lead.contact_name ?? "",
+        company: lead.company ?? "",
+        company_name: lead.company_name ?? "",
+      };
+
+      return {
+        ...normalizedLead,
+        display_name: pickLeadDisplayName(normalizedLead),
+      };
+    });
 
     const sampleLead = leadsWithDisplayName[0];
     if (sampleLead) {
@@ -137,10 +142,7 @@ ${selectColumns}
 
       console.info("[marketing.list_leads] sample lead field presence", {
         has_leads: leadsWithDisplayName.length > 0,
-        fields_present: expectedFields.filter((field) => {
-          const value = sampleLead[field];
-          return value !== undefined && value !== null && value !== "";
-        }),
+        fields_present: expectedFields.filter((field) => field in sampleLead),
         has_display_name: !!sampleLead.display_name,
       });
     }
