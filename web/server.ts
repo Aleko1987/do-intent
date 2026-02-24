@@ -92,6 +92,7 @@ async function ensureMarketingLeadsSchema(): Promise<void> {
     "alter table marketing_leads add column if not exists company_name text",
     "alter table marketing_leads add column if not exists source_type text",
     "alter table marketing_leads add column if not exists apollo_lead_id text",
+    "alter table marketing_leads add column if not exists auto_push_enabled boolean default false",
     "alter table marketing_leads add column if not exists created_at timestamptz default now()",
     "alter table marketing_leads add column if not exists updated_at timestamptz default now()",
   ];
@@ -108,6 +109,8 @@ async function ensureMarketingLeadsSchema(): Promise<void> {
   console.log(
     "[schema] ensured marketing_leads columns ok (including apollo_lead_id)"
   );
+
+  await logMarketingLeadsSchema();
 }
 
 function logRequest({
@@ -247,6 +250,5 @@ app.post("/track", async (req, res) => {
 const port = Number(process.env.PORT) || 10000;
 app.listen(port, "0.0.0.0", () => {
   console.log(`[web] listening on ${port}`);
-  void logMarketingLeadsSchema();
   void ensureMarketingLeadsSchema();
 });
