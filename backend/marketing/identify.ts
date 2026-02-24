@@ -288,7 +288,7 @@ async function upsertLead(
     try {
       await db.exec`
         UPDATE marketing_leads
-        SET deleted_at = now(), updated_at = now()
+        SET deleted_at = now(), last_signal_at = now(), updated_at = now()
         WHERE id = ${existingAnonymousLead.id}
           AND owner_user_id = ${desiredOwnerId}
       `;
@@ -303,7 +303,7 @@ async function upsertLead(
       try {
         await db.exec`
           UPDATE marketing_leads
-          SET merged_to_id = ${result.lead.id}, updated_at = now()
+          SET merged_to_id = ${result.lead.id}, last_signal_at = now(), updated_at = now()
           WHERE id = ${existingAnonymousLead.id}
             AND owner_user_id = ${desiredOwnerId}
         `;
