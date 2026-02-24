@@ -127,6 +127,16 @@ function ensureMarketingLeadsSchemaAtStartup(activePool: Pool): void {
       console.error(`[schema] ensure failed: ${message}`);
     }
 
+    try {
+      await activePool.query(
+        "ALTER TABLE marketing_leads ADD COLUMN IF NOT EXISTS deleted_at timestamptz"
+      );
+    } catch (error: unknown) {
+      hadFailure = true;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[schema] ensure failed: ${message}`);
+    }
+
     let hadIndexFailure = false;
 
     try {

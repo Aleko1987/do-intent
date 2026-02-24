@@ -80,7 +80,10 @@ export const list = api<ListLeadsParams, ListLeadsResponse>(
         updated_at
     `;
 
-    const buildQuery = (includeApolloLeadId: boolean): string => {
+    const buildQuery = (
+      includeApolloLeadId: boolean,
+      includeDeletedAtFilter: boolean
+    ): string => {
       const selectColumns = includeApolloLeadId
         ? `${baseSelectColumns.trimEnd()},\n        apollo_lead_id`
         : baseSelectColumns;
@@ -91,6 +94,10 @@ ${selectColumns}
       FROM marketing_leads
       WHERE owner_user_id = $1
     `;
+
+      if (includeDeletedAtFilter) {
+        query += ` AND deleted_at IS NULL`;
+      }
 
       if (params.stage) {
         query += ` AND marketing_stage = $2`;
@@ -119,21 +126,29 @@ ${selectColumns}
     let leads: MarketingLead[];
 
     try {
-      leads = await db.rawQueryAll<MarketingLead>(buildQuery(true), ...queryParams);
+      leads = await db.rawQueryAll<MarketingLead>(buildQuery(true, true), ...queryParams);
     } catch (error) {
       const pgError = error as PgError;
       const missingApolloLeadId =
         pgError.code === "42703" && pgError.message.toLowerCase().includes("apollo_lead_id");
-      if (!missingApolloLeadId) {
+      const missingDeletedAt =
+        pgError.code === "42703" && pgError.message.toLowerCase().includes("deleted_at");
+
+      if (missingApolloLeadId || missingDeletedAt) {
+        console.warn("[marketing.list_leads] missing optional column, retrying query", {
+          corr,
+          code: pgError.code,
+          missing_apollo_lead_id: missingApolloLeadId,
+          missing_deleted_at: missingDeletedAt,
+        });
+
+        leads = await db.rawQueryAll<MarketingLead>(
+          buildQuery(!missingApolloLeadId, !missingDeletedAt),
+          ...queryParams
+        );
+      } else {
         throw error;
       }
-
-      console.warn("[marketing.list_leads] missing optional column, retrying query", {
-        corr,
-        code: pgError.code,
-      });
-
-      leads = await db.rawQueryAll<MarketingLead>(buildQuery(false), ...queryParams);
     }
 
     const leadsWithDisplayName = leads.map((lead) => {

@@ -6,9 +6,15 @@ interface PipelineColumnProps {
   stage: { id: string; name: string };
   leads: MarketingLead[];
   onLeadClick: (lead: MarketingLead) => void;
+  onLeadDelete: (leadId: string) => void;
 }
 
-export default function PipelineColumn({ stage, leads, onLeadClick }: PipelineColumnProps) {
+export default function PipelineColumn({
+  stage,
+  leads,
+  onLeadClick,
+  onLeadDelete,
+}: PipelineColumnProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: stage.id,
   });
@@ -27,7 +33,12 @@ export default function PipelineColumn({ stage, leads, onLeadClick }: PipelineCo
         }`}
       >
         {leads.map((lead) => (
-          <LeadCard key={lead.id} lead={lead} onClick={() => onLeadClick(lead)} />
+          <LeadCard
+            key={lead.id}
+            lead={lead}
+            onClick={() => onLeadClick(lead)}
+            onDelete={onLeadDelete}
+          />
         ))}
 
         {leads.length === 0 && (

@@ -57,6 +57,29 @@ export default function MarketingPipeline() {
     }
   };
 
+  const handleDeleteLead = async (leadId: string) => {
+    const shouldDelete = window.confirm("Delete this lead? You can't undo this.");
+    if (!shouldDelete) {
+      return;
+    }
+
+    try {
+      await backend.marketing.deleteLead({ id: leadId });
+      setLeads((prev) => prev.filter((lead) => lead.id !== leadId));
+      setSelectedLead((prev) => (prev?.id === leadId ? null : prev));
+      toast({
+        title: "Lead deleted",
+      });
+    } catch (error) {
+      console.error("Failed to delete lead:", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to delete lead",
+      });
+    }
+  };
+
   const handleDragStart = (event: any) => {
     setActiveId(event.active.id);
   };
@@ -131,6 +154,7 @@ export default function MarketingPipeline() {
               stage={stage}
               leads={getLeadsByStage(stage.id)}
               onLeadClick={setSelectedLead}
+              onLeadDelete={handleDeleteLead}
             />
           ))}
         </div>
