@@ -20,18 +20,13 @@ export default function LeadCard({ lead, onClick }: LeadCardProps) {
       }
     : undefined;
 
-  const leadWithFallbackFields = lead as MarketingLead & {
-    company?: string | null;
-    anonymous_id?: string | null;
-  };
-
   const title =
     lead.display_name ||
     lead.contact_name ||
-    leadWithFallbackFields.company ||
+    lead.company ||
     lead.company_name ||
     lead.email ||
-    leadWithFallbackFields.anonymous_id ||
+    lead.anonymous_id ||
     lead.id ||
     "Unknown";
 
