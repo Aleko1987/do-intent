@@ -99,6 +99,16 @@ function ensureMarketingLeadsSchemaAtStartup(activePool: Pool): void {
 
     try {
       await activePool.query(
+        "ALTER TABLE marketing_leads ADD COLUMN IF NOT EXISTS sales_customer_id text"
+      );
+    } catch (error: unknown) {
+      hadFailure = true;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[schema] ensure failed: ${message}`);
+    }
+
+    try {
+      await activePool.query(
         "ALTER TABLE marketing_leads ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now()"
       );
     } catch (error: unknown) {
