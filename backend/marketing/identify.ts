@@ -91,15 +91,18 @@ function checkOrigin(origin: string | undefined, referer: string | undefined): v
 
 async function upsertLead(
   req: IdentifyRequest,
-  email: string,
+  email: string | null,
   attempt: "full" | "fallback"
 ): Promise<{ lead: MarketingLead; lead_created: boolean }> {
   const companyName = req.company_name?.trim() || null;
   const company = companyName;
   const contactName = req.contact_name?.trim() || null;
   const anonymousId = req.anonymous_id?.trim() || null;
+  const emailProvided = typeof email === "string" && email.length > 0;
+  const contactNameProvided = typeof req.contact_name === "string";
+  const companyNameProvided = typeof req.company_name === "string";
 
-  const fullUpsert = db.queryRow<MarketingLead>`
+  const fullUpsertByEmail = db.queryRow<MarketingLead>`
     INSERT INTO marketing_leads (
       company,
       company_name,
@@ -124,18 +127,56 @@ async function upsertLead(
       0,
       now(),
       now()
-    ) ON CONFLICT (lower(email)) DO UPDATE
+    ) ON CONFLICT (owner_user_id, lower(email)) DO UPDATE
     SET
-      company = COALESCE(EXCLUDED.company, marketing_leads.company),
-      company_name = COALESCE(EXCLUDED.company_name, marketing_leads.company_name),
-      contact_name = COALESCE(EXCLUDED.contact_name, marketing_leads.contact_name),
+      email = CASE WHEN ${emailProvided} THEN EXCLUDED.email ELSE marketing_leads.email END,
+      company = CASE WHEN ${companyNameProvided} THEN EXCLUDED.company ELSE marketing_leads.company END,
+      company_name = CASE WHEN ${companyNameProvided} THEN EXCLUDED.company_name ELSE marketing_leads.company_name END,
+      contact_name = CASE WHEN ${contactNameProvided} THEN EXCLUDED.contact_name ELSE marketing_leads.contact_name END,
       anonymous_id = COALESCE(EXCLUDED.anonymous_id, marketing_leads.anonymous_id),
       updated_at = now()
     RETURNING *, (xmax = 0) AS lead_created
   `;
 
-  const fallbackUpsert = db.queryRow<MarketingLead>`
+  const fullUpsertByAnonymousId = db.queryRow<MarketingLead>`
     INSERT INTO marketing_leads (
+      company,
+      company_name,
+      contact_name,
+      email,
+      anonymous_id,
+      source_type,
+      owner_user_id,
+      marketing_stage,
+      intent_score,
+      created_at,
+      updated_at
+    ) VALUES (
+      ${company},
+      ${companyName},
+      ${contactName},
+      ${email},
+      ${anonymousId},
+      'website',
+      'system',
+      'M1',
+      0,
+      now(),
+      now()
+    ) ON CONFLICT (anonymous_id) DO UPDATE
+    SET
+      email = CASE WHEN ${emailProvided} THEN EXCLUDED.email ELSE marketing_leads.email END,
+      company = CASE WHEN ${companyNameProvided} THEN EXCLUDED.company ELSE marketing_leads.company END,
+      company_name = CASE WHEN ${companyNameProvided} THEN EXCLUDED.company_name ELSE marketing_leads.company_name END,
+      contact_name = CASE WHEN ${contactNameProvided} THEN EXCLUDED.contact_name ELSE marketing_leads.contact_name END,
+      updated_at = now()
+    RETURNING *, (xmax = 0) AS lead_created
+  `;
+
+  const fallbackUpsertByEmail = db.queryRow<MarketingLead>`
+    INSERT INTO marketing_leads (
+      company,
+      company_name,
       contact_name,
       email,
       anonymous_id,
@@ -143,24 +184,69 @@ async function upsertLead(
       created_at,
       updated_at
     ) VALUES (
+      ${company},
+      ${companyName},
       ${contactName},
       ${email},
       ${anonymousId},
       'system',
       now(),
       now()
-    ) ON CONFLICT (lower(email)) DO UPDATE
+    ) ON CONFLICT (owner_user_id, lower(email)) DO UPDATE
     SET
-      contact_name = COALESCE(EXCLUDED.contact_name, marketing_leads.contact_name),
+      email = CASE WHEN ${emailProvided} THEN EXCLUDED.email ELSE marketing_leads.email END,
+      company = CASE WHEN ${companyNameProvided} THEN EXCLUDED.company ELSE marketing_leads.company END,
+      company_name = CASE WHEN ${companyNameProvided} THEN EXCLUDED.company_name ELSE marketing_leads.company_name END,
+      contact_name = CASE WHEN ${contactNameProvided} THEN EXCLUDED.contact_name ELSE marketing_leads.contact_name END,
       anonymous_id = COALESCE(EXCLUDED.anonymous_id, marketing_leads.anonymous_id),
       updated_at = now()
     RETURNING *, (xmax = 0) AS lead_created
   `;
 
-  const result = attempt === "full" ? await fullUpsert : await fallbackUpsert;
+  const fallbackUpsertByAnonymousId = db.queryRow<MarketingLead>`
+    INSERT INTO marketing_leads (
+      company,
+      company_name,
+      contact_name,
+      email,
+      anonymous_id,
+      owner_user_id,
+      created_at,
+      updated_at
+    ) VALUES (
+      ${company},
+      ${companyName},
+      ${contactName},
+      ${email},
+      ${anonymousId},
+      'system',
+      now(),
+      now()
+    ) ON CONFLICT (anonymous_id) DO UPDATE
+    SET
+      email = CASE WHEN ${emailProvided} THEN EXCLUDED.email ELSE marketing_leads.email END,
+      company = CASE WHEN ${companyNameProvided} THEN EXCLUDED.company ELSE marketing_leads.company END,
+      company_name = CASE WHEN ${companyNameProvided} THEN EXCLUDED.company_name ELSE marketing_leads.company_name END,
+      contact_name = CASE WHEN ${contactNameProvided} THEN EXCLUDED.contact_name ELSE marketing_leads.contact_name END,
+      updated_at = now()
+    RETURNING *, (xmax = 0) AS lead_created
+  `;
+
+  const result = attempt === "full"
+    ? emailProvided ? await fullUpsertByEmail : await fullUpsertByAnonymousId
+    : emailProvided ? await fallbackUpsertByEmail : await fallbackUpsertByAnonymousId;
+
   if (!result) {
     throw new Error("Failed to upsert lead");
   }
+
+  console.info("[identify] lead persistence", {
+    lead_id: result.id,
+    has_email: !!result.email,
+    has_contact_name: !!result.contact_name,
+    has_company: !!result.company,
+    has_company_name: !!result.company_name,
+  });
 
   const leadCreatedRaw = (result as MarketingLead & { lead_created?: unknown }).lead_created;
   return {
@@ -202,17 +288,12 @@ async function handleIdentify(req: IdentifyRequest, corr?: string): Promise<Iden
       checkOrigin(req.origin, req.referer);
     }
 
-    if (!req.email || typeof req.email !== "string") {
-      throw APIError.invalidArgument("email is required");
-    }
     if (!req.anonymous_id || typeof req.anonymous_id !== "string") {
       throw APIError.invalidArgument("anonymous_id is required");
     }
 
-    const email = req.email.toLowerCase().trim();
-    if (!email) {
-      throw APIError.invalidArgument("email cannot be empty");
-    }
+    const normalizedEmail = typeof req.email === "string" ? req.email.toLowerCase().trim() : "";
+    const email = normalizedEmail.length > 0 ? normalizedEmail : null;
 
     let upsertResult: { lead: MarketingLead; lead_created: boolean };
 
@@ -309,9 +390,6 @@ async function serveIdentify(req: IncomingMessage, res: ServerResponse): Promise
     }
 
     const missing: string[] = [];
-    if (!request.email || typeof request.email !== "string") {
-      missing.push("email");
-    }
     if (!request.anonymous_id || typeof request.anonymous_id !== "string") {
       missing.push("anonymous_id");
     }
