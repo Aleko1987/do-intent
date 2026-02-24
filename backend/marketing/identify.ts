@@ -48,6 +48,10 @@ interface PgError extends Error {
   code?: string;
 }
 
+function hasNonEmptyString(value: string | undefined): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 type AuthHeaderName = "x-do-intent-key" | "x-ingest-api-key" | "authorization";
 
 function hasValidApiKey(headerKey: string | undefined): boolean {
@@ -107,9 +111,7 @@ async function upsertLead(
     ? db.queryRow<MarketingLead>`
       SELECT *
       FROM marketing_leads
-      WHERE owner_user_id = ${ownerUserId}
-        AND lower(email) = ${email}
-      ORDER BY created_at DESC
+      WHERE lower(email) = lower(${email})
       LIMIT 1
     `
     : db.queryRow<MarketingLead>`
@@ -139,6 +141,7 @@ async function upsertLead(
       const updatedLead = await db.queryRow<MarketingLead>`
         UPDATE marketing_leads
         SET
+          owner_user_id = ${ownerUserId},
           email = COALESCE(${email}, email),
           contact_name = COALESCE(${contactName}, contact_name),
           company_name = COALESCE(${companyName}, company_name),
@@ -149,7 +152,6 @@ async function upsertLead(
           last_signal_at = now(),
           updated_at = now()
         WHERE id = ${existingLead.id}
-          AND owner_user_id = ${ownerUserId}
         RETURNING *
       `;
 
@@ -160,38 +162,80 @@ async function upsertLead(
       return { lead: updatedLead, lead_created: false };
     }
 
-    const insertedLead = await db.queryRow<MarketingLead>`
-      INSERT INTO marketing_leads (
-        company,
-        company_name,
-        contact_name,
-        email,
-        anonymous_id,
-        source_type,
-        source,
-        owner_user_id,
-        marketing_stage,
-        intent_score,
-        last_signal_at,
-        created_at,
-        updated_at
-      ) VALUES (
-        ${company},
-        ${companyName},
-        ${contactName},
-        ${email},
-        ${anonymousId},
-        'website',
-        'website',
-        ${ownerUserId},
-        'M1',
-        0,
-        now(),
-        now(),
-        now()
-      )
-      RETURNING *
-    `;
+    let insertedLead: MarketingLead | null = null;
+    try {
+      insertedLead = await db.queryRow<MarketingLead>`
+        INSERT INTO marketing_leads (
+          company,
+          company_name,
+          contact_name,
+          email,
+          anonymous_id,
+          source_type,
+          source,
+          owner_user_id,
+          marketing_stage,
+          intent_score,
+          last_signal_at,
+          created_at,
+          updated_at
+        ) VALUES (
+          ${company},
+          ${companyName},
+          ${contactName},
+          ${email},
+          ${anonymousId},
+          'website',
+          'website',
+          ${ownerUserId},
+          'M1',
+          0,
+          now(),
+          now(),
+          now()
+        )
+        RETURNING *
+      `;
+    } catch (error) {
+      const pgError = error as PgError;
+      if (!emailProvided || pgError.code !== "23505") {
+        throw error;
+      }
+
+      const duplicateLead = await db.queryRow<MarketingLead>`
+        SELECT *
+        FROM marketing_leads
+        WHERE lower(email) = lower(${email})
+        LIMIT 1
+      `;
+
+      if (!duplicateLead) {
+        throw error;
+      }
+
+      insertedLead = await db.queryRow<MarketingLead>`
+        UPDATE marketing_leads
+        SET
+          owner_user_id = ${ownerUserId},
+          email = COALESCE(${email}, email),
+          contact_name = COALESCE(${contactName}, contact_name),
+          company_name = COALESCE(${companyName}, company_name),
+          company = COALESCE(${companyName}, company),
+          anonymous_id = COALESCE(${anonymousId}, anonymous_id),
+          source_type = COALESCE(source_type, 'website'),
+          source = COALESCE(source, 'website'),
+          last_signal_at = now(),
+          updated_at = now()
+        WHERE id = ${duplicateLead.id}
+        RETURNING *
+      `;
+
+      if (!insertedLead) {
+        throw new Error("Failed to update lead after duplicate email insert");
+      }
+
+      return { lead: insertedLead, lead_created: false };
+    }
 
     if (!insertedLead) {
       throw new Error("Failed to insert lead");
@@ -294,9 +338,9 @@ async function upsertLead(
 async function handleIdentify(req: IdentifyRequest, corr?: string): Promise<IdentifyResponse> {
   try {
     console.info("[identify] Request", {
-      has_email: !!req.email,
+      has_email: hasNonEmptyString(req.email),
       anonymous_id: req.anonymous_id,
-      has_contact_name: !!req.contact_name,
+      has_contact_name: hasNonEmptyString(req.contact_name),
     });
 
     const providedApiKey = req["x-do-intent-key"]?.trim();
@@ -393,10 +437,10 @@ async function serveIdentify(req: IncomingMessage, res: ServerResponse): Promise
       hasAuthHeader: !!apiKeyHeader,
       authHeaderNameUsed,
       bodyShape: {
-        hasEmail: !!payload?.email,
-        hasAnonymousId: !!payload?.anonymous_id,
-        hasContactName: !!payload?.contact_name,
-        hasCompanyName: !!payload?.company_name,
+        hasEmail: hasNonEmptyString(payload?.email),
+        hasAnonymousId: hasNonEmptyString(payload?.anonymous_id),
+        hasContactName: hasNonEmptyString(payload?.contact_name),
+        hasCompanyName: hasNonEmptyString(payload?.company_name),
         hasLeadId: false,
         hasEventType: false,
       },
