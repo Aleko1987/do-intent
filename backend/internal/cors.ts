@@ -51,7 +51,7 @@ export function applyCorsHeadersWithOptions(
   const allowMethods = options.allowMethods ?? "GET,POST,OPTIONS";
   const allowHeaders =
     options.allowHeaders ??
-    "Content-Type, Authorization, x-ingest-api-key, x-do-intent-key, x-request-id";
+    "Content-Type, Authorization, x-ingest-api-key, x-do-intent-key, x-marketing-admin-key, x-request-id";
 
   if (normalizedOrigin && allowlist.has(normalizedOrigin)) {
     res.setHeader("Access-Control-Allow-Origin", normalizedOrigin);

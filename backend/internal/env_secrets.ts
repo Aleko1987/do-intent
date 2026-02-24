@@ -43,3 +43,12 @@ export function resolveDebugKey(): string | null {
     "DebugKey",
   ]);
 }
+
+export function resolveMarketingAdminKey(): string | null {
+  return resolveFirstEnv([
+    "ENCORE_SECRET_MarketingAdminKey",
+    "ENCORE_SECRET_MARKETING_ADMIN_KEY",
+    "MARKETING_ADMIN_KEY",
+    "MarketingAdminKey",
+  ]);
+}
