@@ -94,6 +94,10 @@ async function upsertLead(
   email: string,
   attempt: "full" | "fallback"
 ): Promise<{ lead: MarketingLead; lead_created: boolean }> {
+  const companyName = req.company_name?.trim() || null;
+  const contactName = req.contact_name?.trim() || null;
+  const anonymousId = req.anonymous_id?.trim() || null;
+
   const fullUpsert = db.queryRow<MarketingLead>`
     INSERT INTO marketing_leads (
       company,
@@ -108,11 +112,11 @@ async function upsertLead(
       created_at,
       updated_at
     ) VALUES (
-      ${req.company_name || null},
-      ${req.company_name || null},
-      ${req.contact_name || null},
+      ${companyName},
+      ${companyName},
+      ${contactName},
       ${email},
-      ${req.anonymous_id},
+      ${anonymousId},
       'website',
       'system',
       'M1',
@@ -121,10 +125,10 @@ async function upsertLead(
       now()
     ) ON CONFLICT (lower(email)) DO UPDATE
     SET
-      company = COALESCE(marketing_leads.company, EXCLUDED.company),
-      company_name = COALESCE(marketing_leads.company_name, EXCLUDED.company_name),
-      contact_name = COALESCE(marketing_leads.contact_name, EXCLUDED.contact_name),
-      anonymous_id = COALESCE(marketing_leads.anonymous_id, EXCLUDED.anonymous_id),
+      company = COALESCE(EXCLUDED.company, marketing_leads.company),
+      company_name = COALESCE(EXCLUDED.company_name, marketing_leads.company_name),
+      contact_name = COALESCE(EXCLUDED.contact_name, marketing_leads.contact_name),
+      anonymous_id = COALESCE(EXCLUDED.anonymous_id, marketing_leads.anonymous_id),
       updated_at = now()
     RETURNING *, (xmax = 0) AS lead_created
   `;
@@ -138,16 +142,16 @@ async function upsertLead(
       created_at,
       updated_at
     ) VALUES (
-      ${req.contact_name || null},
+      ${contactName},
       ${email},
-      ${req.anonymous_id},
+      ${anonymousId},
       'system',
       now(),
       now()
     ) ON CONFLICT (lower(email)) DO UPDATE
     SET
-      contact_name = COALESCE(marketing_leads.contact_name, EXCLUDED.contact_name),
-      anonymous_id = COALESCE(marketing_leads.anonymous_id, EXCLUDED.anonymous_id),
+      contact_name = COALESCE(EXCLUDED.contact_name, marketing_leads.contact_name),
+      anonymous_id = COALESCE(EXCLUDED.anonymous_id, marketing_leads.anonymous_id),
       updated_at = now()
     RETURNING *, (xmax = 0) AS lead_created
   `;
