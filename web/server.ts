@@ -111,6 +111,26 @@ async function ensureMarketingLeadsSchema(): Promise<void> {
     "[schema] ensured marketing_leads columns ok (including apollo_lead_id and sales_customer_id)"
   );
 
+  let hadIndexFailure = false;
+  const indexStatements = [
+    "create unique index if not exists marketing_leads_owner_email_unique_idx on marketing_leads (owner_user_id, lower(email)) where email is not null",
+    "create unique index if not exists marketing_leads_owner_anonymous_unique_idx on marketing_leads (owner_user_id, anonymous_id) where anonymous_id is not null",
+  ];
+
+  for (const statement of indexStatements) {
+    try {
+      await activePool.query(statement);
+    } catch (error) {
+      hadIndexFailure = true;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[schema] marketing_leads index ensure failed: ${message}`);
+    }
+  }
+
+  if (!hadIndexFailure) {
+    console.log("[schema] ensured marketing_leads indexes ok");
+  }
+
   await logMarketingLeadsSchema();
 }
 

@@ -127,8 +127,38 @@ function ensureMarketingLeadsSchemaAtStartup(activePool: Pool): void {
       console.error(`[schema] ensure failed: ${message}`);
     }
 
+    let hadIndexFailure = false;
+
+    try {
+      await activePool.query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS marketing_leads_owner_email_unique_idx ON marketing_leads (owner_user_id, lower(email)) WHERE email IS NOT NULL"
+      );
+    } catch (error: unknown) {
+      hadIndexFailure = true;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[schema] marketing_leads index ensure failed (owner_user_id, lower(email)): ${message}`
+      );
+    }
+
+    try {
+      await activePool.query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS marketing_leads_owner_anonymous_unique_idx ON marketing_leads (owner_user_id, anonymous_id) WHERE anonymous_id IS NOT NULL"
+      );
+    } catch (error: unknown) {
+      hadIndexFailure = true;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[schema] marketing_leads index ensure failed (owner_user_id, anonymous_id): ${message}`
+      );
+    }
+
     if (!hadFailure) {
       console.info("[schema] ensured marketing_leads columns ok");
+    }
+
+    if (!hadIndexFailure) {
+      console.info("[schema] ensured marketing_leads indexes ok");
     }
 
     logMarketingLeadsSchemaAtStartup(activePool, true);
