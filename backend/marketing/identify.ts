@@ -98,9 +98,9 @@ async function upsertLead(
   const company = companyName;
   const contactName = req.contact_name?.trim() || null;
   const anonymousId = req.anonymous_id?.trim() || null;
-  const emailProvided = typeof email === "string" && email.length > 0;
-  const contactNameProvided = typeof req.contact_name === "string";
-  const companyNameProvided = typeof req.company_name === "string";
+  const emailProvided = email !== null;
+  const contactNameProvided = contactName !== null;
+  const companyNameProvided = companyName !== null;
 
   const fullUpsertByEmail = db.queryRow<MarketingLead>`
     INSERT INTO marketing_leads (
@@ -163,7 +163,7 @@ async function upsertLead(
       0,
       now(),
       now()
-    ) ON CONFLICT (anonymous_id) DO UPDATE
+    ) ON CONFLICT (owner_user_id, anonymous_id) DO UPDATE
     SET
       email = CASE WHEN ${emailProvided} THEN EXCLUDED.email ELSE marketing_leads.email END,
       company = CASE WHEN ${companyNameProvided} THEN EXCLUDED.company ELSE marketing_leads.company END,
@@ -222,7 +222,7 @@ async function upsertLead(
       'system',
       now(),
       now()
-    ) ON CONFLICT (anonymous_id) DO UPDATE
+    ) ON CONFLICT (owner_user_id, anonymous_id) DO UPDATE
     SET
       email = CASE WHEN ${emailProvided} THEN EXCLUDED.email ELSE marketing_leads.email END,
       company = CASE WHEN ${companyNameProvided} THEN EXCLUDED.company ELSE marketing_leads.company END,
@@ -242,6 +242,9 @@ async function upsertLead(
 
   console.info("[identify] lead persistence", {
     lead_id: result.id,
+    email_provided: emailProvided,
+    contact_name_provided: contactNameProvided,
+    company_name_provided: companyNameProvided,
     has_email: !!result.email,
     has_contact_name: !!result.contact_name,
     has_company: !!result.company,
