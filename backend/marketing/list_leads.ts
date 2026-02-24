@@ -120,6 +120,31 @@ ${selectColumns}
       display_name: pickLeadDisplayName(lead),
     }));
 
+    const sampleLead = leadsWithDisplayName[0];
+    if (sampleLead) {
+      const expectedFields = [
+        "id",
+        "email",
+        "contact_name",
+        "company",
+        "company_name",
+        "anonymous_id",
+        "marketing_stage",
+        "intent_score",
+        "last_signal_at",
+        "display_name",
+      ] as const;
+
+      console.info("[marketing.list_leads] sample lead field presence", {
+        has_leads: leadsWithDisplayName.length > 0,
+        fields_present: expectedFields.filter((field) => {
+          const value = sampleLead[field];
+          return value !== undefined && value !== null && value !== "";
+        }),
+        has_display_name: !!sampleLead.display_name,
+      });
+    }
+
     return { leads: leadsWithDisplayName };
   }
 );
