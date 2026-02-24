@@ -107,6 +107,12 @@ async function upsertLead(
   const contactNameProvided = contactName !== null;
   const companyNameProvided = companyName !== null;
 
+  console.info("[identify] owner context", {
+    owner_user_id_used: desiredOwnerId,
+    has_email: emailProvided,
+    anonymous_id: anonymousId,
+  });
+
   const findExistingLead = emailProvided
     ? db.queryRow<MarketingLead>`
       SELECT *
