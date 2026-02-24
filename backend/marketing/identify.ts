@@ -146,6 +146,7 @@ async function upsertLead(
           anonymous_id = COALESCE(${anonymousId}, anonymous_id),
           source_type = COALESCE(source_type, 'website'),
           source = COALESCE(source, 'website'),
+          last_signal_at = now(),
           updated_at = now()
         WHERE id = ${existingLead.id}
           AND owner_user_id = ${ownerUserId}
@@ -171,6 +172,7 @@ async function upsertLead(
         owner_user_id,
         marketing_stage,
         intent_score,
+        last_signal_at,
         created_at,
         updated_at
       ) VALUES (
@@ -184,6 +186,7 @@ async function upsertLead(
         ${ownerUserId},
         'M1',
         0,
+        now(),
         now(),
         now()
       )
@@ -215,7 +218,7 @@ async function upsertLead(
         apollo_lead_id = COALESCE(marketing_leads.apollo_lead_id, ${existingAnonymousLead.apollo_lead_id ?? null}),
         marketing_stage = COALESCE(marketing_leads.marketing_stage, ${existingAnonymousLead.marketing_stage ?? null}),
         intent_score = COALESCE(marketing_leads.intent_score, ${existingAnonymousLead.intent_score ?? null}),
-        last_signal_at = COALESCE(marketing_leads.last_signal_at, ${existingAnonymousLead.last_signal_at ?? null}),
+        last_signal_at = now(),
         sales_customer_id = COALESCE(marketing_leads.sales_customer_id, ${existingAnonymousLead.sales_customer_id ?? null}),
         updated_at = now()
       WHERE id = ${result.lead.id}
