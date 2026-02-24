@@ -186,8 +186,8 @@ async function upsertLead(
           marketing_stage,
           intent_score,
           last_signal_at,
-          created_at,
-          updated_at
+          updated_at,
+          created_at
         ) VALUES (
           ${company},
           ${companyName},
