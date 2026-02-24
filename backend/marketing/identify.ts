@@ -102,6 +102,17 @@ async function upsertLead(
   const contactNameProvided = contactName !== null;
   const companyNameProvided = companyName !== null;
 
+  const existingAnonymousLead = emailProvided && anonymousId
+    ? await db.queryRow<MarketingLead>`
+      SELECT *
+      FROM marketing_leads
+      WHERE owner_user_id = 'system'
+        AND anonymous_id = ${anonymousId}
+      ORDER BY created_at DESC
+      LIMIT 1
+    `
+    : null;
+
   const fullUpsertByEmail = db.queryRow<MarketingLead>`
     INSERT INTO marketing_leads (
       company,
@@ -240,20 +251,87 @@ async function upsertLead(
     throw new Error("Failed to upsert lead");
   }
 
+  let persistedLead = result;
+  if (emailProvided && existingAnonymousLead && existingAnonymousLead.id !== result.id) {
+    const mergedLead = await db.queryRow<MarketingLead>`
+      UPDATE marketing_leads
+      SET
+        company = COALESCE(marketing_leads.company, ${existingAnonymousLead.company ?? null}),
+        company_name = COALESCE(marketing_leads.company_name, ${existingAnonymousLead.company_name ?? null}),
+        contact_name = COALESCE(marketing_leads.contact_name, ${existingAnonymousLead.contact_name ?? null}),
+        phone = COALESCE(marketing_leads.phone, ${existingAnonymousLead.phone ?? null}),
+        anonymous_id = COALESCE(marketing_leads.anonymous_id, ${existingAnonymousLead.anonymous_id ?? null}),
+        source_type = COALESCE(marketing_leads.source_type, ${existingAnonymousLead.source_type ?? null}),
+        apollo_lead_id = COALESCE(marketing_leads.apollo_lead_id, ${existingAnonymousLead.apollo_lead_id ?? null}),
+        marketing_stage = COALESCE(marketing_leads.marketing_stage, ${existingAnonymousLead.marketing_stage ?? null}),
+        intent_score = COALESCE(marketing_leads.intent_score, ${existingAnonymousLead.intent_score ?? null}),
+        last_signal_at = COALESCE(marketing_leads.last_signal_at, ${existingAnonymousLead.last_signal_at ?? null}),
+        sales_customer_id = COALESCE(marketing_leads.sales_customer_id, ${existingAnonymousLead.sales_customer_id ?? null}),
+        updated_at = now()
+      WHERE id = ${result.id}
+      RETURNING *
+    `;
+
+    if (!mergedLead) {
+      throw new Error("Failed to merge anonymous lead into email lead");
+    }
+
+    persistedLead = mergedLead;
+
+    let cleanedUpAnonLead = false;
+    let usedDeletedAt = false;
+    let usedMergedToId = false;
+    try {
+      await db.exec`
+        UPDATE marketing_leads
+        SET deleted_at = now(), updated_at = now()
+        WHERE id = ${existingAnonymousLead.id}
+      `;
+      cleanedUpAnonLead = true;
+      usedDeletedAt = true;
+    } catch (error) {
+      const pgError = error as PgError;
+      if (pgError.code !== "42703") {
+        throw error;
+      }
+
+      try {
+        await db.exec`
+          UPDATE marketing_leads
+          SET merged_to_id = ${result.id}, updated_at = now()
+          WHERE id = ${existingAnonymousLead.id}
+        `;
+        cleanedUpAnonLead = true;
+        usedMergedToId = true;
+      } catch (mergeMarkerError) {
+        const mergeMarkerPgError = mergeMarkerError as PgError;
+        if (mergeMarkerPgError.code !== "42703") {
+          throw mergeMarkerError;
+        }
+      }
+    }
+
+    console.info("[identify] merged anonymous lead", {
+      merge_performed: true,
+      anon_cleanup_performed: cleanedUpAnonLead,
+      anon_cleanup_used_deleted_at: usedDeletedAt,
+      anon_cleanup_used_merged_to_id: usedMergedToId,
+    });
+  }
+
   console.info("[identify] lead persistence", {
-    lead_id: result.id,
     email_provided: emailProvided,
     contact_name_provided: contactNameProvided,
     company_name_provided: companyNameProvided,
-    has_email: !!result.email,
-    has_contact_name: !!result.contact_name,
-    has_company: !!result.company,
-    has_company_name: !!result.company_name,
+    has_email: !!persistedLead.email,
+    has_contact_name: !!persistedLead.contact_name,
+    has_company: !!persistedLead.company,
+    has_company_name: !!persistedLead.company_name,
   });
 
   const leadCreatedRaw = (result as MarketingLead & { lead_created?: unknown }).lead_created;
   return {
-    lead: result,
+    lead: persistedLead,
     lead_created: leadCreatedRaw === true,
   };
 }
