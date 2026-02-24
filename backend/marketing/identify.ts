@@ -94,6 +94,7 @@ async function upsertLead(
   email: string | null,
   attempt: "full" | "fallback"
 ): Promise<{ lead: MarketingLead; lead_created: boolean }> {
+  const ownerUserId = process.env.WEBSITE_OWNER_USER_ID?.trim() || "system";
   const companyName = req.company_name?.trim() || null;
   const company = companyName;
   const contactName = req.contact_name?.trim() || null;
@@ -106,7 +107,7 @@ async function upsertLead(
     ? db.queryRow<MarketingLead>`
       SELECT *
       FROM marketing_leads
-      WHERE owner_user_id = 'system'
+      WHERE owner_user_id = ${ownerUserId}
         AND lower(email) = ${email}
       ORDER BY created_at DESC
       LIMIT 1
@@ -114,7 +115,7 @@ async function upsertLead(
     : db.queryRow<MarketingLead>`
       SELECT *
       FROM marketing_leads
-      WHERE owner_user_id = 'system'
+      WHERE owner_user_id = ${ownerUserId}
         AND anonymous_id = ${anonymousId}
       ORDER BY created_at DESC
       LIMIT 1
@@ -124,7 +125,7 @@ async function upsertLead(
     ? await db.queryRow<MarketingLead>`
       SELECT *
       FROM marketing_leads
-      WHERE owner_user_id = 'system'
+      WHERE owner_user_id = ${ownerUserId}
         AND anonymous_id = ${anonymousId}
       ORDER BY created_at DESC
       LIMIT 1
@@ -147,6 +148,7 @@ async function upsertLead(
           source = COALESCE(source, 'website'),
           updated_at = now()
         WHERE id = ${existingLead.id}
+          AND owner_user_id = ${ownerUserId}
         RETURNING *
       `;
 
@@ -179,7 +181,7 @@ async function upsertLead(
         ${anonymousId},
         'website',
         'website',
-        'system',
+        ${ownerUserId},
         'M1',
         0,
         now(),
@@ -217,6 +219,7 @@ async function upsertLead(
         sales_customer_id = COALESCE(marketing_leads.sales_customer_id, ${existingAnonymousLead.sales_customer_id ?? null}),
         updated_at = now()
       WHERE id = ${result.lead.id}
+        AND owner_user_id = ${ownerUserId}
       RETURNING *
     `;
 
@@ -234,6 +237,7 @@ async function upsertLead(
         UPDATE marketing_leads
         SET deleted_at = now(), updated_at = now()
         WHERE id = ${existingAnonymousLead.id}
+          AND owner_user_id = ${ownerUserId}
       `;
       cleanedUpAnonLead = true;
       usedDeletedAt = true;
@@ -248,6 +252,7 @@ async function upsertLead(
           UPDATE marketing_leads
           SET merged_to_id = ${result.lead.id}, updated_at = now()
           WHERE id = ${existingAnonymousLead.id}
+            AND owner_user_id = ${ownerUserId}
         `;
         cleanedUpAnonLead = true;
         usedMergedToId = true;
