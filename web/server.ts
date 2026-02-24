@@ -91,6 +91,7 @@ async function ensureMarketingLeadsSchema(): Promise<void> {
   const statements = [
     "alter table marketing_leads add column if not exists company_name text",
     "alter table marketing_leads add column if not exists source_type text",
+    "alter table marketing_leads add column if not exists apollo_lead_id text",
     "alter table marketing_leads add column if not exists created_at timestamptz default now()",
     "alter table marketing_leads add column if not exists updated_at timestamptz default now()",
   ];
@@ -104,7 +105,9 @@ async function ensureMarketingLeadsSchema(): Promise<void> {
     }
   }
 
-  console.log("[schema] ensured marketing_leads columns ok");
+  console.log(
+    "[schema] ensured marketing_leads columns ok (including apollo_lead_id)"
+  );
 }
 
 function logRequest({
