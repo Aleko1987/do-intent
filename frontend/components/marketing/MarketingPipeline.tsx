@@ -23,7 +23,7 @@ export default function MarketingPipeline() {
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
   const backend = useBackend();
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn, getToken } = useAuth();
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -57,6 +57,42 @@ export default function MarketingPipeline() {
     }
   };
 
+  const deleteLeadRequest = async (leadId: string) => {
+    const marketingClient = backend.marketing as {
+      deleteLead?: (params: { id: string }) => Promise<unknown>;
+      remove?: (params: { id: string }) => Promise<unknown>;
+    };
+
+    if (typeof marketingClient.deleteLead === "function") {
+      await marketingClient.deleteLead({ id: leadId });
+      return;
+    }
+
+    if (typeof marketingClient.remove === "function") {
+      await marketingClient.remove({ id: leadId });
+      return;
+    }
+
+    const token = await getToken();
+    const headers: HeadersInit = {
+      "Content-Type": "application/json",
+    };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`/marketing/leads/${encodeURIComponent(leadId)}`, {
+      method: "DELETE",
+      credentials: "include",
+      headers,
+    });
+
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message || `Delete failed with status ${response.status}`);
+    }
+  };
+
   const handleDeleteLead = async (leadId: string) => {
     const shouldDelete = window.confirm("Delete this lead? You can't undo this.");
     if (!shouldDelete) {
@@ -64,7 +100,7 @@ export default function MarketingPipeline() {
     }
 
     try {
-      await backend.marketing.deleteLead({ id: leadId });
+      await deleteLeadRequest(leadId);
       setLeads((prev) => prev.filter((lead) => lead.id !== leadId));
       setSelectedLead((prev) => (prev?.id === leadId ? null : prev));
       toast({
