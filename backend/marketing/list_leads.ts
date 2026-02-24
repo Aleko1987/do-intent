@@ -24,7 +24,7 @@ function pickLeadDisplayName(lead: MarketingLead): string {
     lead.company_name?.trim() ||
     lead.email?.trim() ||
     withLegacyFields.anonymous_id?.trim() ||
-    "Unknown"
+    lead.id
   );
 }
 
@@ -34,7 +34,25 @@ export const list = api<ListLeadsParams, ListLeadsResponse>(
   async (params) => {
     const authData = getAuthData()!;
     let query = `
-      SELECT * FROM marketing_leads
+      SELECT
+        id,
+        COALESCE(company, '') AS company,
+        COALESCE(company_name, '') AS company_name,
+        COALESCE(contact_name, '') AS contact_name,
+        COALESCE(email, '') AS email,
+        phone,
+        COALESCE(anonymous_id, '') AS anonymous_id,
+        source_type,
+        apollo_lead_id,
+        marketing_stage,
+        intent_score,
+        last_signal_at,
+        owner_user_id,
+        auto_push_enabled,
+        sales_customer_id,
+        created_at,
+        updated_at
+      FROM marketing_leads
       WHERE owner_user_id = $1
     `;
 

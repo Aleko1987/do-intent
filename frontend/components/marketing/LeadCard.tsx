@@ -25,13 +25,13 @@ export default function LeadCard({ lead, onClick }: LeadCardProps) {
     anonymous_id?: string | null;
   };
   const title =
-    lead.display_name?.trim() ||
-    lead.contact_name?.trim() ||
-    leadWithFallbackFields.company?.trim() ||
-    lead.company_name?.trim() ||
-    lead.email?.trim() ||
-    leadWithFallbackFields.anonymous_id?.trim() ||
-    "Unknown";
+    lead.display_name ??
+    lead.contact_name ??
+    leadWithFallbackFields.company ??
+    lead.company_name ??
+    lead.email ??
+    leadWithFallbackFields.anonymous_id ??
+    lead.id;
 
   return (
     <Card

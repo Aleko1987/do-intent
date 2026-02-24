@@ -2,10 +2,10 @@ import type { JsonObject } from "../internal/json_types";
 
 export interface MarketingLead {
   id: string;
-  company?: string | null;
-  company_name: string | null;
-  contact_name: string | null;
-  email: string | null;
+  company?: string;
+  company_name: string;
+  contact_name: string;
+  email: string;
   phone: string | null;
   anonymous_id?: string | null;
   display_name?: string | null;
