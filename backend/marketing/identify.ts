@@ -98,7 +98,7 @@ async function upsertLead(
   email: string | null,
   attempt: "full" | "fallback"
 ): Promise<{ lead: MarketingLead; lead_created: boolean }> {
-  const ownerUserId = process.env.WEBSITE_OWNER_USER_ID?.trim() || "system";
+  const desiredOwnerId = process.env.WEBSITE_OWNER_USER_ID?.trim() || "system";
   const companyName = req.company_name?.trim() || null;
   const company = companyName;
   const contactName = req.contact_name?.trim() || null;
@@ -117,7 +117,7 @@ async function upsertLead(
     : db.queryRow<MarketingLead>`
       SELECT *
       FROM marketing_leads
-      WHERE owner_user_id = ${ownerUserId}
+      WHERE owner_user_id = ${desiredOwnerId}
         AND anonymous_id = ${anonymousId}
       ORDER BY created_at DESC
       LIMIT 1
@@ -127,7 +127,7 @@ async function upsertLead(
     ? await db.queryRow<MarketingLead>`
       SELECT *
       FROM marketing_leads
-      WHERE owner_user_id = ${ownerUserId}
+      WHERE owner_user_id = ${desiredOwnerId}
         AND anonymous_id = ${anonymousId}
       ORDER BY created_at DESC
       LIMIT 1
@@ -141,7 +141,10 @@ async function upsertLead(
       const updatedLead = await db.queryRow<MarketingLead>`
         UPDATE marketing_leads
         SET
-          owner_user_id = ${ownerUserId},
+          owner_user_id = CASE
+            WHEN owner_user_id IS NULL OR owner_user_id <> ${desiredOwnerId} THEN ${desiredOwnerId}
+            ELSE owner_user_id
+          END,
           email = COALESCE(${email}, email),
           contact_name = COALESCE(${contactName}, contact_name),
           company_name = COALESCE(${companyName}, company_name),
@@ -187,7 +190,7 @@ async function upsertLead(
           ${anonymousId},
           'website',
           'website',
-          ${ownerUserId},
+          ${desiredOwnerId},
           'M1',
           0,
           now(),
@@ -216,7 +219,10 @@ async function upsertLead(
       insertedLead = await db.queryRow<MarketingLead>`
         UPDATE marketing_leads
         SET
-          owner_user_id = ${ownerUserId},
+          owner_user_id = CASE
+            WHEN owner_user_id IS NULL OR owner_user_id <> ${desiredOwnerId} THEN ${desiredOwnerId}
+            ELSE owner_user_id
+          END,
           email = COALESCE(${email}, email),
           contact_name = COALESCE(${contactName}, contact_name),
           company_name = COALESCE(${companyName}, company_name),
@@ -266,7 +272,7 @@ async function upsertLead(
         sales_customer_id = COALESCE(marketing_leads.sales_customer_id, ${existingAnonymousLead.sales_customer_id ?? null}),
         updated_at = now()
       WHERE id = ${result.lead.id}
-        AND owner_user_id = ${ownerUserId}
+        AND owner_user_id = ${desiredOwnerId}
       RETURNING *
     `;
 
@@ -284,7 +290,7 @@ async function upsertLead(
         UPDATE marketing_leads
         SET deleted_at = now(), updated_at = now()
         WHERE id = ${existingAnonymousLead.id}
-          AND owner_user_id = ${ownerUserId}
+          AND owner_user_id = ${desiredOwnerId}
       `;
       cleanedUpAnonLead = true;
       usedDeletedAt = true;
@@ -299,7 +305,7 @@ async function upsertLead(
           UPDATE marketing_leads
           SET merged_to_id = ${result.lead.id}, updated_at = now()
           WHERE id = ${existingAnonymousLead.id}
-            AND owner_user_id = ${ownerUserId}
+            AND owner_user_id = ${desiredOwnerId}
         `;
         cleanedUpAnonLead = true;
         usedMergedToId = true;
