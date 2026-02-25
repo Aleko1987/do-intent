@@ -4,6 +4,7 @@ import MarketingPipeline from "@/components/marketing/MarketingPipeline";
 import ContentPlan from "@/components/marketing/ContentPlan";
 import IntentSignals from "@/components/marketing/IntentSignals";
 import ImportLeads from "@/components/marketing/ImportLeads";
+import ScoringModel from "@/components/marketing/ScoringModel";
 
 export default function Marketing() {
   const [activeTab, setActiveTab] = useState("pipeline");
@@ -19,11 +20,12 @@ export default function Marketing() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full max-w-[600px] grid-cols-4">
+          <TabsList className="grid w-full max-w-[800px] grid-cols-5">
             <TabsTrigger value="pipeline">Pipeline</TabsTrigger>
             <TabsTrigger value="content">Content Plan</TabsTrigger>
             <TabsTrigger value="signals">Intent Signals</TabsTrigger>
             <TabsTrigger value="import">Import</TabsTrigger>
+            <TabsTrigger value="scoring">Scoring Model</TabsTrigger>
           </TabsList>
 
           <TabsContent value="pipeline" className="mt-6">
@@ -40,6 +42,10 @@ export default function Marketing() {
 
           <TabsContent value="import" className="mt-6">
             <ImportLeads />
+          </TabsContent>
+
+          <TabsContent value="scoring" className="mt-6">
+            <ScoringModel />
           </TabsContent>
         </Tabs>
       </div>

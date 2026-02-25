@@ -1,4 +1,5 @@
 import { api } from "encore.dev/api";
+import { getAuthData } from "~encore/auth";
 
 interface EmptyRequest {
   dummy?: string;
@@ -11,8 +12,9 @@ interface ListRulesResponse {
 }
 
 export const listRules = api<EmptyRequest, ListRulesResponse>(
-  { method: "GET", path: "/intent-scorer/rules", expose: true },
+  { method: "GET", path: "/intent-scorer/rules", expose: true, auth: true },
   async (): Promise<ListRulesResponse> => {
+    getAuthData()!;
     const rules = await db.queryAll<IntentRule>`
       SELECT * FROM intent_rules ORDER BY rule_type, rule_key
     `;
