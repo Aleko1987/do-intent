@@ -38,37 +38,6 @@ export default function IntentSignals() {
 
   return (
     <div>
-      <Card className="p-4 mb-4">
-        <h2 className="text-xl font-semibold mb-2">How scoring works</h2>
-        <p className="text-sm text-muted-foreground mb-3">
-          Intent score is calculated from tracked events using scoring rules, then mapped into a
-          pipeline stage.
-        </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-          <div>
-            <h3 className="font-medium mb-2">Stage thresholds</h3>
-            <div className="space-y-1 text-muted-foreground">
-              <div>M1 (Seen): 0-5</div>
-              <div>M2 (Engaged): 6-15</div>
-              <div>M3 (Educated): 16-30</div>
-              <div>M4 (Trust): 31-45</div>
-              <div>M5 (Intent): 46+</div>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="font-medium mb-2">Rule behavior</h3>
-            <div className="space-y-1 text-muted-foreground">
-              <div>Each event adds rule points for its event type.</div>
-              <div>Time decay reduces points by 1 every 7 days.</div>
-              <div>Hard-intent rules can immediately force stage M5.</div>
-              <div>Auto-push is enabled at score 31+ or stage M5.</div>
-            </div>
-          </div>
-        </div>
-      </Card>
-
       <h2 className="text-xl font-semibold mb-4">Top Intent Signals</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {topLeads.map((lead) => (
