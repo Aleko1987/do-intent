@@ -31,6 +31,7 @@ export default function LeadCard({ lead, onClick, onDelete }: LeadCardProps) {
     lead.anonymous_id ||
     lead.id ||
     "Unknown";
+  const signalDate = lead.last_signal_at ? new Date(lead.last_signal_at) : null;
 
   return (
     <Card
@@ -100,10 +101,11 @@ export default function LeadCard({ lead, onClick, onDelete }: LeadCardProps) {
           <Badge variant="outline" className="text-xs">
             {lead.source_type}
           </Badge>
-          {lead.last_signal_at && (
-            <span className="text-muted-foreground">
-              {new Date(lead.last_signal_at).toLocaleDateString()}
-            </span>
+          {signalDate && (
+            <div className="text-right text-muted-foreground leading-tight">
+              <div>{signalDate.toLocaleDateString()}</div>
+              <div>{signalDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+            </div>
           )}
         </div>
       </div>
