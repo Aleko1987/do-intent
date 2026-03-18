@@ -157,6 +157,40 @@ async function carryForwardAnonymousSubjectScore(params: {
   }
 }
 
+async function alignLeadStageWithCurrentScore(params: {
+  lead: MarketingLead;
+  ownerUserId: string;
+  corr?: string;
+}): Promise<MarketingLead> {
+  const score = Math.max(0, Math.round(params.lead.intent_score ?? 0));
+  const cfg = await readLeadScoringConfig();
+  const resolvedStage = stageForScore(score, cfg);
+  if (params.lead.marketing_stage === resolvedStage) {
+    return params.lead;
+  }
+
+  const updated = await db.queryRow<MarketingLead>`
+    UPDATE marketing_leads
+    SET marketing_stage = ${resolvedStage}, updated_at = now()
+    WHERE id = ${params.lead.id}
+      AND owner_user_id = ${params.ownerUserId}
+    RETURNING *
+  `;
+
+  if (!updated) {
+    return params.lead;
+  }
+
+  console.info("[identify] aligned lead stage with score", {
+    corr: params.corr,
+    lead_id: updated.id,
+    owner_user_id: params.ownerUserId,
+    score,
+    stage: resolvedStage,
+  });
+  return updated;
+}
+
 type AuthHeaderName = "x-do-intent-key" | "x-ingest-api-key" | "authorization";
 
 function hasValidApiKey(headerKey: string | undefined): boolean {
@@ -367,6 +401,10 @@ async function upsertLead(
 
   let persistedLead = result.lead;
   if (emailProvided && existingAnonymousLead && existingAnonymousLead.id !== result.lead.id) {
+    const mergedScore = computeCarryForwardScore(
+      result.lead.intent_score ?? 0,
+      existingAnonymousLead.intent_score ?? 0
+    );
     const mergedLead = await db.queryRow<MarketingLead>`
       UPDATE marketing_leads
       SET
@@ -378,7 +416,7 @@ async function upsertLead(
         source_type = COALESCE(marketing_leads.source_type, ${existingAnonymousLead.source_type ?? null}),
         apollo_lead_id = COALESCE(marketing_leads.apollo_lead_id, ${existingAnonymousLead.apollo_lead_id ?? null}),
         marketing_stage = COALESCE(marketing_leads.marketing_stage, ${existingAnonymousLead.marketing_stage ?? null}),
-        intent_score = COALESCE(marketing_leads.intent_score, ${existingAnonymousLead.intent_score ?? null}),
+        intent_score = ${mergedScore},
         last_signal_at = now(),
         sales_customer_id = COALESCE(marketing_leads.sales_customer_id, ${existingAnonymousLead.sales_customer_id ?? null}),
         updated_at = now()
@@ -395,6 +433,7 @@ async function upsertLead(
     let cleanedUpAnonLead = false;
     let usedDeletedAt = false;
     let usedMergedToId = false;
+    let usedHardDelete = false;
     try {
       await db.exec`
         UPDATE marketing_leads
@@ -422,6 +461,13 @@ async function upsertLead(
         if (mergeMarkerPgError.code !== "42703") {
           throw mergeMarkerError;
         }
+
+        await db.exec`
+          DELETE FROM marketing_leads
+          WHERE id = ${existingAnonymousLead.id}
+        `;
+        cleanedUpAnonLead = true;
+        usedHardDelete = true;
       }
     }
 
@@ -430,6 +476,7 @@ async function upsertLead(
       anon_cleanup_performed: cleanedUpAnonLead,
       anon_cleanup_used_deleted_at: usedDeletedAt,
       anon_cleanup_used_merged_to_id: usedMergedToId,
+      anon_cleanup_used_hard_delete: usedHardDelete,
     });
   }
 
@@ -443,13 +490,21 @@ async function upsertLead(
     has_company_name: !!persistedLead.company_name,
   });
 
+  const leadWithCarryForward = await carryForwardAnonymousSubjectScore({
+    lead: persistedLead,
+    anonymousId,
+    ownerUserId: desiredOwnerId,
+    corr,
+  });
+
+  const alignedLead = await alignLeadStageWithCurrentScore({
+    lead: leadWithCarryForward,
+    ownerUserId: desiredOwnerId,
+    corr,
+  });
+
   return {
-    lead: await carryForwardAnonymousSubjectScore({
-      lead: persistedLead,
-      anonymousId,
-      ownerUserId: desiredOwnerId,
-      corr,
-    }),
+    lead: alignedLead,
     lead_created: result.lead_created,
   };
 }
