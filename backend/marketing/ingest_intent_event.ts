@@ -14,6 +14,7 @@ import {
   parseJsonBody,
 } from "../internal/cors";
 import { applyCorrelationId } from "../internal/correlation";
+import { buildIpContext } from "../internal/client_ip";
 import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
 import { updateLeadScoring } from "./scoring";
@@ -91,6 +92,8 @@ interface IngestIntentEventRequest extends IngestIntentEventPayload {
   "origin"?: Header<"origin">;
   "referer"?: Header<"referer">;
   "x-request-id"?: Header<"x-request-id">;
+  ip_raw?: string | null;
+  ip_fingerprint?: string | null;
 }
 
 interface NormalizedPayload {
@@ -100,6 +103,8 @@ interface NormalizedPayload {
   lead_id: string | null;
   anonymous_id: string | null;
   dedupe_key: string | null;
+  ip_raw: string | null;
+  ip_fingerprint: string | null;
   metadata: JsonObject;
 }
 
@@ -364,7 +369,7 @@ async function withDbOperation<T>(
 }
 
 function validatePayload(
-  payload: IngestIntentEventPayload
+  payload: IngestIntentEventRequest
 ): { normalized: NormalizedPayload; errors: Record<string, string> } {
   const errors: Record<string, string> = {};
 
@@ -412,6 +417,8 @@ function validatePayload(
   const metadataDedupeKey = parseOptionalString(parsedMetadata.dedupe_key);
   const anonymousId = payloadAnonymousId ?? metadataAnonymousId ?? null;
   const dedupeKey = payloadDedupeKey ?? metadataDedupeKey ?? null;
+  const ipRaw = parseOptionalString(payload.ip_raw);
+  const ipFingerprint = parseOptionalString(payload.ip_fingerprint);
   if (!leadId && !anonymousId) {
     errors.lead_id = "lead_id or anonymous_id is required";
   }
@@ -459,6 +466,8 @@ function validatePayload(
   setMetadataValue(metadata, "gclid", parseOptionalString(payload.gclid));
   setMetadataValue(metadata, "fbclid", parseOptionalString(payload.fbclid));
   setMetadataValue(metadata, "msclkid", parseOptionalString(payload.msclkid));
+  setMetadataValue(metadata, "ip_raw", ipRaw);
+  setMetadataValue(metadata, "ip_fingerprint", ipFingerprint);
 
   for (const key of Object.keys(metadata)) {
     if (metadata[key] === "") {
@@ -479,6 +488,8 @@ function validatePayload(
       lead_id: leadId ?? null,
       anonymous_id: anonymousId,
       dedupe_key: dedupeKey,
+      ip_raw: ipRaw,
+      ip_fingerprint: ipFingerprint,
       metadata,
     },
     errors,
@@ -486,7 +497,7 @@ function validatePayload(
 }
 
 function buildValidationFailureLogDetails(
-  payload: IngestIntentEventPayload,
+  payload: IngestIntentEventRequest,
   errors: Record<string, string>
 ): ValidationFailureLogDetails {
   const missing = new Set<string>();
@@ -668,6 +679,8 @@ async function handleIngestIntentEvent(
             event_source,
             event_value,
             dedupe_key,
+            ip_raw,
+            ip_fingerprint,
             metadata,
             occurred_at,
             created_at
@@ -678,6 +691,8 @@ async function handleIngestIntentEvent(
             ${normalized.event_source},
             ${eventValue},
             ${normalized.dedupe_key},
+            ${normalized.ip_raw},
+            ${normalized.ip_fingerprint},
             ${JSON.stringify(normalized.metadata)},
             ${normalized.occurred_at},
             now()
@@ -801,6 +816,7 @@ async function serveIngestIntent(
       origin: getHeaderValue(req, "origin") as Header<"origin"> | undefined,
       referer: getHeaderValue(req, "referer") as Header<"referer"> | undefined,
       "x-request-id": getHeaderValue(req, "x-request-id") as Header<"x-request-id"> | undefined,
+      ...buildIpContext(req),
     };
 
     const response = await handleIngestIntentEvent(request, acceptedHeaders, corr);

@@ -10,6 +10,8 @@ export interface LeadScoringConfig {
   m5_min: number;
   auto_push_threshold: number;
   decay_points_per_week: number;
+  ip_boost_enabled: boolean;
+  ip_repeat_boost_points: number;
 }
 
 interface ScoringConfigRow extends LeadScoringConfig {
@@ -31,9 +33,20 @@ export const DEFAULT_SCORING_CONFIG: LeadScoringConfig = {
   m5_min: 46,
   auto_push_threshold: 31,
   decay_points_per_week: 1,
+  ip_boost_enabled: true,
+  ip_repeat_boost_points: 2,
 };
 
-const CONFIG_FIELDS: Array<keyof LeadScoringConfig> = [
+const NUMERIC_CONFIG_FIELDS: Array<
+  | "m1_min"
+  | "m2_min"
+  | "m3_min"
+  | "m4_min"
+  | "m5_min"
+  | "auto_push_threshold"
+  | "decay_points_per_week"
+  | "ip_repeat_boost_points"
+> = [
   "m1_min",
   "m2_min",
   "m3_min",
@@ -41,14 +54,28 @@ const CONFIG_FIELDS: Array<keyof LeadScoringConfig> = [
   "m5_min",
   "auto_push_threshold",
   "decay_points_per_week",
+  "ip_repeat_boost_points",
+];
+
+const CONFIG_FIELDS: Array<keyof LeadScoringConfig> = [
+  ...NUMERIC_CONFIG_FIELDS,
+  "ip_boost_enabled",
 ];
 
 async function ensureConfigRowExists(): Promise<void> {
   await db.rawExec(
     `
+      ALTER TABLE IF EXISTS lead_scoring_config
+      ADD COLUMN IF NOT EXISTS ip_boost_enabled BOOLEAN NOT NULL DEFAULT true,
+      ADD COLUMN IF NOT EXISTS ip_repeat_boost_points INTEGER NOT NULL DEFAULT 2
+    `
+  );
+
+  await db.rawExec(
+    `
       INSERT INTO lead_scoring_config (
-        id, m1_min, m2_min, m3_min, m4_min, m5_min, auto_push_threshold, decay_points_per_week, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+        id, m1_min, m2_min, m3_min, m4_min, m5_min, auto_push_threshold, decay_points_per_week, ip_boost_enabled, ip_repeat_boost_points, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
       ON CONFLICT (id) DO NOTHING
     `,
     1,
@@ -58,7 +85,9 @@ async function ensureConfigRowExists(): Promise<void> {
     DEFAULT_SCORING_CONFIG.m4_min,
     DEFAULT_SCORING_CONFIG.m5_min,
     DEFAULT_SCORING_CONFIG.auto_push_threshold,
-    DEFAULT_SCORING_CONFIG.decay_points_per_week
+    DEFAULT_SCORING_CONFIG.decay_points_per_week,
+    DEFAULT_SCORING_CONFIG.ip_boost_enabled,
+    DEFAULT_SCORING_CONFIG.ip_repeat_boost_points
   );
 }
 
@@ -75,15 +104,21 @@ function toResponse(row: ScoringConfigRow | null): LeadScoringConfig {
     m5_min: row.m5_min,
     auto_push_threshold: row.auto_push_threshold,
     decay_points_per_week: row.decay_points_per_week,
+    ip_boost_enabled: row.ip_boost_enabled,
+    ip_repeat_boost_points: row.ip_repeat_boost_points,
   };
 }
 
 function validateConfig(config: LeadScoringConfig): void {
-  for (const field of CONFIG_FIELDS) {
+  for (const field of NUMERIC_CONFIG_FIELDS) {
     const value = config[field];
     if (!Number.isInteger(value) || value < 0) {
       throw APIError.invalidArgument(`${field} must be a non-negative integer`);
     }
+  }
+
+  if (typeof config.ip_boost_enabled !== "boolean") {
+    throw APIError.invalidArgument("ip_boost_enabled must be a boolean");
   }
 
   if (
@@ -108,6 +143,8 @@ async function getStoredConfigRow(): Promise<ScoringConfigRow | null> {
         m5_min,
         auto_push_threshold,
         decay_points_per_week,
+        ip_boost_enabled,
+        ip_repeat_boost_points,
         updated_at
       FROM lead_scoring_config
       WHERE id = 1
@@ -177,6 +214,8 @@ export const updateScoringConfig = api<UpdateScoringConfigRequest, LeadScoringCo
           m5_min = $5,
           auto_push_threshold = $6,
           decay_points_per_week = $7,
+          ip_boost_enabled = $8,
+          ip_repeat_boost_points = $9,
           updated_at = now()
         WHERE id = 1
       `,
@@ -186,7 +225,9 @@ export const updateScoringConfig = api<UpdateScoringConfigRequest, LeadScoringCo
       merged.m4_min,
       merged.m5_min,
       merged.auto_push_threshold,
-      merged.decay_points_per_week
+      merged.decay_points_per_week,
+      merged.ip_boost_enabled,
+      merged.ip_repeat_boost_points
     );
 
     console.info("[marketing.update_scoring_config] config updated", {

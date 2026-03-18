@@ -8,6 +8,8 @@ import {
 } from "../internal/cors";
 import { applyCorrelationId } from "../internal/correlation";
 import type { MarketingLead } from "./types";
+import { readLeadScoringConfig } from "./scoring_config";
+import { computeCarryForwardScore } from "./carry_forward";
 
 const WEBSITE_ALLOWED_ORIGINS = ["https://earthcurebiodiesel.com"] as const;
 
@@ -50,6 +52,109 @@ interface PgError extends Error {
 
 function hasNonEmptyString(value: string | undefined): boolean {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+function stageForScore(
+  score: number,
+  thresholds: {
+    m2_min: number;
+    m3_min: number;
+    m4_min: number;
+    m5_min: number;
+  }
+): string {
+  if (score >= thresholds.m5_min) return "M5";
+  if (score >= thresholds.m4_min) return "M4";
+  if (score >= thresholds.m3_min) return "M3";
+  if (score >= thresholds.m2_min) return "M2";
+  return "M1";
+}
+
+async function carryForwardAnonymousSubjectScore(params: {
+  lead: MarketingLead;
+  anonymousId: string | null;
+  ownerUserId: string;
+  corr?: string;
+}): Promise<MarketingLead> {
+  try {
+    if (!params.anonymousId || !isUuid(params.anonymousId)) {
+      return params.lead;
+    }
+
+    const subjectScoreRow = await db.rawQueryRow<{ total_score: number }>(
+      `
+        SELECT total_score
+        FROM intent_subject_scores
+        WHERE subject_type = 'anonymous'
+          AND subject_id = $1::uuid
+        LIMIT 1
+      `,
+      params.anonymousId
+    );
+
+    const anonymousScore = Math.max(0, Math.round(subjectScoreRow?.total_score ?? 0));
+    if (anonymousScore <= 0) {
+      return params.lead;
+    }
+
+    const nextScore = computeCarryForwardScore(params.lead.intent_score ?? 0, anonymousScore);
+    const scoringConfig = await readLeadScoringConfig();
+    const nextStage = stageForScore(nextScore, scoringConfig);
+
+    const updatedLead = await db.queryRow<MarketingLead>`
+      UPDATE marketing_leads
+      SET
+        intent_score = ${nextScore},
+        marketing_stage = ${nextStage},
+        last_signal_at = now(),
+        updated_at = now()
+      WHERE id = ${params.lead.id}
+        AND owner_user_id = ${params.ownerUserId}
+      RETURNING *
+    `;
+
+    if (!updatedLead) {
+      return params.lead;
+    }
+
+    await db.rawExec(
+      `
+        DELETE FROM intent_subject_scores
+        WHERE subject_type = 'anonymous'
+          AND subject_id = $1::uuid
+      `,
+      params.anonymousId
+    );
+
+    console.info("[identify] carried anonymous subject score into lead", {
+      corr: params.corr,
+      lead_id: updatedLead.id,
+      owner_user_id: params.ownerUserId,
+      anonymous_id: params.anonymousId,
+      carried_score: anonymousScore,
+      resulting_score: nextScore,
+    });
+
+    return updatedLead;
+  } catch (error) {
+    const pgError = error as { code?: string; message?: string };
+    if (pgError.code === "42P01") {
+      console.warn("[identify] subject score table missing, skipping carry-forward");
+      return params.lead;
+    }
+    console.warn("[identify] failed to carry-forward anonymous subject score", {
+      corr: params.corr,
+      lead_id: params.lead.id,
+      anonymous_id: params.anonymousId,
+      code: pgError.code,
+      message: pgError.message,
+    });
+    return params.lead;
+  }
 }
 
 type AuthHeaderName = "x-do-intent-key" | "x-ingest-api-key" | "authorization";
@@ -96,7 +201,8 @@ function checkOrigin(origin: string | undefined, referer: string | undefined): v
 async function upsertLead(
   req: IdentifyRequest,
   email: string | null,
-  attempt: "full" | "fallback"
+  attempt: "full" | "fallback",
+  corr?: string
 ): Promise<{ lead: MarketingLead; lead_created: boolean }> {
   const desiredOwnerId = process.env.WEBSITE_OWNER_USER_ID?.trim() || "system";
   const companyName = req.company_name?.trim() || null;
@@ -342,7 +448,12 @@ async function upsertLead(
   });
 
   return {
-    lead: persistedLead,
+    lead: await carryForwardAnonymousSubjectScore({
+      lead: persistedLead,
+      anonymousId,
+      ownerUserId: desiredOwnerId,
+      corr,
+    }),
     lead_created: result.lead_created,
   };
 }
@@ -390,7 +501,7 @@ async function handleIdentify(req: IdentifyRequest, corr?: string): Promise<Iden
     let upsertResult: { lead: MarketingLead; lead_created: boolean };
 
     try {
-      upsertResult = await upsertLead(req, email, "full");
+      upsertResult = await upsertLead(req, email, "full", corr);
     } catch (error) {
       const pgError = error as PgError;
       console.warn("[identify] lead upsert warning", {
@@ -404,7 +515,7 @@ async function handleIdentify(req: IdentifyRequest, corr?: string): Promise<Iden
       }
 
       try {
-        upsertResult = await upsertLead(req, email, "fallback");
+        upsertResult = await upsertLead(req, email, "fallback", corr);
       } catch (fallbackError) {
         const fallbackPgError = fallbackError as PgError;
         console.warn("[identify] lead upsert warning", {

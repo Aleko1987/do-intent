@@ -8,12 +8,15 @@ import { getAuthData } from "~encore/auth";
 import { Pool } from "pg";
 import { randomUUID } from "crypto";
 import { autoScoreEvent } from "./auto_score";
+import { calculateIpRepeatBoost } from "./ip_boost";
 import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
 import {
   applyCorsHeadersWithOptions,
   parseJsonBody,
 } from "../internal/cors";
+import { buildIpContext } from "../internal/client_ip";
+import { readLeadScoringConfig } from "../marketing/scoring_config";
 
 const WEBSITE_ALLOWED_ORIGINS = ["https://earthcurebiodiesel.com"] as const;
 
@@ -34,6 +37,8 @@ interface TrackRequest {
   timestamp?: string;
   value?: number;
   metadata?: unknown;
+  ip_raw?: string | null;
+  ip_fingerprint?: string | null;
 }
 
 interface TrackSuccessResponse {
@@ -119,10 +124,26 @@ async function ensureTrackingTables(activePool: Pool | null): Promise<void> {
             event_value NUMERIC NULL,
             url TEXT NOT NULL,
             referrer TEXT NULL,
+            ip_raw TEXT NULL,
+            ip_fingerprint TEXT NULL,
             occurred_at TIMESTAMPTZ NOT NULL,
             received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             metadata JSONB NOT NULL DEFAULT '{}'::jsonb
           );
+        `)
+      )
+      .then(() =>
+        activePool.query(`
+          ALTER TABLE IF EXISTS events
+          ADD COLUMN IF NOT EXISTS ip_raw TEXT,
+          ADD COLUMN IF NOT EXISTS ip_fingerprint TEXT
+        `)
+      )
+      .then(() =>
+        activePool.query(`
+          ALTER TABLE IF EXISTS intent_events
+          ADD COLUMN IF NOT EXISTS ip_raw TEXT,
+          ADD COLUMN IF NOT EXISTS ip_fingerprint TEXT
         `)
       )
       .then(() =>
@@ -442,6 +463,107 @@ async function upsertAnonymousSubjectScore(
   `;
 }
 
+async function applyIpFingerprintBoost(
+  params: {
+    ipRaw: string | null;
+    ipFingerprint: string | null;
+    anonymousId: string;
+    occurredAt: string;
+    eventType: string;
+    url: string;
+    metadata: JsonObject;
+  }
+): Promise<number> {
+  if (!params.ipFingerprint) {
+    return 0;
+  }
+
+  try {
+    const config = await readLeadScoringConfig();
+    const stateRow = await db.rawQueryRow<{
+      prior_total_events: number;
+      new_total_events: number;
+    }>(
+      `
+        WITH existing AS (
+          SELECT total_events
+          FROM intent_ip_fingerprint_scores
+          WHERE ip_fingerprint = $1
+        ),
+        upserted AS (
+          INSERT INTO intent_ip_fingerprint_scores (
+            ip_fingerprint,
+            ip_raw,
+            total_events,
+            boost_score_total,
+            last_seen_at,
+            created_at,
+            updated_at
+          ) VALUES (
+            $1, $2, 1, 0, $3::timestamptz, now(), now()
+          )
+          ON CONFLICT (ip_fingerprint) DO UPDATE
+          SET
+            ip_raw = COALESCE(EXCLUDED.ip_raw, intent_ip_fingerprint_scores.ip_raw),
+            total_events = intent_ip_fingerprint_scores.total_events + 1,
+            last_seen_at = GREATEST(intent_ip_fingerprint_scores.last_seen_at, EXCLUDED.last_seen_at),
+            updated_at = now()
+          RETURNING total_events
+        )
+        SELECT
+          COALESCE((SELECT total_events FROM existing), 0)::integer AS prior_total_events,
+          (SELECT total_events FROM upserted)::integer AS new_total_events
+      `,
+      params.ipFingerprint,
+      params.ipRaw,
+      params.occurredAt
+    );
+
+    const priorTotalEvents = stateRow?.prior_total_events ?? 0;
+    const boostToApply = calculateIpRepeatBoost(
+      priorTotalEvents,
+      config.ip_boost_enabled,
+      config.ip_repeat_boost_points
+    );
+
+    if (boostToApply > 0) {
+      await upsertAnonymousSubjectScore(
+        params.anonymousId,
+        boostToApply,
+        params.occurredAt,
+        params.eventType,
+        params.url,
+        {
+          ...params.metadata,
+          ip_boost_applied: true,
+          ip_fingerprint: params.ipFingerprint,
+          ip_repeat_boost_points: boostToApply,
+        }
+      );
+
+      await db.rawExec(
+        `
+          UPDATE intent_ip_fingerprint_scores
+          SET boost_score_total = boost_score_total + $2,
+              updated_at = now()
+          WHERE ip_fingerprint = $1
+        `,
+        params.ipFingerprint,
+        boostToApply
+      );
+    }
+
+    return boostToApply;
+  } catch (error) {
+    const pgError = error as { code?: string };
+    if (pgError.code === "42P01") {
+      console.warn("[track] ip fingerprint table missing; skipping IP boost");
+      return 0;
+    }
+    throw error;
+  }
+}
+
 function getDbErrorCode(error?: unknown): string {
   if (error && typeof error === "object" && "code" in error) {
     const code = String((error as any).code);
@@ -500,6 +622,8 @@ async function insertIntentEvent(
     occurredAt: string;
     metadata: JsonObject;
     dedupeKey?: string | null;
+    ipRaw?: string | null;
+    ipFingerprint?: string | null;
   }
 ): Promise<string | null> {
   const normalizedValue =
@@ -514,10 +638,12 @@ async function insertIntentEvent(
         event_source,
         event_value,
         dedupe_key,
+        ip_raw,
+        ip_fingerprint,
         metadata,
         occurred_at,
         created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
       ON CONFLICT (event_source, dedupe_key)
         WHERE dedupe_key IS NOT NULL
         DO NOTHING
@@ -530,6 +656,8 @@ async function insertIntentEvent(
       params.eventSource,
       normalizedValue,
       params.dedupeKey ?? null,
+      params.ipRaw ?? null,
+      params.ipFingerprint ?? null,
       JSON.stringify(params.metadata),
       params.occurredAt,
     ]
@@ -663,6 +791,8 @@ async function handleTrack(payload: TrackRequest): Promise<HandleTrackResult> {
     const referrer = parseOptionalString(payload.referrer);
     const occurredAt = parseIsoTimestamp(payload.timestamp) ?? new Date();
     const metadata = parseMetadata(payload.metadata);
+    const ipRaw = parseOptionalString(payload.ip_raw ?? null);
+    const ipFingerprint = parseOptionalString(payload.ip_fingerprint ?? null);
     const eventValue = parseOptionalNumber(payload.value);
 
     let clerkUserId: string | null = null;
@@ -680,6 +810,12 @@ async function handleTrack(payload: TrackRequest): Promise<HandleTrackResult> {
       storedMetadata.clerk_user_id = clerkUserId;
     }
     storedMetadata.session_id = sessionId;
+    if (ipRaw) {
+      storedMetadata.ip_raw = ipRaw;
+    }
+    if (ipFingerprint) {
+      storedMetadata.ip_fingerprint = ipFingerprint;
+    }
     if (payload.session_id && payload.session_id !== sessionId) {
       storedMetadata.original_session_id = payload.session_id;
     }
@@ -744,13 +880,15 @@ async function handleTrack(payload: TrackRequest): Promise<HandleTrackResult> {
           INSERT INTO sessions (
             session_id,
             anonymous_id,
+            ip,
             last_seen_at
-          ) VALUES ($1, $2, now())
+          ) VALUES ($1, $2, $3, now())
           ON CONFLICT (session_id) DO UPDATE
           SET anonymous_id = EXCLUDED.anonymous_id,
+              ip = COALESCE(EXCLUDED.ip, sessions.ip),
               last_seen_at = now()
         `,
-            [sessionId, anonymousId]
+            [sessionId, anonymousId, ipRaw]
           );
           await activePool.query(
             `
@@ -762,8 +900,10 @@ async function handleTrack(payload: TrackRequest): Promise<HandleTrackResult> {
             referrer,
             occurred_at,
             event_value,
+            ip_raw,
+            ip_fingerprint,
             metadata
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         `,
             [
               event,
@@ -773,6 +913,8 @@ async function handleTrack(payload: TrackRequest): Promise<HandleTrackResult> {
               referrer,
               occurredAt.toISOString(),
               eventValue ?? null,
+              ipRaw,
+              ipFingerprint,
               JSON.stringify(metadataPayload),
             ]
           );
@@ -793,6 +935,8 @@ async function handleTrack(payload: TrackRequest): Promise<HandleTrackResult> {
           occurredAt: occurredAt.toISOString(),
           metadata: metadataPayload,
           dedupeKey: eventId ?? null,
+          ipRaw,
+          ipFingerprint,
         });
             if (intentEventId) {
               await scoreAndUpdateSubject(
@@ -803,6 +947,24 @@ async function handleTrack(payload: TrackRequest): Promise<HandleTrackResult> {
             url,
             metadataPayload
               );
+
+              const ipBoostApplied = await applyIpFingerprintBoost({
+                ipRaw,
+                ipFingerprint,
+                anonymousId,
+                occurredAt: occurredAt.toISOString(),
+                eventType: event,
+                url,
+                metadata: metadataPayload,
+              });
+              if (ipBoostApplied > 0) {
+                console.info("[track] applied ip repeat-visit boost", {
+                  request_id,
+                  anonymous_id: anonymousId,
+                  ip_fingerprint: ipFingerprint,
+                  boost_points: ipBoostApplied,
+                });
+              }
             }
           }
 
@@ -818,6 +980,8 @@ async function handleTrack(payload: TrackRequest): Promise<HandleTrackResult> {
             ...metadataPayload,
             derived: true,
           },
+          ipRaw,
+          ipFingerprint,
         });
             if (pricingEventId) {
               await scoreAndUpdateSubject(
@@ -858,6 +1022,8 @@ async function handleTrack(payload: TrackRequest): Promise<HandleTrackResult> {
               derived: true,
             },
             dedupeKey,
+            ipRaw,
+            ipFingerprint,
           });
               if (returnVisitId) {
                 await scoreAndUpdateSubject(
@@ -937,7 +1103,13 @@ async function serveTrack(req: IncomingMessage, res: ServerResponse): Promise<vo
   applyWebsiteCors(req, res);
   try {
     const payload = await parseJsonBody<TrackRequest>(req);
-    const response = await handleTrack(payload);
+    const { ipRaw, ipFingerprint } = buildIpContext(req);
+    const requestPayload: TrackRequest = {
+      ...payload,
+      ip_raw: payload.ip_raw ?? ipRaw,
+      ip_fingerprint: payload.ip_fingerprint ?? ipFingerprint,
+    };
+    const response = await handleTrack(requestPayload);
     res.statusCode = response.ok ? 200 : 500;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     if (response.ok) {

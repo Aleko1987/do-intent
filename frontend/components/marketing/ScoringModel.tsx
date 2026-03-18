@@ -17,6 +17,8 @@ interface LeadScoringConfig {
   m5_min: number;
   auto_push_threshold: number;
   decay_points_per_week: number;
+  ip_boost_enabled: boolean;
+  ip_repeat_boost_points: number;
 }
 
 const DEFAULT_SCORING_CONFIG: LeadScoringConfig = {
@@ -27,6 +29,8 @@ const DEFAULT_SCORING_CONFIG: LeadScoringConfig = {
   m5_min: 46,
   auto_push_threshold: 31,
   decay_points_per_week: 1,
+  ip_boost_enabled: true,
+  ip_repeat_boost_points: 2,
 };
 
 export default function ScoringModel() {
@@ -156,9 +160,21 @@ export default function ScoringModel() {
   };
 
   const validateDraftConfig = (candidate: LeadScoringConfig): string | null => {
-    const values = Object.values(candidate);
-    if (values.some((value) => !Number.isInteger(value) || value < 0)) {
+    const numericValues = [
+      candidate.m1_min,
+      candidate.m2_min,
+      candidate.m3_min,
+      candidate.m4_min,
+      candidate.m5_min,
+      candidate.auto_push_threshold,
+      candidate.decay_points_per_week,
+      candidate.ip_repeat_boost_points,
+    ];
+    if (numericValues.some((value) => !Number.isInteger(value) || value < 0)) {
       return "All values must be non-negative integers";
+    }
+    if (typeof candidate.ip_boost_enabled !== "boolean") {
+      return "IP boost toggle must be true or false";
     }
     if (
       candidate.m1_min > candidate.m2_min ||
@@ -324,6 +340,32 @@ export default function ScoringModel() {
                 value={draftConfig.decay_points_per_week}
                 onChange={(e) => updateConfigValue("decay_points_per_week", e.target.value)}
               />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">IP repeat boost points</p>
+              <Input
+                type="number"
+                value={draftConfig.ip_repeat_boost_points}
+                onChange={(e) => updateConfigValue("ip_repeat_boost_points", e.target.value)}
+              />
+            </div>
+            <div className="col-span-2 md:col-span-2 flex items-center gap-2 pt-4">
+              <Button
+                type="button"
+                variant={draftConfig.ip_boost_enabled ? "secondary" : "outline"}
+                onClick={() =>
+                  setDraftConfig((prev) => ({
+                    ...prev,
+                    ip_boost_enabled: !prev.ip_boost_enabled,
+                  }))
+                }
+              >
+                {draftConfig.ip_boost_enabled ? "IP boost enabled" : "IP boost disabled"}
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                Stores raw IP and fingerprint, and boosts pre-identify score on repeated visits from
+                the same fingerprint.
+              </p>
             </div>
           </div>
         )}
