@@ -595,7 +595,9 @@ function parseMetadata(raw: unknown): JsonObject {
   return { raw_metadata: String(raw) };
 }
 
-const DB_CALL_TIMEOUT_MS = 2500;
+// Cold starts and first-hit bootstrap migrations can exceed 2.5s in production.
+// Keep timeout bounded but high enough that initial anonymous page_view persists.
+const DB_CALL_TIMEOUT_MS = 12000;
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
