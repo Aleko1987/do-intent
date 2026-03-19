@@ -373,7 +373,15 @@ function halfLifeSecondsForEventClass(eventClass: EventClass): number {
 }
 
 const SUBJECT_SCORE_CAP = 60;
-const TRACKING_OWNER_USER_ID = "user_39kcwJnyCHbVS0fuYG6a5fJsD2O";
+const TRACKING_OWNER_USER_ID_FALLBACK = "user_39kcwJnyCHbVS0fuYG6a5fJsD2O";
+
+function resolveTrackingOwnerUserId(): string {
+  const configuredOwner = process.env.WEBSITE_OWNER_USER_ID?.trim();
+  if (configuredOwner && configuredOwner.length > 0) {
+    return configuredOwner;
+  }
+  return TRACKING_OWNER_USER_ID_FALLBACK;
+}
 
 async function upsertAnonymousSubjectScore(
   anonymousId: string,
@@ -675,12 +683,32 @@ async function upsertLead(
   }
 ): Promise<string> {
   try {
+    const ownerUserId = resolveTrackingOwnerUserId();
     const existing = await activePool.query(
-      `SELECT id FROM marketing_leads WHERE anonymous_id = $1 LIMIT 1`,
+      `SELECT id, owner_user_id FROM marketing_leads WHERE anonymous_id = $1 LIMIT 1`,
       [params.anonymousId]
     );
 
     let leadId = existing.rows[0]?.id;
+
+    if (leadId) {
+      const existingOwnerUserId = existing.rows[0]?.owner_user_id as string | null | undefined;
+      if (existingOwnerUserId !== ownerUserId || params.clerkUserId) {
+        const updated = await activePool.query(
+          `
+            UPDATE marketing_leads
+            SET
+              owner_user_id = $2,
+              clerk_id = COALESCE(clerk_id, $3),
+              updated_at = now()
+            WHERE id = $1
+            RETURNING id
+          `,
+          [leadId, ownerUserId, params.clerkUserId]
+        );
+        leadId = updated.rows[0]?.id ?? leadId;
+      }
+    }
 
     if (!leadId) {
       const insertResult = await activePool.query(
@@ -692,7 +720,7 @@ async function upsertLead(
           ) VALUES ($1, $2, $3)
           RETURNING id
         `,
-        [params.anonymousId, params.clerkUserId, TRACKING_OWNER_USER_ID]
+        [params.anonymousId, params.clerkUserId, ownerUserId]
       );
 
       leadId = insertResult.rows[0]?.id;
