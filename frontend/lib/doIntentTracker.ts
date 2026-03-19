@@ -366,35 +366,60 @@ async function sendTrackEvent(
     metadata: JSON.stringify(buildMetadata(metadata)),
   };
   
-  const endpoint = buildEncoreEndpoint('/intent_scorer/track');
+  const endpoints = [
+    buildEncoreEndpoint('/intent_scorer/track'),
+    buildEncoreEndpoint('/api/v1/track'),
+    buildEncoreEndpoint('/track'),
+  ];
   
   if (config.debug) {
     console.log('[DO-Intent] Tracking event:', eventType, payload);
-    console.log('[DO-Intent] API endpoint:', endpoint);
+    console.log('[DO-Intent] API endpoints:', endpoints);
   }
   
   try {
-    console.log('[DO-Intent] Sending track request to URL:', endpoint);
+    let lastError: unknown = null;
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-      keepalive: true, // Ensure request completes even if page unloads
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.warn('[DO-Intent] Track failed:', response.status, errorText);
-    } else {
-      const result = await response.json();
-      if (config.debug) {
-        console.log('[DO-Intent] Track success:', result);
+    for (const endpoint of endpoints) {
+      try {
+        if (config.debug) {
+          console.log('[DO-Intent] Sending track request to URL:', endpoint);
+        }
+
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+          keepalive: true, // Ensure request completes even if page unloads
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          lastError = new Error(`Track failed ${response.status}: ${errorText}`);
+          if (config.debug) {
+            console.warn('[DO-Intent] Track attempt failed:', endpoint, response.status, errorText);
+          }
+          continue;
+        }
+
+        const result = await response.json();
+        if (config.debug) {
+          console.log('[DO-Intent] Track success:', result);
+          console.log('[DO-Intent] Track succeeded via endpoint:', endpoint);
+        }
+        return;
+      } catch (error) {
+        lastError = error;
+        if (config.debug) {
+          console.warn('[DO-Intent] Track attempt error:', endpoint, error);
+        }
       }
     }
+
+    console.warn('[DO-Intent] Track failed on all endpoints:', lastError);
   } catch (error) {
     console.warn('[DO-Intent] Track error:', error);
     // Silently fail - don't block UI
