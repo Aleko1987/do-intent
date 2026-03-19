@@ -7,6 +7,7 @@ import {
   parseJsonBody,
 } from "../internal/cors";
 import { applyCorrelationId } from "../internal/correlation";
+import { buildIpContext } from "../internal/client_ip";
 import type { MarketingLead } from "./types";
 import { readLeadScoringConfig } from "./scoring_config";
 import { computeCarryForwardScore } from "./carry_forward";
@@ -39,6 +40,8 @@ interface IdentifyRequest extends IdentifyPayload {
   "x-do-intent-key"?: string;
   origin?: string;
   referer?: string;
+  ip_raw?: string | null;
+  ip_fingerprint?: string | null;
 }
 
 interface IdentifyResponse {
@@ -243,6 +246,7 @@ async function upsertLead(
   const company = companyName;
   const contactName = req.contact_name?.trim() || null;
   const anonymousId = req.anonymous_id?.trim() || null;
+  const ipFingerprint = req.ip_fingerprint?.trim() || null;
   const emailProvided = email !== null;
   const contactNameProvided = contactName !== null;
   const companyNameProvided = companyName !== null;
@@ -269,17 +273,70 @@ async function upsertLead(
       LIMIT 1
     `;
 
-  const existingAnonymousLead = emailProvided && anonymousId
-    ? await db.queryRow<MarketingLead>`
+  const existingLead = await findExistingLead;
+  let existingAnonymousLead: MarketingLead | null = null;
+  if (emailProvided && anonymousId) {
+    existingAnonymousLead = await db.queryRow<MarketingLead>`
       SELECT *
       FROM marketing_leads
       WHERE anonymous_id = ${anonymousId}
       ORDER BY created_at DESC
       LIMIT 1
-    `
-    : null;
+    `;
+  }
 
-  const existingLead = await findExistingLead;
+  // Fallback: when anonymous_id differs across website/app origins, attempt
+  // a conservative IP-fingerprint match to the most recent anonymous lead.
+  if (emailProvided && !existingAnonymousLead && ipFingerprint) {
+    try {
+      const ipCandidates = await db.rawQueryAll<MarketingLead>(
+        `
+          SELECT ml.*
+          FROM marketing_leads ml
+          JOIN intent_events ie
+            ON ie.anonymous_id = ml.anonymous_id
+          WHERE ie.ip_fingerprint = $1
+            AND ml.owner_user_id = $2
+            AND (ml.email IS NULL OR btrim(ml.email) = '')
+            AND ie.occurred_at >= now() - interval '6 hours'
+          GROUP BY ml.id
+          ORDER BY max(ie.occurred_at) DESC
+          LIMIT 2
+        `,
+        ipFingerprint,
+        desiredOwnerId
+      );
+
+      if (ipCandidates.length === 1) {
+        const candidate = ipCandidates[0];
+        if (!existingLead || candidate.id !== existingLead.id) {
+          existingAnonymousLead = candidate;
+          console.info("[identify] selected anonymous lead via ip fingerprint fallback", {
+            corr,
+            owner_user_id: desiredOwnerId,
+            ip_fingerprint: ipFingerprint,
+            anonymous_lead_id: candidate.id,
+          });
+        }
+      } else if (ipCandidates.length > 1) {
+        console.info("[identify] skipped ip fallback due to multiple candidates", {
+          corr,
+          owner_user_id: desiredOwnerId,
+          ip_fingerprint: ipFingerprint,
+          candidate_count: ipCandidates.length,
+        });
+      }
+    } catch (error) {
+      const pgError = error as PgError;
+      if (pgError.code !== "42P01" && pgError.code !== "42703") {
+        throw error;
+      }
+      console.warn("[identify] ip fingerprint fallback unavailable", {
+        corr,
+        code: pgError.code,
+      });
+    }
+  }
 
   const performPersistence = async (): Promise<{ lead: MarketingLead; lead_created: boolean }> => {
     if (existingLead) {
@@ -625,6 +682,7 @@ async function serveIdentify(req: IncomingMessage, res: ServerResponse): Promise
       "x-do-intent-key": apiKeyHeader,
       origin: getHeaderValue(req, "origin"),
       referer: getHeaderValue(req, "referer"),
+      ...buildIpContext(req),
     };
 
     const providedApiKey = request["x-do-intent-key"]?.trim();
