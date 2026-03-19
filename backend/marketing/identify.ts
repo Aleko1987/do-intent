@@ -8,6 +8,7 @@ import {
 } from "../internal/cors";
 import { applyCorrelationId } from "../internal/correlation";
 import { buildIpContext } from "../internal/client_ip";
+import { resolveWebsiteOwnerUserId } from "../internal/owner_user";
 import type { MarketingLead } from "./types";
 import { readLeadScoringConfig } from "./scoring_config";
 import { computeCarryForwardScore } from "./carry_forward";
@@ -264,7 +265,7 @@ async function upsertLead(
   email: string | null,
   corr?: string
 ): Promise<{ lead: MarketingLead; lead_created: boolean }> {
-  const desiredOwnerId = process.env.WEBSITE_OWNER_USER_ID?.trim() || "system";
+  const desiredOwnerId = resolveWebsiteOwnerUserId();
   const companyName = req.company_name?.trim() || null;
   const company = companyName;
   const contactName = req.contact_name?.trim() || null;
@@ -302,9 +303,12 @@ async function upsertLead(
     existingAnonymousLead = await db.queryRow<MarketingLead>`
       SELECT *
       FROM marketing_leads
-      WHERE owner_user_id = ${desiredOwnerId}
-        AND anonymous_id = ${anonymousId}
+      WHERE anonymous_id = ${anonymousId}
       ORDER BY
+        CASE
+          WHEN owner_user_id = ${desiredOwnerId} THEN 0
+          ELSE 1
+        END,
         CASE
           WHEN email IS NULL OR btrim(email) = '' THEN 0
           ELSE 1

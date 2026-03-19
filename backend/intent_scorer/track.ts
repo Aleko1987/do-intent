@@ -16,6 +16,7 @@ import {
   parseJsonBody,
 } from "../internal/cors";
 import { buildIpContext } from "../internal/client_ip";
+import { resolveWebsiteOwnerUserId } from "../internal/owner_user";
 import { readLeadScoringConfig } from "../marketing/scoring_config";
 
 const WEBSITE_ALLOWED_ORIGINS = [
@@ -376,16 +377,6 @@ function halfLifeSecondsForEventClass(eventClass: EventClass): number {
 }
 
 const SUBJECT_SCORE_CAP = 60;
-const TRACKING_OWNER_USER_ID_FALLBACK = "user_39kcwJnyCHbVS0fuYG6a5fJsD2O";
-
-function resolveTrackingOwnerUserId(): string {
-  const configuredOwner = process.env.WEBSITE_OWNER_USER_ID?.trim();
-  if (configuredOwner && configuredOwner.length > 0) {
-    return configuredOwner;
-  }
-  return TRACKING_OWNER_USER_ID_FALLBACK;
-}
-
 async function upsertAnonymousSubjectScore(
   anonymousId: string,
   scoreDelta: number,
@@ -686,7 +677,7 @@ async function upsertLead(
   }
 ): Promise<string> {
   try {
-    const ownerUserId = resolveTrackingOwnerUserId();
+    const ownerUserId = resolveWebsiteOwnerUserId();
     const existing = await activePool.query(
       `SELECT id, owner_user_id FROM marketing_leads WHERE anonymous_id = $1 LIMIT 1`,
       [params.anonymousId]
