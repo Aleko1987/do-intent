@@ -82,7 +82,8 @@ export const list = api<ListLeadsParams, ListLeadsResponse>(
 
     const buildQuery = (
       includeApolloLeadId: boolean,
-      includeDeletedAtFilter: boolean
+      includeDeletedAtFilter: boolean,
+      includeMergedToIdFilter: boolean
     ): string => {
       const selectColumns = includeApolloLeadId
         ? `${baseSelectColumns.trimEnd()},\n        apollo_lead_id`
@@ -97,6 +98,9 @@ ${selectColumns}
 
       if (includeDeletedAtFilter) {
         query += ` AND deleted_at IS NULL`;
+      }
+      if (includeMergedToIdFilter) {
+        query += ` AND merged_to_id IS NULL`;
       }
 
       if (params.stage) {
@@ -126,24 +130,27 @@ ${selectColumns}
     let leads: MarketingLead[];
 
     try {
-      leads = await db.rawQueryAll<MarketingLead>(buildQuery(true, true), ...queryParams);
+      leads = await db.rawQueryAll<MarketingLead>(buildQuery(true, true, true), ...queryParams);
     } catch (error) {
       const pgError = error as PgError;
       const missingApolloLeadId =
         pgError.code === "42703" && pgError.message.toLowerCase().includes("apollo_lead_id");
       const missingDeletedAt =
         pgError.code === "42703" && pgError.message.toLowerCase().includes("deleted_at");
+      const missingMergedToId =
+        pgError.code === "42703" && pgError.message.toLowerCase().includes("merged_to_id");
 
-      if (missingApolloLeadId || missingDeletedAt) {
+      if (missingApolloLeadId || missingDeletedAt || missingMergedToId) {
         console.warn("[marketing.list_leads] missing optional column, retrying query", {
           corr,
           code: pgError.code,
           missing_apollo_lead_id: missingApolloLeadId,
           missing_deleted_at: missingDeletedAt,
+          missing_merged_to_id: missingMergedToId,
         });
 
         leads = await db.rawQueryAll<MarketingLead>(
-          buildQuery(!missingApolloLeadId, !missingDeletedAt),
+          buildQuery(!missingApolloLeadId, !missingDeletedAt, !missingMergedToId),
           ...queryParams
         );
       } else {
