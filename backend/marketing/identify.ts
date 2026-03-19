@@ -56,6 +56,27 @@ interface PgError extends Error {
   code?: string;
 }
 
+type IdentifyPersistenceMode =
+  | "update_existing_email_lead"
+  | "convert_anonymous_lead_in_place"
+  | "insert_new_lead";
+
+export function resolveIdentifyPersistenceMode(params: {
+  emailProvided: boolean;
+  hasExistingLead: boolean;
+  hasExistingAnonymousLead: boolean;
+}): IdentifyPersistenceMode {
+  if (params.hasExistingLead) {
+    return "update_existing_email_lead";
+  }
+
+  if (params.emailProvided && params.hasExistingAnonymousLead) {
+    return "convert_anonymous_lead_in_place";
+  }
+
+  return "insert_new_lead";
+}
+
 function hasNonEmptyString(value: string | undefined): boolean {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -241,7 +262,6 @@ function checkOrigin(origin: string | undefined, referer: string | undefined): v
 async function upsertLead(
   req: IdentifyRequest,
   email: string | null,
-  attempt: "full" | "fallback",
   corr?: string
 ): Promise<{ lead: MarketingLead; lead_created: boolean }> {
   const desiredOwnerId = process.env.WEBSITE_OWNER_USER_ID?.trim() || "system";
@@ -282,8 +302,14 @@ async function upsertLead(
     existingAnonymousLead = await db.queryRow<MarketingLead>`
       SELECT *
       FROM marketing_leads
-      WHERE anonymous_id = ${anonymousId}
-      ORDER BY created_at DESC
+      WHERE owner_user_id = ${desiredOwnerId}
+        AND anonymous_id = ${anonymousId}
+      ORDER BY
+        CASE
+          WHEN email IS NULL OR btrim(email) = '' THEN 0
+          ELSE 1
+        END,
+        created_at DESC
       LIMIT 1
     `;
   }
@@ -341,8 +367,14 @@ async function upsertLead(
     }
   }
 
+  const persistenceMode = resolveIdentifyPersistenceMode({
+    emailProvided,
+    hasExistingLead: !!existingLead,
+    hasExistingAnonymousLead: !!existingAnonymousLead,
+  });
+
   const performPersistence = async (): Promise<{ lead: MarketingLead; lead_created: boolean }> => {
-    if (existingLead) {
+    if (persistenceMode === "update_existing_email_lead" && existingLead) {
       const updatedLead = await db.queryRow<MarketingLead>`
         UPDATE marketing_leads
         SET
@@ -368,6 +400,40 @@ async function upsertLead(
       }
 
       return { lead: updatedLead, lead_created: false };
+    }
+
+    if (persistenceMode === "convert_anonymous_lead_in_place" && existingAnonymousLead) {
+      const convertedLead = await db.queryRow<MarketingLead>`
+        UPDATE marketing_leads
+        SET
+          owner_user_id = CASE
+            WHEN owner_user_id IS NULL OR owner_user_id <> ${desiredOwnerId} THEN ${desiredOwnerId}
+            ELSE owner_user_id
+          END,
+          email = COALESCE(${email}, email),
+          contact_name = COALESCE(${contactName}, contact_name),
+          company_name = COALESCE(${companyName}, company_name),
+          company = COALESCE(${companyName}, company),
+          anonymous_id = COALESCE(anonymous_id, ${anonymousId}),
+          source_type = COALESCE(source_type, 'website'),
+          source = COALESCE(source, 'website'),
+          last_signal_at = now(),
+          updated_at = now()
+        WHERE id = ${existingAnonymousLead.id}
+        RETURNING *
+      `;
+
+      if (!convertedLead) {
+        throw new Error("Failed to convert anonymous lead in place");
+      }
+
+      console.info("[identify] converted anonymous lead in place", {
+        corr,
+        owner_user_id: desiredOwnerId,
+        anonymous_lead_id: existingAnonymousLead.id,
+      });
+
+      return { lead: convertedLead, lead_created: false };
     }
 
     let insertedLead: MarketingLead | null = null;
@@ -455,9 +521,7 @@ async function upsertLead(
     return { lead: insertedLead, lead_created: true };
   };
 
-  const result = attempt === "full"
-    ? await performPersistence()
-    : await performPersistence();
+  const result = await performPersistence();
 
   let persistedLead = result.lead;
   if (emailProvided && existingAnonymousLead && existingAnonymousLead.id !== result.lead.id) {
@@ -465,24 +529,40 @@ async function upsertLead(
       result.lead.intent_score ?? 0,
       existingAnonymousLead.intent_score ?? 0
     );
-    const mergedLead = await db.queryRow<MarketingLead>`
-      UPDATE marketing_leads
-      SET
-        company = COALESCE(marketing_leads.company, ${existingAnonymousLead.company ?? null}),
-        company_name = COALESCE(marketing_leads.company_name, ${existingAnonymousLead.company_name ?? null}),
-        contact_name = COALESCE(marketing_leads.contact_name, ${existingAnonymousLead.contact_name ?? null}),
-        phone = COALESCE(marketing_leads.phone, ${existingAnonymousLead.phone ?? null}),
-        anonymous_id = COALESCE(marketing_leads.anonymous_id, ${existingAnonymousLead.anonymous_id ?? null}),
-        source_type = COALESCE(marketing_leads.source_type, ${existingAnonymousLead.source_type ?? null}),
-        apollo_lead_id = COALESCE(marketing_leads.apollo_lead_id, ${existingAnonymousLead.apollo_lead_id ?? null}),
-        marketing_stage = COALESCE(marketing_leads.marketing_stage, ${existingAnonymousLead.marketing_stage ?? null}),
-        intent_score = ${mergedScore},
-        last_signal_at = now(),
-        sales_customer_id = COALESCE(marketing_leads.sales_customer_id, ${existingAnonymousLead.sales_customer_id ?? null}),
-        updated_at = now()
-      WHERE id = ${result.lead.id}
-      RETURNING *
-    `;
+    let mergedLead: MarketingLead | null = null;
+    try {
+      mergedLead = await db.queryRow<MarketingLead>`
+        UPDATE marketing_leads
+        SET
+          company = COALESCE(marketing_leads.company, ${existingAnonymousLead.company ?? null}),
+          company_name = COALESCE(marketing_leads.company_name, ${existingAnonymousLead.company_name ?? null}),
+          contact_name = COALESCE(marketing_leads.contact_name, ${existingAnonymousLead.contact_name ?? null}),
+          anonymous_id = COALESCE(marketing_leads.anonymous_id, ${existingAnonymousLead.anonymous_id ?? null}),
+          source_type = COALESCE(marketing_leads.source_type, ${existingAnonymousLead.source_type ?? null}),
+          marketing_stage = COALESCE(marketing_leads.marketing_stage, ${existingAnonymousLead.marketing_stage ?? null}),
+          intent_score = ${mergedScore},
+          last_signal_at = now(),
+          updated_at = now()
+        WHERE id = ${result.lead.id}
+        RETURNING *
+      `;
+    } catch (error) {
+      const pgError = error as PgError;
+      if (pgError.code !== "42703") {
+        throw error;
+      }
+
+      mergedLead = await db.queryRow<MarketingLead>`
+        UPDATE marketing_leads
+        SET
+          anonymous_id = COALESCE(marketing_leads.anonymous_id, ${existingAnonymousLead.anonymous_id ?? null}),
+          intent_score = ${mergedScore},
+          last_signal_at = now(),
+          updated_at = now()
+        WHERE id = ${result.lead.id}
+        RETURNING *
+      `;
+    }
 
     if (!mergedLead) {
       throw new Error("Failed to merge anonymous lead into email lead");
@@ -609,34 +689,7 @@ async function handleIdentify(req: IdentifyRequest, corr?: string): Promise<Iden
     const normalizedEmail = typeof req.email === "string" ? req.email.trim().toLowerCase() : "";
     const email = normalizedEmail.length > 0 ? normalizedEmail : null;
 
-    let upsertResult: { lead: MarketingLead; lead_created: boolean };
-
-    try {
-      upsertResult = await upsertLead(req, email, "full", corr);
-    } catch (error) {
-      const pgError = error as PgError;
-      console.warn("[identify] lead upsert warning", {
-        corr,
-        attempt: "full",
-        message: pgError.message,
-      });
-
-      if (pgError.code !== "42703") {
-        throw error;
-      }
-
-      try {
-        upsertResult = await upsertLead(req, email, "fallback", corr);
-      } catch (fallbackError) {
-        const fallbackPgError = fallbackError as PgError;
-        console.warn("[identify] lead upsert warning", {
-          corr,
-          attempt: "fallback",
-          message: fallbackPgError.message,
-        });
-        throw fallbackError;
-      }
-    }
+    const upsertResult = await upsertLead(req, email, corr);
 
     return {
       lead_id: upsertResult.lead.id,
