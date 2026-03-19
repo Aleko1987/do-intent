@@ -47,6 +47,7 @@ interface TrackRequest {
 
 interface TrackSuccessResponse {
   ok: true;
+  corr: string;
 }
 
 interface TrackErrorResponse {
@@ -1136,8 +1137,9 @@ async function serveTrack(req: IncomingMessage, res: ServerResponse): Promise<vo
     const response = await handleTrack(requestPayload);
     res.statusCode = response.ok ? 200 : 500;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("x-do-intent-corr", response.request_id);
     if (response.ok) {
-      const successResponse: TrackSuccessResponse = { ok: true };
+      const successResponse: TrackSuccessResponse = { ok: true, corr: response.request_id };
       res.end(JSON.stringify(successResponse));
       return;
     }

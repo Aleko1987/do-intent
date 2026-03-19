@@ -742,8 +742,28 @@ async function absorbAdditionalAnonymousLeads(params: {
   }
 
   if (candidates.length === 0) {
+    console.info("[identify] no additional anonymous lead candidates to absorb", {
+      corr: params.corr,
+      owner_user_id: params.ownerUserId,
+      destination_lead_id: params.lead.id,
+      anonymous_id: params.anonymousId,
+      ip_fingerprint: params.ipFingerprint,
+      session_id: params.sessionId,
+    });
     return params.lead;
   }
+
+  console.info("[identify] candidate anonymous leads selected for absorption", {
+    corr: params.corr,
+    owner_user_id: params.ownerUserId,
+    destination_lead_id: params.lead.id,
+    candidate_count: candidates.length,
+    candidate_ids: candidates.map((c) => c.id),
+    candidate_anonymous_ids: candidates.map((c) => c.anonymous_id),
+    anonymous_id: params.anonymousId,
+    ip_fingerprint: params.ipFingerprint,
+    session_id: params.sessionId,
+  });
 
   const mergedScore = computeCumulativeIntentScore(
     params.lead.intent_score ?? 0,
