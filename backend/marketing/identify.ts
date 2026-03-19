@@ -590,6 +590,7 @@ async function upsertLead(
     ownerUserId: desiredOwnerId,
     ipFingerprint,
     sessionId,
+    anonymousId,
     corr,
   });
 
@@ -681,9 +682,10 @@ async function absorbAdditionalAnonymousLeads(params: {
   ownerUserId: string;
   ipFingerprint: string | null;
   sessionId: string | null;
+  anonymousId: string | null;
   corr?: string;
 }): Promise<MarketingLead> {
-  if (!params.ipFingerprint && !params.sessionId) {
+  if (!params.ipFingerprint && !params.sessionId && !params.anonymousId) {
     return params.lead;
   }
 
@@ -696,24 +698,40 @@ async function absorbAdditionalAnonymousLeads(params: {
           ml.anonymous_id,
           COALESCE(ml.intent_score, 0)::integer AS intent_score
         FROM marketing_leads ml
-        JOIN intent_events ie
+        LEFT JOIN intent_events ie
           ON ie.anonymous_id = ml.anonymous_id
-        WHERE ml.owner_user_id = $1
-          AND ml.id <> $2
+        WHERE ml.id <> $2
           AND (ml.email IS NULL OR btrim(ml.email) = '')
           AND (
-            ($3::text IS NOT NULL AND ie.ip_fingerprint = $3)
-            OR ($4::text IS NOT NULL AND ie.metadata ->> 'session_id' = $4)
+            ($3::text IS NOT NULL AND ie.ip_fingerprint = $3 AND ie.occurred_at >= now() - interval '30 minutes')
+            OR ($4::text IS NOT NULL AND ie.metadata ->> 'session_id' = $4 AND ie.occurred_at >= now() - interval '6 hours')
+            OR ($5::text IS NOT NULL AND ml.anonymous_id = $5)
+            OR (
+              $4::text IS NOT NULL
+              AND EXISTS (
+                SELECT 1
+                FROM sessions s
+                WHERE s.session_id::text = $4
+                  AND s.anonymous_id::text = ml.anonymous_id
+                  AND s.last_seen_at >= now() - interval '6 hours'
+              )
+            )
           )
-          AND ie.occurred_at >= now() - interval '6 hours'
         GROUP BY ml.id
-        ORDER BY max(ie.occurred_at) DESC
+        ORDER BY
+          CASE
+            WHEN ml.owner_user_id = $1 THEN 0
+            ELSE 1
+          END,
+          max(ie.occurred_at) DESC NULLS LAST,
+          max(ml.updated_at) DESC NULLS LAST
         LIMIT 20
       `,
       params.ownerUserId,
       params.lead.id,
       params.ipFingerprint,
-      params.sessionId
+      params.sessionId,
+      params.anonymousId
     );
   } catch (error) {
     const pgError = error as PgError;
@@ -764,6 +782,7 @@ async function absorbAdditionalAnonymousLeads(params: {
     owner_user_id: params.ownerUserId,
     destination_lead_id: updatedLead.id,
     absorbed_count: candidates.length,
+    anonymous_id: params.anonymousId,
     ip_fingerprint: params.ipFingerprint,
     session_id: params.sessionId,
     merged_score: mergedScore,
