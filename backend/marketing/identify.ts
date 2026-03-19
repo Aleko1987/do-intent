@@ -35,6 +35,7 @@ function getAllowedOrigins(): string[] {
 
 interface IdentifyPayload {
   anonymous_id?: string;
+  session_id?: string;
   email?: string;
   company_name?: string;
   contact_name?: string;
@@ -284,6 +285,7 @@ async function upsertLead(
   const company = companyName;
   const contactName = req.contact_name?.trim() || null;
   const anonymousId = req.anonymous_id?.trim() || null;
+  const sessionId = req.session_id?.trim() || null;
   const ipFingerprint = req.ip_fingerprint?.trim() || null;
   const emailProvided = email !== null;
   const contactNameProvided = contactName !== null;
@@ -587,6 +589,7 @@ async function upsertLead(
     lead: persistedLead,
     ownerUserId: desiredOwnerId,
     ipFingerprint,
+    sessionId,
     corr,
   });
 
@@ -677,9 +680,10 @@ async function absorbAdditionalAnonymousLeads(params: {
   lead: MarketingLead;
   ownerUserId: string;
   ipFingerprint: string | null;
+  sessionId: string | null;
   corr?: string;
 }): Promise<MarketingLead> {
-  if (!params.ipFingerprint) {
+  if (!params.ipFingerprint && !params.sessionId) {
     return params.lead;
   }
 
@@ -697,7 +701,10 @@ async function absorbAdditionalAnonymousLeads(params: {
         WHERE ml.owner_user_id = $1
           AND ml.id <> $2
           AND (ml.email IS NULL OR btrim(ml.email) = '')
-          AND ie.ip_fingerprint = $3
+          AND (
+            ($3::text IS NOT NULL AND ie.ip_fingerprint = $3)
+            OR ($4::text IS NOT NULL AND ie.metadata ->> 'session_id' = $4)
+          )
           AND ie.occurred_at >= now() - interval '6 hours'
         GROUP BY ml.id
         ORDER BY max(ie.occurred_at) DESC
@@ -705,7 +712,8 @@ async function absorbAdditionalAnonymousLeads(params: {
       `,
       params.ownerUserId,
       params.lead.id,
-      params.ipFingerprint
+      params.ipFingerprint,
+      params.sessionId
     );
   } catch (error) {
     const pgError = error as PgError;
@@ -757,6 +765,7 @@ async function absorbAdditionalAnonymousLeads(params: {
     destination_lead_id: updatedLead.id,
     absorbed_count: candidates.length,
     ip_fingerprint: params.ipFingerprint,
+    session_id: params.sessionId,
     merged_score: mergedScore,
   });
 

@@ -96,13 +96,30 @@ function getCookie(name: string): string | null {
   return null;
 }
 
-function setCookie(name: string, value: string, maxAgeSeconds?: number): void {
+function resolveSharedCookieDomain(): string | undefined {
+  if (typeof window === 'undefined' || !window.location?.hostname) {
+    return undefined;
+  }
+  const host = window.location.hostname.toLowerCase();
+  if (host === 'earthcurebiodiesel.com' || host.endsWith('.earthcurebiodiesel.com')) {
+    return '.earthcurebiodiesel.com';
+  }
+  return undefined;
+}
+
+function setCookie(
+  name: string,
+  value: string,
+  maxAgeSeconds?: number,
+  domain?: string
+): void {
   if (typeof document === 'undefined') {
     return;
   }
   const encoded = encodeURIComponent(value);
   const maxAge = typeof maxAgeSeconds === 'number' ? `; Max-Age=${maxAgeSeconds}` : '';
-  document.cookie = `${name}=${encoded}; Path=/; SameSite=Lax${maxAge}`;
+  const domainAttr = domain ? `; Domain=${domain}` : '';
+  document.cookie = `${name}=${encoded}; Path=/; SameSite=Lax${maxAge}${domainAttr}`;
 }
 
 function getApiBaseUrl(): string {
@@ -154,6 +171,7 @@ function getAnonymousId(): string {
     return generateUUID();
   }
 
+  const sharedCookieDomain = resolveSharedCookieDomain();
   const useCookies = config.useCookies || !canUseLocalStorage();
   let anonymousId = useCookies
     ? getCookie(STORAGE_KEY_ANONYMOUS_ID)
@@ -162,7 +180,7 @@ function getAnonymousId(): string {
   if (!anonymousId) {
     anonymousId = generateUUID();
     if (useCookies) {
-      setCookie(STORAGE_KEY_ANONYMOUS_ID, anonymousId, 60 * 60 * 24 * 365);
+      setCookie(STORAGE_KEY_ANONYMOUS_ID, anonymousId, 60 * 60 * 24 * 365, sharedCookieDomain);
     } else {
       localStorage.setItem(STORAGE_KEY_ANONYMOUS_ID, anonymousId);
       localStorage.setItem(STORAGE_KEY_ANONYMOUS_ID_LEGACY, anonymousId);
@@ -172,6 +190,10 @@ function getAnonymousId(): string {
     localStorage.setItem(STORAGE_KEY_ANONYMOUS_ID, anonymousId);
     localStorage.setItem(STORAGE_KEY_ANONYMOUS_ID_LEGACY, anonymousId);
   }
+
+  // Mirror to cookie so apex/www share the same anonymous identity.
+  setCookie(STORAGE_KEY_ANONYMOUS_ID, anonymousId, 60 * 60 * 24 * 365, sharedCookieDomain);
+  setCookie(STORAGE_KEY_ANONYMOUS_ID_LEGACY, anonymousId, 60 * 60 * 24 * 365, sharedCookieDomain);
 
   return anonymousId;
 }
@@ -185,6 +207,7 @@ function getSessionId(): string {
     return generateUUID();
   }
 
+  const sharedCookieDomain = resolveSharedCookieDomain();
   const useCookies = config.useCookies || !canUseSessionStorage();
 
   const now = Date.now();
@@ -203,17 +226,20 @@ function getSessionId(): string {
   if (!sessionId || isExpired) {
     sessionId = generateUUID();
     if (useCookies) {
-      setCookie(STORAGE_KEY_SESSION_ID, sessionId, 60 * 60 * 24);
+      setCookie(STORAGE_KEY_SESSION_ID, sessionId, 60 * 60 * 24, sharedCookieDomain);
     } else {
       sessionStorage.setItem(STORAGE_KEY_SESSION_ID, sessionId);
     }
   }
 
   if (useCookies) {
-    setCookie(STORAGE_KEY_SESSION_TS, String(now), 60 * 60 * 24);
+    setCookie(STORAGE_KEY_SESSION_TS, String(now), 60 * 60 * 24, sharedCookieDomain);
   } else {
     sessionStorage.setItem(STORAGE_KEY_SESSION_TS, String(now));
   }
+  // Mirror session cookie as a best effort for cross-host continuity.
+  setCookie(STORAGE_KEY_SESSION_ID, sessionId, 60 * 60 * 24, sharedCookieDomain);
+  setCookie(STORAGE_KEY_SESSION_TS, String(now), 60 * 60 * 24, sharedCookieDomain);
   return sessionId;
 }
 

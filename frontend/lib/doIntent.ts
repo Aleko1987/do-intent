@@ -12,6 +12,42 @@
 const STORAGE_KEY_LEAD_ID = "do_intent_lead_id";
 const STORAGE_KEY_ANON_ID = "do_intent_anon_id";
 const STORAGE_KEY_ANON_ID_PRIMARY = "do_intent_anonymous_id";
+const STORAGE_KEY_SESSION_ID = "do_intent_session_id";
+
+function getCookie(name: string): string | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+  const cookies = document.cookie ? document.cookie.split("; ") : [];
+  for (const cookie of cookies) {
+    if (cookie.startsWith(`${name}=`)) {
+      return decodeURIComponent(cookie.slice(name.length + 1));
+    }
+  }
+  return null;
+}
+
+function resolveSharedCookieDomain(): string | undefined {
+  if (typeof window === "undefined" || !window.location?.hostname) {
+    return undefined;
+  }
+  const host = window.location.hostname.toLowerCase();
+  if (host === "earthcurebiodiesel.com" || host.endsWith(".earthcurebiodiesel.com")) {
+    return ".earthcurebiodiesel.com";
+  }
+  return undefined;
+}
+
+function setCookie(name: string, value: string, maxAgeSeconds?: number): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+  const encoded = encodeURIComponent(value);
+  const maxAge = typeof maxAgeSeconds === "number" ? `; Max-Age=${maxAgeSeconds}` : "";
+  const domain = resolveSharedCookieDomain();
+  const domainAttr = domain ? `; Domain=${domain}` : "";
+  document.cookie = `${name}=${encoded}; Path=/; SameSite=Lax${maxAge}${domainAttr}`;
+}
 
 function resolveApiBaseUrl(): string {
   if (typeof window !== "undefined" && window.location?.origin) {
@@ -30,7 +66,9 @@ function resolveApiBaseUrl(): string {
 export function getAnonId(): string {
   let anonId =
     localStorage.getItem(STORAGE_KEY_ANON_ID_PRIMARY) ||
-    localStorage.getItem(STORAGE_KEY_ANON_ID);
+    localStorage.getItem(STORAGE_KEY_ANON_ID) ||
+    getCookie(STORAGE_KEY_ANON_ID_PRIMARY) ||
+    getCookie(STORAGE_KEY_ANON_ID);
   if (!anonId) {
     // Generate a simple UUID v4
     anonId = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -42,6 +80,8 @@ export function getAnonId(): string {
   // Keep both keys in sync for backwards compatibility.
   localStorage.setItem(STORAGE_KEY_ANON_ID_PRIMARY, anonId);
   localStorage.setItem(STORAGE_KEY_ANON_ID, anonId);
+  setCookie(STORAGE_KEY_ANON_ID_PRIMARY, anonId, 60 * 60 * 24 * 365);
+  setCookie(STORAGE_KEY_ANON_ID, anonId, 60 * 60 * 24 * 365);
   return anonId;
 }
 
@@ -118,6 +158,7 @@ export async function identifyLead(
 
   const body = {
     anonymous_id: anonId,
+    session_id: sessionStorage.getItem(STORAGE_KEY_SESSION_ID) || getCookie(STORAGE_KEY_SESSION_ID) || undefined,
     email: email.trim().toLowerCase(),
     ...(company_name && { company_name: company_name.trim() }),
     ...(contact_name && { contact_name: contact_name.trim() }),
