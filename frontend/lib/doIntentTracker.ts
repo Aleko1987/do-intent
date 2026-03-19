@@ -163,6 +163,13 @@ function buildEncoreEndpoint(path: string): string {
   return `${trimmedBase}${intentScorerPrefix}${normalizedPath}`;
 }
 
+function buildApiBaseEndpoint(path: string): string {
+  const apiBase = getApiBaseUrl();
+  const trimmedBase = apiBase.replace(/\/$/, '');
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${trimmedBase}${normalizedPath}`;
+}
+
 /**
  * Get or create anonymous_id from localStorage
  */
@@ -394,8 +401,8 @@ async function sendTrackEvent(
   
   const endpoints = [
     buildEncoreEndpoint('/intent_scorer/track'),
-    buildEncoreEndpoint('/api/v1/track'),
-    buildEncoreEndpoint('/track'),
+    buildApiBaseEndpoint('/api/v1/track'),
+    buildApiBaseEndpoint('/track'),
   ];
   
   if (config.debug) {
@@ -641,7 +648,7 @@ export async function identify(
   threshold_emitted: boolean;
 }> {
   const anonymousId = getAnonymousId();
-  const endpoint = buildEncoreEndpoint('/api/v1/identify');
+  const endpoint = buildApiBaseEndpoint('/api/v1/identify');
   
   const payload = {
     anonymous_id: anonymousId,
