@@ -13,8 +13,13 @@ if (!PUBLISHABLE_KEY) {
 }
 
 // Initialize DO-Intent tracker
+const runtimeApiBase =
+  typeof window !== "undefined" && window.location?.origin
+    ? window.location.origin
+    : import.meta.env.VITE_API_BASE_URL || "";
+
 init({
-  apiBase: import.meta.env.VITE_API_BASE_URL || '',
+  apiBase: runtimeApiBase,
   debug: import.meta.env.DEV || false,
 });
 

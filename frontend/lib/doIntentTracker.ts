@@ -21,6 +21,7 @@
 
 // Storage keys
 const STORAGE_KEY_ANONYMOUS_ID = 'do_intent_anonymous_id';
+const STORAGE_KEY_ANONYMOUS_ID_LEGACY = 'do_intent_anon_id';
 const STORAGE_KEY_SESSION_ID = 'do_intent_session_id';
 const STORAGE_KEY_SESSION_TS = 'do_intent_session_ts';
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
@@ -156,7 +157,7 @@ function getAnonymousId(): string {
   const useCookies = config.useCookies || !canUseLocalStorage();
   let anonymousId = useCookies
     ? getCookie(STORAGE_KEY_ANONYMOUS_ID)
-    : localStorage.getItem(STORAGE_KEY_ANONYMOUS_ID);
+    : localStorage.getItem(STORAGE_KEY_ANONYMOUS_ID) || localStorage.getItem(STORAGE_KEY_ANONYMOUS_ID_LEGACY);
 
   if (!anonymousId) {
     anonymousId = generateUUID();
@@ -164,7 +165,12 @@ function getAnonymousId(): string {
       setCookie(STORAGE_KEY_ANONYMOUS_ID, anonymousId, 60 * 60 * 24 * 365);
     } else {
       localStorage.setItem(STORAGE_KEY_ANONYMOUS_ID, anonymousId);
+      localStorage.setItem(STORAGE_KEY_ANONYMOUS_ID_LEGACY, anonymousId);
     }
+  } else if (!useCookies) {
+    // Keep legacy key in sync so identify and tracking share the same anonymous identity.
+    localStorage.setItem(STORAGE_KEY_ANONYMOUS_ID, anonymousId);
+    localStorage.setItem(STORAGE_KEY_ANONYMOUS_ID_LEGACY, anonymousId);
   }
 
   return anonymousId;

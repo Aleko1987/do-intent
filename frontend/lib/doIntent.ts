@@ -11,12 +11,26 @@
 
 const STORAGE_KEY_LEAD_ID = "do_intent_lead_id";
 const STORAGE_KEY_ANON_ID = "do_intent_anon_id";
+const STORAGE_KEY_ANON_ID_PRIMARY = "do_intent_anonymous_id";
+
+function resolveApiBaseUrl(): string {
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin;
+  }
+  const envBase = import.meta.env.VITE_DO_INTENT_BASE_URL || import.meta.env.VITE_API_BASE_URL;
+  if (!envBase) {
+    throw new Error("VITE_DO_INTENT_BASE_URL or VITE_API_BASE_URL is not set");
+  }
+  return envBase;
+}
 
 /**
  * Get or create anonymous ID (UUID stored in localStorage)
  */
 export function getAnonId(): string {
-  let anonId = localStorage.getItem(STORAGE_KEY_ANON_ID);
+  let anonId =
+    localStorage.getItem(STORAGE_KEY_ANON_ID_PRIMARY) ||
+    localStorage.getItem(STORAGE_KEY_ANON_ID);
   if (!anonId) {
     // Generate a simple UUID v4
     anonId = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -24,8 +38,10 @@ export function getAnonId(): string {
       const v = c === "x" ? r : (r & 0x3) | 0x8;
       return v.toString(16);
     });
-    localStorage.setItem(STORAGE_KEY_ANON_ID, anonId);
   }
+  // Keep both keys in sync for backwards compatibility.
+  localStorage.setItem(STORAGE_KEY_ANON_ID_PRIMARY, anonId);
+  localStorage.setItem(STORAGE_KEY_ANON_ID, anonId);
   return anonId;
 }
 
@@ -86,10 +102,7 @@ export async function identifyLead(
   company_name?: string,
   contact_name?: string
 ): Promise<{ lead_id: string; lead_created: boolean }> {
-  const baseUrl = import.meta.env.VITE_DO_INTENT_BASE_URL;
-  if (!baseUrl) {
-    throw new Error("VITE_DO_INTENT_BASE_URL is not set");
-  }
+  const baseUrl = resolveApiBaseUrl();
 
   const apiKey = import.meta.env.VITE_DO_INTENT_KEY;
   const anonId = getAnonId();
@@ -143,10 +156,7 @@ export async function trackEvent(
   event_type: string,
   metadata?: Record<string, any>
 ): Promise<{ event_id: string; lead_id: string; scored: boolean }> {
-  const baseUrl = import.meta.env.VITE_DO_INTENT_BASE_URL;
-  if (!baseUrl) {
-    throw new Error("VITE_DO_INTENT_BASE_URL is not set");
-  }
+  const baseUrl = resolveApiBaseUrl();
 
   const apiKey = import.meta.env.VITE_DO_INTENT_KEY;
   const anonId = getAnonId();
