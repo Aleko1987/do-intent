@@ -18,7 +18,10 @@ import {
 import { buildIpContext } from "../internal/client_ip";
 import { readLeadScoringConfig } from "../marketing/scoring_config";
 
-const WEBSITE_ALLOWED_ORIGINS = ["https://earthcurebiodiesel.com"] as const;
+const WEBSITE_ALLOWED_ORIGINS = [
+  "https://earthcurebiodiesel.com",
+  "https://www.earthcurebiodiesel.com",
+] as const;
 
 function applyWebsiteCors(req: IncomingMessage, res: ServerResponse): void {
   applyCorsHeadersWithOptions(req, res, {

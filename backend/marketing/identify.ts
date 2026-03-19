@@ -12,7 +12,10 @@ import type { MarketingLead } from "./types";
 import { readLeadScoringConfig } from "./scoring_config";
 import { computeCarryForwardScore } from "./carry_forward";
 
-const WEBSITE_ALLOWED_ORIGINS = ["https://earthcurebiodiesel.com"] as const;
+const WEBSITE_ALLOWED_ORIGINS = [
+  "https://earthcurebiodiesel.com",
+  "https://www.earthcurebiodiesel.com",
+] as const;
 
 function applyWebsiteCors(req: IncomingMessage, res: ServerResponse): void {
   applyCorsHeadersWithOptions(req, res, {
