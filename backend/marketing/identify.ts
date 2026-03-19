@@ -57,6 +57,12 @@ interface PgError extends Error {
   code?: string;
 }
 
+interface AnonymousLeadCandidate {
+  id: string;
+  anonymous_id: string | null;
+  intent_score: number;
+}
+
 type IdentifyPersistenceMode =
   | "update_existing_email_lead"
   | "convert_anonymous_lead_in_place"
@@ -76,6 +82,14 @@ export function resolveIdentifyPersistenceMode(params: {
   }
 
   return "insert_new_lead";
+}
+
+export function computeCumulativeIntentScore(baseScore: number, donorScores: number[]): number {
+  const normalizedBase = Math.max(0, Math.round(baseScore ?? 0));
+  return donorScores.reduce(
+    (acc, score) => computeCarryForwardScore(acc, score),
+    normalizedBase
+  );
 }
 
 function hasNonEmptyString(value: string | undefined): boolean {
@@ -334,13 +348,13 @@ async function upsertLead(
             AND ie.occurred_at >= now() - interval '6 hours'
           GROUP BY ml.id
           ORDER BY max(ie.occurred_at) DESC
-          LIMIT 2
+          LIMIT 10
         `,
         ipFingerprint,
         desiredOwnerId
       );
 
-      if (ipCandidates.length === 1) {
+      if (ipCandidates.length >= 1) {
         const candidate = ipCandidates[0];
         if (!existingLead || candidate.id !== existingLead.id) {
           existingAnonymousLead = candidate;
@@ -351,13 +365,6 @@ async function upsertLead(
             anonymous_lead_id: candidate.id,
           });
         }
-      } else if (ipCandidates.length > 1) {
-        console.info("[identify] skipped ip fallback due to multiple candidates", {
-          corr,
-          owner_user_id: desiredOwnerId,
-          ip_fingerprint: ipFingerprint,
-          candidate_count: ipCandidates.length,
-        });
       }
     } catch (error) {
       const pgError = error as PgError;
@@ -529,10 +536,9 @@ async function upsertLead(
 
   let persistedLead = result.lead;
   if (emailProvided && existingAnonymousLead && existingAnonymousLead.id !== result.lead.id) {
-    const mergedScore = computeCarryForwardScore(
-      result.lead.intent_score ?? 0,
-      existingAnonymousLead.intent_score ?? 0
-    );
+    const mergedScore = computeCumulativeIntentScore(result.lead.intent_score ?? 0, [
+      existingAnonymousLead.intent_score ?? 0,
+    ]);
     let mergedLead: MarketingLead | null = null;
     try {
       mergedLead = await db.queryRow<MarketingLead>`
@@ -574,55 +580,15 @@ async function upsertLead(
 
     persistedLead = mergedLead;
 
-    let cleanedUpAnonLead = false;
-    let usedDeletedAt = false;
-    let usedMergedToId = false;
-    let usedHardDelete = false;
-    try {
-      await db.exec`
-        UPDATE marketing_leads
-        SET deleted_at = now(), last_signal_at = now(), updated_at = now()
-        WHERE id = ${existingAnonymousLead.id}
-      `;
-      cleanedUpAnonLead = true;
-      usedDeletedAt = true;
-    } catch (error) {
-      const pgError = error as PgError;
-      if (pgError.code !== "42703") {
-        throw error;
-      }
-
-      try {
-        await db.exec`
-          UPDATE marketing_leads
-          SET merged_to_id = ${result.lead.id}, last_signal_at = now(), updated_at = now()
-          WHERE id = ${existingAnonymousLead.id}
-        `;
-        cleanedUpAnonLead = true;
-        usedMergedToId = true;
-      } catch (mergeMarkerError) {
-        const mergeMarkerPgError = mergeMarkerError as PgError;
-        if (mergeMarkerPgError.code !== "42703") {
-          throw mergeMarkerError;
-        }
-
-        await db.exec`
-          DELETE FROM marketing_leads
-          WHERE id = ${existingAnonymousLead.id}
-        `;
-        cleanedUpAnonLead = true;
-        usedHardDelete = true;
-      }
-    }
-
-    console.info("[identify] merged anonymous lead", {
-      merge_performed: true,
-      anon_cleanup_performed: cleanedUpAnonLead,
-      anon_cleanup_used_deleted_at: usedDeletedAt,
-      anon_cleanup_used_merged_to_id: usedMergedToId,
-      anon_cleanup_used_hard_delete: usedHardDelete,
-    });
+    await cleanupMergedAnonymousLead(existingAnonymousLead.id, result.lead.id);
   }
+
+  persistedLead = await absorbAdditionalAnonymousLeads({
+    lead: persistedLead,
+    ownerUserId: desiredOwnerId,
+    ipFingerprint,
+    corr,
+  });
 
   console.info("[identify] lead persistence", {
     email_provided: emailProvided,
@@ -651,6 +617,150 @@ async function upsertLead(
     lead: alignedLead,
     lead_created: result.lead_created,
   };
+}
+
+async function cleanupMergedAnonymousLead(
+  anonymousLeadId: string,
+  destinationLeadId: string
+): Promise<void> {
+  let cleanedUpAnonLead = false;
+  let usedDeletedAt = false;
+  let usedMergedToId = false;
+  let usedHardDelete = false;
+  try {
+    await db.exec`
+      UPDATE marketing_leads
+      SET deleted_at = now(), last_signal_at = now(), updated_at = now()
+      WHERE id = ${anonymousLeadId}
+    `;
+    cleanedUpAnonLead = true;
+    usedDeletedAt = true;
+  } catch (error) {
+    const pgError = error as PgError;
+    if (pgError.code !== "42703") {
+      throw error;
+    }
+
+    try {
+      await db.exec`
+        UPDATE marketing_leads
+        SET merged_to_id = ${destinationLeadId}, last_signal_at = now(), updated_at = now()
+        WHERE id = ${anonymousLeadId}
+      `;
+      cleanedUpAnonLead = true;
+      usedMergedToId = true;
+    } catch (mergeMarkerError) {
+      const mergeMarkerPgError = mergeMarkerError as PgError;
+      if (mergeMarkerPgError.code !== "42703") {
+        throw mergeMarkerError;
+      }
+
+      await db.exec`
+        DELETE FROM marketing_leads
+        WHERE id = ${anonymousLeadId}
+      `;
+      cleanedUpAnonLead = true;
+      usedHardDelete = true;
+    }
+  }
+
+  console.info("[identify] merged anonymous lead cleanup", {
+    merge_performed: true,
+    anon_cleanup_performed: cleanedUpAnonLead,
+    anon_cleanup_used_deleted_at: usedDeletedAt,
+    anon_cleanup_used_merged_to_id: usedMergedToId,
+    anon_cleanup_used_hard_delete: usedHardDelete,
+  });
+}
+
+async function absorbAdditionalAnonymousLeads(params: {
+  lead: MarketingLead;
+  ownerUserId: string;
+  ipFingerprint: string | null;
+  corr?: string;
+}): Promise<MarketingLead> {
+  if (!params.ipFingerprint) {
+    return params.lead;
+  }
+
+  let candidates: AnonymousLeadCandidate[] = [];
+  try {
+    candidates = await db.rawQueryAll<AnonymousLeadCandidate>(
+      `
+        SELECT
+          ml.id,
+          ml.anonymous_id,
+          COALESCE(ml.intent_score, 0)::integer AS intent_score
+        FROM marketing_leads ml
+        JOIN intent_events ie
+          ON ie.anonymous_id = ml.anonymous_id
+        WHERE ml.owner_user_id = $1
+          AND ml.id <> $2
+          AND (ml.email IS NULL OR btrim(ml.email) = '')
+          AND ie.ip_fingerprint = $3
+          AND ie.occurred_at >= now() - interval '6 hours'
+        GROUP BY ml.id
+        ORDER BY max(ie.occurred_at) DESC
+        LIMIT 20
+      `,
+      params.ownerUserId,
+      params.lead.id,
+      params.ipFingerprint
+    );
+  } catch (error) {
+    const pgError = error as PgError;
+    if (pgError.code !== "42P01" && pgError.code !== "42703") {
+      throw error;
+    }
+    return params.lead;
+  }
+
+  if (candidates.length === 0) {
+    return params.lead;
+  }
+
+  const mergedScore = computeCumulativeIntentScore(
+    params.lead.intent_score ?? 0,
+    candidates.map((c) => c.intent_score ?? 0)
+  );
+
+  const updatedLead = await db.queryRow<MarketingLead>`
+    UPDATE marketing_leads
+    SET
+      intent_score = ${mergedScore},
+      last_signal_at = now(),
+      updated_at = now()
+    WHERE id = ${params.lead.id}
+      AND owner_user_id = ${params.ownerUserId}
+    RETURNING *
+  `;
+
+  if (!updatedLead) {
+    return params.lead;
+  }
+
+  for (const candidate of candidates) {
+    if (candidate.anonymous_id) {
+      await db.exec`
+        UPDATE intent_events
+        SET lead_id = ${updatedLead.id}
+        WHERE anonymous_id = ${candidate.anonymous_id}
+          AND (lead_id IS NULL OR lead_id = ${candidate.id})
+      `;
+    }
+    await cleanupMergedAnonymousLead(candidate.id, updatedLead.id);
+  }
+
+  console.info("[identify] absorbed additional anonymous leads by ip/session context", {
+    corr: params.corr,
+    owner_user_id: params.ownerUserId,
+    destination_lead_id: updatedLead.id,
+    absorbed_count: candidates.length,
+    ip_fingerprint: params.ipFingerprint,
+    merged_score: mergedScore,
+  });
+
+  return updatedLead;
 }
 
 async function handleIdentify(req: IdentifyRequest, corr?: string): Promise<IdentifyResponse> {
