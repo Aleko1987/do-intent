@@ -20,6 +20,7 @@ import { autoScoreEvent } from "../intent_scorer/auto_score";
 import { updateLeadScoring } from "./scoring";
 import { checkAndPushToSales } from "./auto_push";
 import { identifyFromTrustedSignal } from "./identify";
+import { resolveWebsiteOwnerUserId } from "../internal/owner_user";
 
 const WEBSITE_ALLOWED_ORIGINS = [
   "https://earthcurebiodiesel.com",
@@ -144,6 +145,101 @@ interface ValidationFailureLogDetails {
   missing: string[];
   invalid: ValidationInvalidField[];
   receivedTypes: Record<string, string>;
+}
+
+async function upsertAnonymousLeadForIngest(params: {
+  anonymousId: string;
+  requestId: string;
+  corr?: string;
+}): Promise<string> {
+  const ownerUserId = resolveWebsiteOwnerUserId();
+
+  const existing = await db.queryRow<{ id: string; owner_user_id: string | null }>`
+    SELECT id, owner_user_id
+    FROM marketing_leads
+    WHERE anonymous_id = ${params.anonymousId}
+    ORDER BY
+      CASE
+        WHEN owner_user_id = ${ownerUserId} THEN 0
+        ELSE 1
+      END,
+      created_at DESC
+    LIMIT 1
+  `;
+
+  if (existing?.id) {
+    const updated = await db.queryRow<{ id: string }>`
+      UPDATE marketing_leads
+      SET
+        owner_user_id = CASE
+          WHEN owner_user_id IS NULL OR owner_user_id <> ${ownerUserId} THEN ${ownerUserId}
+          ELSE owner_user_id
+        END,
+        source_type = COALESCE(source_type, 'website'),
+        source = COALESCE(source, 'website'),
+        last_signal_at = now(),
+        updated_at = now()
+      WHERE id = ${existing.id}
+      RETURNING id
+    `;
+    return updated?.id ?? existing.id;
+  }
+
+  try {
+    const inserted = await db.queryRow<{ id: string }>`
+      INSERT INTO marketing_leads (
+        anonymous_id,
+        owner_user_id,
+        source_type,
+        source,
+        marketing_stage,
+        intent_score,
+        last_signal_at,
+        updated_at,
+        created_at
+      ) VALUES (
+        ${params.anonymousId},
+        ${ownerUserId},
+        'website',
+        'website',
+        'M1',
+        0,
+        now(),
+        now(),
+        now()
+      )
+      RETURNING id
+    `;
+    if (inserted?.id) {
+      return inserted.id;
+    }
+  } catch (error) {
+    const pgError = error as { code?: string };
+    if (pgError.code !== "23505") {
+      throw error;
+    }
+  }
+
+  const fallback = await db.queryRow<{ id: string }>`
+    SELECT id
+    FROM marketing_leads
+    WHERE anonymous_id = ${params.anonymousId}
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+
+  if (!fallback?.id) {
+    throw new Error("Failed to upsert anonymous lead from ingest");
+  }
+
+  console.info("[ingest] recovered anonymous lead after uniqueness race", {
+    request_id: params.requestId,
+    corr: params.corr,
+    anonymous_id: params.anonymousId,
+    lead_id: fallback.id,
+  });
+
+  return fallback.id;
 }
 
 function makeRequestId(): string {
@@ -662,6 +758,14 @@ async function handleIngestIntentEvent(
       dbWriteAttempted = true;
 
       if (!normalized.lead_id && normalized.anonymous_id) {
+        const anonymousLeadId = await upsertAnonymousLeadForIngest({
+          anonymousId: normalized.anonymous_id,
+          requestId: request_id,
+          corr,
+        });
+        normalized.lead_id = anonymousLeadId;
+        setMetadataValue(normalized.metadata, "anonymous_lead_id", anonymousLeadId);
+
         const eventType = normalized.event_type;
         const shouldAttemptIdentify = eventType === "form_submit" || eventType === "identify";
         if (shouldAttemptIdentify) {
