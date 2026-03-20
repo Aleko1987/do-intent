@@ -19,6 +19,7 @@ import type { IntentEvent } from "./types";
 import { autoScoreEvent } from "../intent_scorer/auto_score";
 import { updateLeadScoring } from "./scoring";
 import { checkAndPushToSales } from "./auto_push";
+import { identifyFromTrustedSignal } from "./identify";
 
 const WEBSITE_ALLOWED_ORIGINS = [
   "https://earthcurebiodiesel.com",
@@ -109,6 +110,19 @@ interface NormalizedPayload {
   ip_raw: string | null;
   ip_fingerprint: string | null;
   metadata: JsonObject;
+}
+
+function getMetadataString(
+  metadata: JsonObject,
+  keys: string[]
+): string | null {
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return null;
 }
 
 interface NormalizedDbError {
@@ -646,6 +660,48 @@ async function handleIngestIntentEvent(
     let dbWriteAttempted = false;
     try {
       dbWriteAttempted = true;
+
+      if (!normalized.lead_id && normalized.anonymous_id) {
+        const eventType = normalized.event_type;
+        const shouldAttemptIdentify = eventType === "form_submit" || eventType === "identify";
+        if (shouldAttemptIdentify) {
+          const identifiedEmail = getMetadataString(normalized.metadata, [
+            "email",
+            "lead_email",
+            "contact_email",
+          ]);
+          if (identifiedEmail) {
+            const identifyResult = await identifyFromTrustedSignal({
+              anonymous_id: normalized.anonymous_id,
+              session_id: getMetadataString(normalized.metadata, ["session_id"]),
+              email: identifiedEmail,
+              company_name: getMetadataString(normalized.metadata, [
+                "company_name",
+                "company",
+                "lead_company",
+              ]),
+              contact_name: getMetadataString(normalized.metadata, [
+                "contact_name",
+                "name",
+                "lead_name",
+              ]),
+              ip_raw: normalized.ip_raw,
+              ip_fingerprint: normalized.ip_fingerprint,
+              corr,
+            });
+            normalized.lead_id = identifyResult.lead_id;
+            setMetadataValue(normalized.metadata, "identified_via_ingest", "true");
+            setMetadataValue(normalized.metadata, "identified_lead_id", identifyResult.lead_id);
+            console.info("[ingest] linked anonymous event to identified lead via trusted signal", {
+              request_id,
+              corr,
+              event_type: normalized.event_type,
+              anonymous_id: normalized.anonymous_id,
+              lead_id: identifyResult.lead_id,
+            });
+          }
+        }
+      }
 
       if (normalized.lead_id) {
         const lead = await withDbOperation("lookup_lead", request_id, () =>

@@ -623,6 +623,35 @@ async function upsertLead(
   };
 }
 
+export async function identifyFromTrustedSignal(params: {
+  anonymous_id: string;
+  session_id?: string | null;
+  email: string;
+  company_name?: string | null;
+  contact_name?: string | null;
+  ip_raw?: string | null;
+  ip_fingerprint?: string | null;
+  corr?: string;
+}): Promise<{ lead_id: string; lead_created: boolean }> {
+  const normalizedEmail = params.email.trim().toLowerCase();
+  const identifyRequest: IdentifyRequest = {
+    anonymous_id: params.anonymous_id,
+    session_id: params.session_id ?? undefined,
+    email: normalizedEmail,
+    company_name: params.company_name ?? undefined,
+    contact_name: params.contact_name ?? undefined,
+    ip_raw: params.ip_raw ?? null,
+    ip_fingerprint: params.ip_fingerprint ?? null,
+    // Trusted internal call path bypasses origin/API key checks in handleIdentify.
+    "x-do-intent-key": process.env.INGEST_API_KEY?.trim() || undefined,
+  };
+  const result = await upsertLead(identifyRequest, normalizedEmail, params.corr);
+  return {
+    lead_id: result.lead.id,
+    lead_created: result.lead_created,
+  };
+}
+
 async function cleanupMergedAnonymousLead(
   anonymousLeadId: string,
   destinationLeadId: string
