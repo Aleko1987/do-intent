@@ -1,3 +1,5 @@
+import { getAttributionContext } from "./attributionContext";
+
 /**
  * DO Intent Client Integration
  * 
@@ -12,7 +14,11 @@
 const STORAGE_KEY_LEAD_ID = "do_intent_lead_id";
 const STORAGE_KEY_ANON_ID = "do_intent_anon_id";
 const STORAGE_KEY_ANON_ID_PRIMARY = "do_intent_anonymous_id";
-const STORAGE_KEY_SESSION_ID = "do_intent_session_id";
+const STORAGE_KEY_SESSION_ID = "doi_session_id";
+const STORAGE_KEY_SESSION_LAST_SEEN_AT = "doi_session_last_seen_at";
+const STORAGE_KEY_SESSION_ID_LEGACY = "do_intent_session_id";
+const STORAGE_KEY_SESSION_TS_LEGACY = "do_intent_session_ts";
+const SESSION_TIMEOUT_MS = 45 * 60 * 1000;
 
 function getCookie(name: string): string | null {
   if (typeof document === "undefined") {
@@ -47,6 +53,17 @@ function setCookie(name: string, value: string, maxAgeSeconds?: number): void {
   const domain = resolveSharedCookieDomain();
   const domainAttr = domain ? `; Domain=${domain}` : "";
   document.cookie = `${name}=${encoded}; Path=/; SameSite=Lax${maxAge}${domainAttr}`;
+}
+
+function generateUUID(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 function resolveApiBaseUrl(): string {
@@ -100,10 +117,12 @@ function getUtmParams(): {
   utm_medium?: string;
   utm_campaign?: string;
   utm_content?: string;
+  utm_term?: string;
+  utm_id?: string;
 } {
   const params = new URLSearchParams(window.location.search);
   const utm: Record<string, string> = {};
-  const utmKeys = ["utm_source", "utm_medium", "utm_campaign", "utm_content"];
+  const utmKeys = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "utm_id"];
   for (const key of utmKeys) {
     const value = params.get(key);
     if (value) {
@@ -111,6 +130,40 @@ function getUtmParams(): {
     }
   }
   return utm;
+}
+
+function getSessionId(): string {
+  const now = Date.now();
+  const lastSeenRaw =
+    sessionStorage.getItem(STORAGE_KEY_SESSION_LAST_SEEN_AT) ||
+    sessionStorage.getItem(STORAGE_KEY_SESSION_TS_LEGACY) ||
+    getCookie(STORAGE_KEY_SESSION_LAST_SEEN_AT) ||
+    getCookie(STORAGE_KEY_SESSION_TS_LEGACY);
+  const lastSeen = lastSeenRaw ? Number(lastSeenRaw) : null;
+  const isExpired =
+    lastSeen !== null && !Number.isNaN(lastSeen) ? now - lastSeen > SESSION_TIMEOUT_MS : false;
+
+  let sessionId =
+    sessionStorage.getItem(STORAGE_KEY_SESSION_ID) ||
+    sessionStorage.getItem(STORAGE_KEY_SESSION_ID_LEGACY) ||
+    getCookie(STORAGE_KEY_SESSION_ID) ||
+    getCookie(STORAGE_KEY_SESSION_ID_LEGACY);
+
+  if (!sessionId || isExpired) {
+    sessionId = generateUUID();
+  }
+
+  sessionStorage.setItem(STORAGE_KEY_SESSION_ID, sessionId);
+  sessionStorage.setItem(STORAGE_KEY_SESSION_ID_LEGACY, sessionId);
+  sessionStorage.setItem(STORAGE_KEY_SESSION_LAST_SEEN_AT, String(now));
+  sessionStorage.setItem(STORAGE_KEY_SESSION_TS_LEGACY, String(now));
+
+  setCookie(STORAGE_KEY_SESSION_ID, sessionId, 60 * 60 * 24);
+  setCookie(STORAGE_KEY_SESSION_ID_LEGACY, sessionId, 60 * 60 * 24);
+  setCookie(STORAGE_KEY_SESSION_LAST_SEEN_AT, String(now), 60 * 60 * 24);
+  setCookie(STORAGE_KEY_SESSION_TS_LEGACY, String(now), 60 * 60 * 24);
+
+  return sessionId;
 }
 
 /**
@@ -146,6 +199,8 @@ export async function identifyLead(
 
   const apiKey = import.meta.env.VITE_DO_INTENT_KEY;
   const anonId = getAnonId();
+  const sessionId = getSessionId();
+  const attribution = getAttributionContext();
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -158,10 +213,11 @@ export async function identifyLead(
 
   const body = {
     anonymous_id: anonId,
-    session_id: sessionStorage.getItem(STORAGE_KEY_SESSION_ID) || getCookie(STORAGE_KEY_SESSION_ID) || undefined,
+    session_id: sessionId,
     email: email.trim().toLowerCase(),
     ...(company_name && { company_name: company_name.trim() }),
     ...(contact_name && { contact_name: contact_name.trim() }),
+    ...(Object.keys(attribution).length > 0 ? { metadata: { attribution } } : {}),
   };
 
   const response = await fetch(`${baseUrl}/marketing/identify`, {
@@ -201,7 +257,10 @@ export async function trackEvent(
 
   const apiKey = import.meta.env.VITE_DO_INTENT_KEY;
   const anonId = getAnonId();
+  const sessionId = getSessionId();
+  const eventId = generateUUID();
   const utm = getUtmParams();
+  const attribution = getAttributionContext();
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -216,9 +275,11 @@ export async function trackEvent(
   const eventMetadata: Record<string, any> = {
     ...normalizeMetadata(metadata || {}),
     anonymous_id: anonId,
+    session_id: sessionId,
     url: window.location.href,
     path: window.location.pathname,
     referrer: document.referrer || undefined,
+    ...(Object.keys(attribution).length > 0 ? { attribution, ...attribution } : {}),
     ...utm,
   };
 
@@ -226,6 +287,9 @@ export async function trackEvent(
     lead_id,
     event_type,
     event_source: "website",
+    event_id: eventId,
+    anonymous_id: anonId,
+    session_id: sessionId,
     ...(eventMetadata.url && { url: eventMetadata.url }),
     ...(eventMetadata.path && { path: eventMetadata.path }),
     ...(eventMetadata.referrer && { referrer: eventMetadata.referrer }),

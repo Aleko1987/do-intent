@@ -1,3 +1,8 @@
+import {
+  captureAttributionContextOnLanding,
+  getAttributionContext,
+} from "./attributionContext";
+
 /**
  * DO-Intent Website Tracker
  * 
@@ -22,15 +27,30 @@
 // Storage keys
 const STORAGE_KEY_ANONYMOUS_ID = 'do_intent_anonymous_id';
 const STORAGE_KEY_ANONYMOUS_ID_LEGACY = 'do_intent_anon_id';
-const STORAGE_KEY_SESSION_ID = 'do_intent_session_id';
-const STORAGE_KEY_SESSION_TS = 'do_intent_session_ts';
-const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+const STORAGE_KEY_SESSION_ID = 'doi_session_id';
+const STORAGE_KEY_SESSION_LAST_SEEN_AT = 'doi_session_last_seen_at';
+const STORAGE_KEY_SESSION_ID_LEGACY = 'do_intent_session_id';
+const STORAGE_KEY_SESSION_TS_LEGACY = 'do_intent_session_ts';
+const SESSION_TIMEOUT_MS = 45 * 60 * 1000;
 
 // Configuration
 interface TrackerConfig {
   apiBase?: string;
   debug?: boolean;
   useCookies?: boolean;
+}
+
+declare global {
+  interface Window {
+    DOIntentDebug?: {
+      getState: () => {
+        anonymous_id: string;
+        session_id: string;
+        attribution: Record<string, string>;
+      };
+      logState: () => void;
+    };
+  }
 }
 
 let config: TrackerConfig = {
@@ -219,8 +239,8 @@ function getSessionId(): string {
 
   const now = Date.now();
   const lastSeenRaw = useCookies
-    ? getCookie(STORAGE_KEY_SESSION_TS)
-    : sessionStorage.getItem(STORAGE_KEY_SESSION_TS);
+    ? getCookie(STORAGE_KEY_SESSION_LAST_SEEN_AT) || getCookie(STORAGE_KEY_SESSION_TS_LEGACY)
+    : sessionStorage.getItem(STORAGE_KEY_SESSION_LAST_SEEN_AT) || sessionStorage.getItem(STORAGE_KEY_SESSION_TS_LEGACY);
   const lastSeen = lastSeenRaw ? Number(lastSeenRaw) : null;
   const isExpired =
     lastSeen !== null && !Number.isNaN(lastSeen)
@@ -228,25 +248,31 @@ function getSessionId(): string {
       : false;
 
   let sessionId = useCookies
-    ? getCookie(STORAGE_KEY_SESSION_ID)
-    : sessionStorage.getItem(STORAGE_KEY_SESSION_ID);
+    ? getCookie(STORAGE_KEY_SESSION_ID) || getCookie(STORAGE_KEY_SESSION_ID_LEGACY)
+    : sessionStorage.getItem(STORAGE_KEY_SESSION_ID) || sessionStorage.getItem(STORAGE_KEY_SESSION_ID_LEGACY);
   if (!sessionId || isExpired) {
     sessionId = generateUUID();
     if (useCookies) {
       setCookie(STORAGE_KEY_SESSION_ID, sessionId, 60 * 60 * 24, sharedCookieDomain);
+      setCookie(STORAGE_KEY_SESSION_ID_LEGACY, sessionId, 60 * 60 * 24, sharedCookieDomain);
     } else {
       sessionStorage.setItem(STORAGE_KEY_SESSION_ID, sessionId);
+      sessionStorage.setItem(STORAGE_KEY_SESSION_ID_LEGACY, sessionId);
     }
   }
 
   if (useCookies) {
-    setCookie(STORAGE_KEY_SESSION_TS, String(now), 60 * 60 * 24, sharedCookieDomain);
+    setCookie(STORAGE_KEY_SESSION_LAST_SEEN_AT, String(now), 60 * 60 * 24, sharedCookieDomain);
+    setCookie(STORAGE_KEY_SESSION_TS_LEGACY, String(now), 60 * 60 * 24, sharedCookieDomain);
   } else {
-    sessionStorage.setItem(STORAGE_KEY_SESSION_TS, String(now));
+    sessionStorage.setItem(STORAGE_KEY_SESSION_LAST_SEEN_AT, String(now));
+    sessionStorage.setItem(STORAGE_KEY_SESSION_TS_LEGACY, String(now));
   }
   // Mirror session cookie as a best effort for cross-host continuity.
   setCookie(STORAGE_KEY_SESSION_ID, sessionId, 60 * 60 * 24, sharedCookieDomain);
-  setCookie(STORAGE_KEY_SESSION_TS, String(now), 60 * 60 * 24, sharedCookieDomain);
+  setCookie(STORAGE_KEY_SESSION_ID_LEGACY, sessionId, 60 * 60 * 24, sharedCookieDomain);
+  setCookie(STORAGE_KEY_SESSION_LAST_SEEN_AT, String(now), 60 * 60 * 24, sharedCookieDomain);
+  setCookie(STORAGE_KEY_SESSION_TS_LEGACY, String(now), 60 * 60 * 24, sharedCookieDomain);
   return sessionId;
 }
 
@@ -320,7 +346,7 @@ function getUtmParams(): Record<string, string> {
   
   const params = new URLSearchParams(window.location.search);
   const utm: Record<string, string> = {};
-  const utmKeys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'];
+  const utmKeys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id'];
   
   for (const key of utmKeys) {
     const value = params.get(key);
@@ -337,7 +363,7 @@ function getClickIds(): Record<string, string> {
 
   const params = new URLSearchParams(window.location.search);
   const clickIds: Record<string, string> = {};
-  const clickKeys = ['gclid', 'fbclid', 'msclkid'];
+  const clickKeys = ['fbclid', 'gclid', 'wbraid', 'gbraid', 'ttclid', 'li_fat_id', 'msclkid', 'twclid'];
 
   for (const key of clickKeys) {
     const value = params.get(key);
@@ -364,6 +390,11 @@ function buildMetadata(additional?: Record<string, any>): Record<string, any> {
     ...getClickIds(),
     ...additional,
   };
+  const attribution = getAttributionContext();
+  if (Object.keys(attribution).length > 0) {
+    metadata.attribution = attribution;
+    Object.assign(metadata, attribution);
+  }
 
   const clerkUserId = getClerkUserId();
   if (clerkUserId) {
@@ -476,6 +507,27 @@ export function init(options: TrackerConfig = {}): void {
   if (config.debug) {
     console.log('[DO-Intent] Initialized with config:', config);
   }
+
+  // Persist first-touch + rolling last-touch attribution from landing URL params.
+  captureAttributionContextOnLanding();
+
+  // Lightweight debugging hook for browser console verification.
+  if (typeof window !== "undefined") {
+    window.DOIntentDebug = {
+      getState: () => ({
+        anonymous_id: getAnonymousId(),
+        session_id: getSessionId(),
+        attribution: getAttributionContext() as Record<string, string>,
+      }),
+      logState: () => {
+        // eslint-disable-next-line no-console
+        console.log("[DO-Intent] Debug state", window.DOIntentDebug?.getState());
+      },
+    };
+    if (config.debug) {
+      window.DOIntentDebug.logState();
+    }
+  }
   
   // Auto-track page_view on init
   if (typeof window !== 'undefined') {
@@ -483,6 +535,8 @@ export function init(options: TrackerConfig = {}): void {
     setupAutoTracking();
   }
 }
+
+export const initDoIntentTracker = init;
 
 /**
  * Track a custom event

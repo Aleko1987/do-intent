@@ -112,7 +112,7 @@ The tracker automatically emits these events:
 
 ### 1. `page_view`
 - **When**: On every page load
-- **Payload**: URL, referrer, device, user agent, timezone, `page_class`, UTM params, click IDs (`gclid`, `fbclid`, `msclkid`)
+- **Payload**: URL, referrer, device, user agent, timezone, `page_class`, full UTM set, click IDs (`fbclid`, `gclid`, `wbraid`, `gbraid`, `ttclid`, `li_fat_id`, `msclkid`, `twclid`), and persisted attribution context
 
 ### 2. `scroll_depth`
 - **When**: User scrolls past 60% of page (fires once per page)
@@ -274,9 +274,18 @@ All events sent to `/track` include:
     "utm_source": "google",
     "utm_medium": "cpc",
     "utm_campaign": "spring_sale",
+    "utm_term": "biodiesel supplier",
+    "utm_id": "q2_launch",
     "gclid": "EAIaIQob...",
     "fbclid": "IwAR...",
+    "wbraid": "sample_wbraid",
+    "gbraid": "sample_gbraid",
+    "ttclid": "sample_ttclid",
+    "li_fat_id": "sample_li_fat_id",
     "msclkid": "123abc...",
+    "twclid": "sample_twclid",
+    "first_touch_at": "2026-03-20T10:00:00.000Z",
+    "last_touch_at": "2026-03-20T10:10:00.000Z",
     "page_class": "pricing"
   }
 }
@@ -284,22 +293,24 @@ All events sent to `/track` include:
 
 ## Storage
 
-The tracker stores identifiers in browser storage by default (with cookie support/fallback):
+The tracker stores identifiers and attribution context in browser storage by default (with cookie support/fallback):
 
 - **Anonymous ID**
   - `localStorage`: `do_intent_anonymous_id` (persistent UUID), or
   - cookie: `do_intent_anonymous_id` (`Max-Age=365d`) when `useCookies=true` or storage unavailable
 - **Session ID**
-  - `sessionStorage`: `do_intent_session_id` (UUID), or
-  - cookie: `do_intent_session_id` (`Max-Age=1d`) in cookie mode
+  - `sessionStorage`: `doi_session_id` (UUID), or
+  - cookie: `doi_session_id` (`Max-Age=1d`) in cookie mode
 - **Session activity timestamp**
-  - `sessionStorage`: `do_intent_session_ts`, or
-  - cookie: `do_intent_session_ts`
+  - `sessionStorage`: `doi_session_last_seen_at`, or
+  - cookie: `doi_session_last_seen_at`
+- **Attribution context**
+  - `localStorage`: `doi_attribution_context_v1` (first-touch + rolling last-touch fields)
 
 ### Session rotation timeout
 
-- Session rotates after **30 minutes of inactivity**.
-- Inactivity is measured by comparing current time to `do_intent_session_ts`.
+- Session rotates after **45 minutes of inactivity**.
+- Inactivity is measured by comparing current time to `doi_session_last_seen_at`.
 - On activity, timestamp is refreshed.
 
 ## Testing Checklist
@@ -328,6 +339,28 @@ Manual testing steps:
 7. **Session Timeout**
    - Trigger an event, wait >30 minutes (or manually backdate `do_intent_session_ts`), trigger another event
    - Verify a new `session_id` is sent
+
+### Console debug helper (quick verification)
+
+After loading a landing URL with UTMs/click IDs, run in browser DevTools console:
+
+```javascript
+window.DOIntentDebug.getState()
+```
+
+Expected result:
+- `anonymous_id` is present
+- `session_id` is present
+- `attribution` contains persisted fields from `doi_attribution_context_v1`:
+  - lifecycle: `first_touch_at`, `first_touch_url`, `first_referrer`, `last_touch_at`, `last_touch_url`, `last_referrer`
+  - first touch: `ft_utm_*`, `ft_fbclid`, `ft_gclid`, `ft_wbraid`, `ft_gbraid`, `ft_ttclid`, `ft_li_fat_id`, `ft_msclkid`, `ft_twclid`
+  - last touch: `lt_utm_*`, `lt_fbclid`, `lt_gclid`, `lt_wbraid`, `lt_gbraid`, `lt_ttclid`, `lt_li_fat_id`, `lt_msclkid`, `lt_twclid`
+
+Optional pretty log:
+
+```javascript
+window.DOIntentDebug.logState()
+```
 
 ## Troubleshooting
 
