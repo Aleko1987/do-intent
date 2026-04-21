@@ -21,7 +21,9 @@ export type CandidateSignalStatus =
   | "approved"
   | "rejected"
   | "promoted"
-  | "needs_evidence";
+  | "needs_evidence"
+  | "reminder_sent"
+  | "evidence_attached";
 
 export type CandidateIdentityStatus =
   | "aggregate_only"
@@ -70,9 +72,27 @@ export interface CandidateSignal {
   updated_at: string;
 }
 
+
+export interface CandidateSignalReminder {
+  id: string;
+  candidate_signal_id: string;
+  owner_user_id: string;
+  channel: "whatsapp";
+  template_text: string;
+  delivery_status: "initiated" | "sent" | "replied" | "closed";
+  sent_at: string | null;
+  responded_at: string | null;
+  metadata: JsonObject;
+  created_by_user_id: string;
+  last_updated_by_user_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CandidateSignalEvidence {
   id: string;
   candidate_signal_id: string;
+  reminder_id: string | null;
   evidence_type: "screenshot" | "platform_export" | "url" | "manual_note" | "api_payload";
   storage_kind: "external_url" | "internal_path" | "inline";
   evidence_ref: string;
@@ -105,4 +125,7 @@ export interface CandidateSignalReview {
 export interface CandidateSignalQueueItem extends CandidateSignal {
   evidence_count: number;
   latest_evidence_ref: string | null;
+  reminder_count: number;
+  latest_reminder_status: "initiated" | "sent" | "replied" | "closed" | null;
+  latest_reminder_sent_at: string | null;
 }
