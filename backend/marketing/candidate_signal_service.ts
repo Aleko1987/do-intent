@@ -38,6 +38,8 @@ const ALLOWED_STATUSES = new Set<CandidateSignalStatus>([
   "rejected",
   "promoted",
   "needs_evidence",
+  "reminder_sent",
+  "evidence_attached",
 ]);
 
 const ALLOWED_EVENT_TYPES = new Set<CandidateSignalEventType>([
@@ -193,17 +195,25 @@ export async function listCandidateSignalQueue(params: {
     SELECT
       cs.*,
       COALESCE(COUNT(cse.id), 0)::int AS evidence_count,
-      MAX(cse.evidence_ref) AS latest_evidence_ref
+      MAX(cse.evidence_ref) AS latest_evidence_ref,
+      COALESCE(COUNT(csr.id), 0)::int AS reminder_count,
+      (
+        ARRAY_REMOVE(ARRAY_AGG(csr.delivery_status ORDER BY csr.created_at DESC), NULL)
+      )[1] AS latest_reminder_status,
+      MAX(csr.sent_at) AS latest_reminder_sent_at
     FROM candidate_signals cs
     LEFT JOIN candidate_signal_evidence cse ON cse.candidate_signal_id = cs.id
+    LEFT JOIN candidate_signal_reminders csr ON csr.candidate_signal_id = cs.id
     WHERE ${whereClauses.join(" AND ")}
     GROUP BY cs.id
     ORDER BY
       CASE cs.status
         WHEN 'pending_review' THEN 0
         WHEN 'needs_evidence' THEN 1
-        WHEN 'approved' THEN 2
-        ELSE 3
+        WHEN 'reminder_sent' THEN 2
+        WHEN 'evidence_attached' THEN 3
+        WHEN 'approved' THEN 4
+        ELSE 5
       END,
       cs.occurred_at DESC
     LIMIT $${queryParams.length}
@@ -292,4 +302,17 @@ export async function promoteCandidateSignalToIntentEvent(params: {
   const pushResult = await checkAndPushToSales(leadId);
 
   return { event, autoPushed: pushResult.pushed };
+}
+
+
+export function buildWhatsAppReminderTemplate(params: {
+  actorDisplay?: string | null;
+  actorHandle?: string | null;
+  summary?: string | null;
+  companyName?: string | null;
+}): string {
+  const contact = params.actorDisplay ?? params.actorHandle ?? "there";
+  const companyPrefix = params.companyName ? ` from ${params.companyName}` : "";
+  const context = params.summary ? `Context: ${params.summary}. ` : "";
+  return `Hi ${contact}${companyPrefix}, quick follow-up from do-intent. ${context}Could you share a short update here so we can attach it to your request? Thank you.`;
 }

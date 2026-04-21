@@ -15,7 +15,7 @@ interface ReviewCandidateSignalRequest {
   id: string;
   decision: "approve" | "reject" | "edit";
   decision_reason?: string;
-  set_status?: "pending_review" | "approved" | "rejected" | "needs_evidence";
+  set_status?: "pending_review" | "approved" | "rejected" | "needs_evidence" | "reminder_sent" | "evidence_attached";
   set_lead_id?: string;
   set_event_type?: string;
   set_stage?: "M1" | "M2" | "M3" | "M4" | "M5";
@@ -47,7 +47,7 @@ function parseMetadataPatch(rawPatch: string | undefined): JsonObject {
 
 function normalizeReviewStatus(input: string | undefined, decision: ReviewCandidateSignalRequest["decision"]): CandidateSignalStatus {
   if (input) {
-    if (!["pending_review", "approved", "rejected", "needs_evidence"].includes(input)) {
+    if (!["pending_review", "approved", "rejected", "needs_evidence", "reminder_sent", "evidence_attached"].includes(input)) {
       throw APIError.invalidArgument("invalid set_status");
     }
     return input as CandidateSignalStatus;

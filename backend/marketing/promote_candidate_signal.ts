@@ -29,7 +29,7 @@ export const promoteCandidateSignal = api<PromoteCandidateSignalRequest, Promote
 
     const signal = await fetchCandidateSignalById(req.id, authData.userID);
 
-    if (!["approved", "pending_review", "needs_evidence"].includes(signal.status)) {
+    if (!["approved", "pending_review", "needs_evidence", "reminder_sent", "evidence_attached"].includes(signal.status)) {
       throw APIError.failedPrecondition("candidate signal status is not promotable");
     }
 
