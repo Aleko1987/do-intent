@@ -14,6 +14,7 @@ backend/test_anonymous_event.*
 payload.json
 # build outputs
 bun.lock
+*.tsbuildinfo
 
 # encore generated
 backend/encore.gen/
