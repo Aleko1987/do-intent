@@ -1,0 +1,26 @@
+# Apply backend/db/migrations to a Postgres database (e.g. Render) without Render Shell.
+# Add repo secret RENDER_DATABASE_URL with the external connection string (?sslmode=require).
+name: Run database migrations
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install backend dependencies
+        run: npm ci --prefix backend
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ secrets.RENDER_DATABASE_URL }}
+        run: npm run migrate --prefix backend

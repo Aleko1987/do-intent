@@ -69,6 +69,8 @@ Add the following environment variables in the Render dashboard:
 
 - `PORT` - Render automatically sets this, but you can explicitly set it if needed (default: `10000`)
 
+- `RUN_MIGRATIONS_ON_START` - Set to `true` on **single-instance** web services so pending SQL migrations run automatically at boot (recommended on Render Free when Shell is unavailable). The health service awaits this before serving.
+
 #### Optional Variables
 
 - `ALLOWED_INGEST_ORIGINS` - Comma-separated list of allowed origin hostnames for website ingestion endpoints
@@ -133,16 +135,21 @@ npm run migrate
 
 ### Render Production
 
-Run migrations as a one-off shell command against the same environment variables used by the web service:
+**Without Render Shell (e.g. Free tier):** pick one:
+
+1. **Automatic (recommended):** set `RUN_MIGRATIONS_ON_START=true` on the web service, redeploy, and watch logs for `Startup migrations finished`.
+2. **GitHub Actions:** add repository secret `RENDER_DATABASE_URL` (external Postgres URL with `sslmode=require`), then run workflow **Run database migrations** (`.github/workflows/db-migrate.yml`) from the Actions tab after deploy.
+
+**With Shell or a paid job:** run migrations once against the same `DATABASE_URL` as the web service:
 
 ```bash
 cd /opt/render/project/src
 npm --prefix backend run migrate
 ```
 
-Recommended flow for deploys:
+Recommended flow for deploys when not using `RUN_MIGRATIONS_ON_START`:
 1. Deploy new image.
-2. Run `npm --prefix backend run migrate` in Render Shell (or a Render job using the same image/env).
+2. Run migrations via Actions, local CLI, or Render Shell.
 3. Verify logs show `Applied migration` (or `Skipping already applied`) and no errors.
 
 For this change, the new migration file `backend/db/migrations/019_add_marketing_leads_company_name_source_type.up.sql` is picked up by the same `npm --prefix backend run migrate` command because the runner automatically loads all `\d{3}_*.up.sql` files in order.

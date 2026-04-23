@@ -7,7 +7,6 @@ let pool: Pool | null = null;
 let warnedMissingConfig = false;
 let didLogMarketingLeadsSchema = false;
 let didEnsureMarketingLeadsSchema = false;
-let didEnsureCandidateSignalSchema = false;
 
 interface MarketingLeadsSchemaColumn {
   column_name: string;
@@ -186,97 +185,6 @@ function ensureMarketingLeadsSchemaAtStartup(activePool: Pool): void {
   })();
 }
 
-// TEMP: Remove once review-queue migrations are guaranteed in all environments.
-function ensureCandidateSignalSchemaAtStartup(activePool: Pool): void {
-  if (didEnsureCandidateSignalSchema) {
-    return;
-  }
-  didEnsureCandidateSignalSchema = true;
-
-  void (async () => {
-    let hadFailure = false;
-
-    const statements: string[] = [
-      `CREATE TABLE IF NOT EXISTS candidate_signals (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        lead_id UUID REFERENCES marketing_leads(id) ON DELETE SET NULL,
-        channel TEXT NOT NULL CHECK (
-          channel IN ('facebook', 'instagram', 'whatsapp', 'email', 'website', 'manual_upload', 'other')
-        ),
-        status TEXT NOT NULL DEFAULT 'pending' CHECK (
-          status IN ('pending', 'needs_evidence', 'ready_for_review', 'approved', 'rejected')
-        ),
-        actor_display TEXT,
-        actor_handle TEXT,
-        actor_contact TEXT,
-        source_ref TEXT,
-        summary TEXT,
-        raw_text TEXT,
-        suggested_event_type TEXT DEFAULT 'other',
-        suggested_intent_score NUMERIC(5, 2),
-        suggestion_confidence NUMERIC(5, 2),
-        suggested_stage TEXT CHECK (suggested_stage IN ('M1', 'M2', 'M3', 'M4', 'M5')),
-        evidence_count INTEGER NOT NULL DEFAULT 0,
-        latest_reminder_status TEXT,
-        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_candidate_signals_status_created
-        ON candidate_signals (status, created_at DESC)`,
-      `CREATE INDEX IF NOT EXISTS idx_candidate_signals_channel_created
-        ON candidate_signals (channel, created_at DESC)`,
-      `CREATE INDEX IF NOT EXISTS idx_candidate_signals_lead_created
-        ON candidate_signals (lead_id, created_at DESC)`,
-      `CREATE TABLE IF NOT EXISTS candidate_signal_reminders (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        candidate_signal_id UUID NOT NULL REFERENCES candidate_signals(id) ON DELETE CASCADE,
-        channel TEXT NOT NULL CHECK (channel IN ('whatsapp', 'email', 'other')),
-        template_text TEXT NOT NULL,
-        delivery_status TEXT NOT NULL DEFAULT 'drafted' CHECK (
-          delivery_status IN ('drafted', 'opened', 'sent', 'delivered', 'failed')
-        ),
-        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_candidate_signal_reminders_signal_created
-        ON candidate_signal_reminders (candidate_signal_id, created_at DESC)`,
-      `CREATE TABLE IF NOT EXISTS candidate_signal_evidence (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        candidate_signal_id UUID NOT NULL REFERENCES candidate_signals(id) ON DELETE CASCADE,
-        reminder_id UUID REFERENCES candidate_signal_reminders(id) ON DELETE SET NULL,
-        evidence_type TEXT NOT NULL DEFAULT 'screenshot' CHECK (
-          evidence_type IN ('screenshot', 'url', 'document', 'other')
-        ),
-        storage_kind TEXT NOT NULL CHECK (
-          storage_kind IN ('inline', 'external_url', 'internal_path', 'other')
-        ),
-        evidence_ref TEXT NOT NULL,
-        mime_type TEXT,
-        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_candidate_signal_evidence_signal_created
-        ON candidate_signal_evidence (candidate_signal_id, created_at DESC)`,
-    ];
-
-    for (const statement of statements) {
-      try {
-        await activePool.query(statement);
-      } catch (error: unknown) {
-        hadFailure = true;
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`[schema] candidate signal ensure failed: ${message}`);
-      }
-    }
-
-    if (!hadFailure) {
-      console.info("[schema] ensured candidate signal review tables ok");
-    }
-  })();
-}
-
 function isLocalHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1";
 }
@@ -347,6 +255,26 @@ function resolveDatabaseUrl(): string | null {
   return `postgresql://${user}:${encodedPassword}@${hostport}/${name}`;
 }
 
+/**
+ * Standalone pool for migration CLI / startup hooks. Does not use the app
+ * singleton so `pool.end()` does not break `getPool()`.
+ */
+export function createMigrationPool(): Pool {
+  const connectionString = resolveDatabaseUrl();
+  if (!connectionString) {
+    throw new Error(
+      "Database not configured (set DATABASE_URL or DATABASE_* variables)"
+    );
+  }
+  const normalizedConnectionString = ensureSslMode(connectionString);
+  return new Pool({
+    connectionString: normalizedConnectionString,
+    ssl: shouldUseSsl(normalizedConnectionString)
+      ? { rejectUnauthorized: false }
+      : undefined,
+  });
+}
+
 export function getPool(): Pool {
   if (!pool) {
     const connectionString = resolveDatabaseUrl();
@@ -367,7 +295,6 @@ export function getPool(): Pool {
         : undefined,
     });
     ensureMarketingLeadsSchemaAtStartup(pool);
-    ensureCandidateSignalSchemaAtStartup(pool);
     logMarketingLeadsSchemaAtStartup(pool);
   }
   return pool;
