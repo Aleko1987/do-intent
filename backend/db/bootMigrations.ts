@@ -11,11 +11,17 @@ export async function runMigrationsIfEnabled(): Promise<void> {
   }
 
   console.info("[db] RUN_MIGRATIONS_ON_START=true — applying pending migrations…");
-  const pool = createMigrationPool();
   try {
-    await applyPendingMigrationsToPool(pool);
-  } finally {
-    await pool.end();
+    const pool = createMigrationPool();
+    try {
+      await applyPendingMigrationsToPool(pool);
+      console.info("[db] Startup migrations finished.");
+    } finally {
+      await pool.end();
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    // Keep API startup resilient; operator can run migrations separately if needed.
+    console.error(`[db] Startup migrations failed: ${message}`);
   }
-  console.info("[db] Startup migrations finished.");
 }
