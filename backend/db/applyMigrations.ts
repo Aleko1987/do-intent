@@ -5,7 +5,36 @@ import type { Pool } from "pg";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const MIGRATIONS_DIR = join(__dirname, "migrations");
+
+function isMigrationFile(file: string): boolean {
+  return /^\d{3}_.+\.up\.sql$/.test(file);
+}
+
+async function resolveMigrationsDir(): Promise<string> {
+  const candidates = [
+    // Works in source tree (local dev / scripts)
+    join(__dirname, "migrations"),
+    // Works in Render runtime where cwd is often backend/
+    join(process.cwd(), "db", "migrations"),
+    // Works when cwd is repo root
+    join(process.cwd(), "backend", "db", "migrations"),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const files = await readdir(candidate);
+      if (files.some(isMigrationFile)) {
+        return candidate;
+      }
+    } catch {
+      // Try next candidate path.
+    }
+  }
+
+  throw new Error(
+    `Could not locate migrations directory. Checked: ${candidates.join(", ")}`
+  );
+}
 
 export interface MigrationSummary {
   applied: number;
@@ -61,11 +90,11 @@ export async function applyPendingMigrationsToPool(
   const appliedMigrations = await getAppliedMigrations(pool);
   console.log(`Found ${appliedMigrations.size} already applied migration(s)`);
 
-  const files = await readdir(MIGRATIONS_DIR);
+  const migrationsDir = await resolveMigrationsDir();
+  console.log(`Using migrations directory: ${migrationsDir}`);
+  const files = await readdir(migrationsDir);
   const migrationFiles = files
-    .filter((file) => {
-      return /^\d{3}_.+\.up\.sql$/.test(file);
-    })
+    .filter(isMigrationFile)
     .sort();
 
   console.log(`Found ${migrationFiles.length} migration file(s) to check`);
@@ -80,7 +109,7 @@ export async function applyPendingMigrationsToPool(
       continue;
     }
 
-    const filePath = join(MIGRATIONS_DIR, filename);
+    const filePath = join(migrationsDir, filename);
     const sql = await readFile(filePath, "utf-8");
 
     if (!sql.trim()) {
