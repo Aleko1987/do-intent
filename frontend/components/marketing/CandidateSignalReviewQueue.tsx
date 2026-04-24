@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import ManualScreenshotIntake from "@/components/marketing/ManualScreenshotIntake";
 
 const CHANNEL_BADGE_VARIANTS: Record<string, "default" | "secondary" | "outline"> = {
   facebook: "default",
@@ -189,6 +190,8 @@ export default function CandidateSignalReviewQueue() {
           Human review is mandatory before promotion to canonical intent events.
         </p>
       </div>
+
+      <ManualScreenshotIntake onSuccess={() => void loadQueue()} />
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
