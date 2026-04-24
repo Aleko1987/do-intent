@@ -80,6 +80,17 @@ Notes:
 - `POST /watchlists/:id`
 - `DELETE /watchlists/:id`
 
+## DO-Socials execute endpoint (called by DO-Intent)
+
+DO-Intent calls:
+
+- `POST /api/content-ops/social-execution/execute-task`
+
+Configuration:
+- `DO_SOCIALS_BASE_URL` (preferred, path appended automatically), or
+- `DO_SOCIALS_EXECUTE_URL` (full override URL)
+- `DO_SOCIALS_EXECUTE_TOKEN` (bearer token)
+
 ## Risk controls in DO-Intent
 
 - Daily budget per `(owner_user_id, platform, action_type, date)`.

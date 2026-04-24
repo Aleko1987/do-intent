@@ -24,6 +24,20 @@ export function parseJsonObject(input: unknown): Record<string, string | number 
   return out;
 }
 
+export function resolveExecutionUrl(): string {
+  const explicit = process.env.DO_SOCIALS_EXECUTE_URL?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  const base = process.env.DO_SOCIALS_BASE_URL?.trim();
+  if (!base) {
+    throw new Error(
+      "DO_SOCIALS_BASE_URL or DO_SOCIALS_EXECUTE_URL not configured"
+    );
+  }
+  return `${base.replace(/\/+$/, "")}/api/content-ops/social-execution/execute-task`;
+}
+
 export function parseNormalizedSocialEvent(input: unknown): NormalizedSocialEventV1 {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw APIError.invalidArgument("invalid payload");
@@ -108,4 +122,8 @@ export function resolveDefaultCap(platform: SocialPlatform, actionType: SocialAc
 
 export function isTaskExecutable(task: InboxTaskRow): boolean {
   return task.status === "approved" || task.status === "failed" || task.status === "blocked";
+}
+
+export function isHumanApprovalRequired(actionType: SocialActionType): boolean {
+  return actionType === "like" || actionType === "comment" || actionType === "dm";
 }

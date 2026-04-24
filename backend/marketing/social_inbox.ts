@@ -5,10 +5,12 @@ import { db } from "../db/db";
 import { applyCorrelationId } from "../internal/correlation";
 import type { JsonObject } from "../internal/json_types";
 import {
+  isHumanApprovalRequired,
   isTaskExecutable,
   mapEventTypeToTaskType,
   parseJsonObject,
   parseNormalizedSocialEvent,
+  resolveExecutionUrl,
   resolveDefaultCap,
 } from "./social_inbox_helpers";
 import type {
@@ -107,6 +109,15 @@ function parseMetadataString(metadata: string | undefined): JsonObject {
   } catch {
     return {};
   }
+}
+
+function resolveExecutionIdempotencyKey(task: InboxTaskRow): string {
+  const payload = parseJsonObject(task.payload_json) as Record<string, unknown>;
+  const externalKey = payload.idempotency_key;
+  if (typeof externalKey === "string" && externalKey.trim()) {
+    return externalKey.trim();
+  }
+  return `execute:${task.id}`;
 }
 
 function requireUserId(): string {
@@ -399,6 +410,39 @@ export const executeInboxTask = api<ExecuteInboxTaskRequest, ExecuteInboxTaskRes
     if (!existing) {
       throw APIError.notFound("task not found");
     }
+    if (isHumanApprovalRequired(existing.task_type) && existing.status !== "approved") {
+      const blockedPayload: ExecuteTaskResponseV1 = {
+        version: "v1",
+        task_id: existing.id,
+        status: "blocked",
+        provider_action_id: null,
+        occurred_at: new Date().toISOString(),
+        reason_code: "human_approval_required",
+        reason_message: "Human approval is required before execution",
+        raw: null,
+      };
+      await db.rawExec(
+        `INSERT INTO execution_attempts (owner_user_id, task_id, status, request_payload, response_payload, error, attempted_at)
+         VALUES ($1, $2, 'blocked', $3::jsonb, $4::jsonb, $5, now())`,
+        ownerUserId,
+        existing.id,
+        JSON.stringify({}),
+        JSON.stringify(blockedPayload),
+        "human_approval_required"
+      );
+      const blockedTask = await db.rawQueryRow<InboxTaskRow>(
+        `UPDATE inbox_tasks
+         SET status = 'blocked', updated_at = now()
+         WHERE id = $1 AND owner_user_id = $2
+         RETURNING *`,
+        existing.id,
+        ownerUserId
+      );
+      if (!blockedTask) {
+        throw APIError.internal("failed to block task");
+      }
+      return { task: blockedTask, execution: blockedPayload };
+    }
     if (!isTaskExecutable(existing)) {
       throw APIError.failedPrecondition("task cannot be executed in current status");
     }
@@ -443,10 +487,10 @@ export const executeInboxTask = api<ExecuteInboxTaskRequest, ExecuteInboxTaskRes
       return { task: blockedTask, execution: blockedPayload };
     }
 
-    const executionUrl = process.env.DO_SOCIALS_EXECUTE_URL?.trim();
+    const executionUrl = resolveExecutionUrl();
     const executionToken = process.env.DO_SOCIALS_EXECUTE_TOKEN?.trim();
-    if (!executionUrl || !executionToken) {
-      throw APIError.internal("DO_SOCIALS_EXECUTE_URL or DO_SOCIALS_EXECUTE_TOKEN not configured");
+    if (!executionToken) {
+      throw APIError.internal("DO_SOCIALS_EXECUTE_TOKEN not configured");
     }
 
     const executing = await db.rawQueryRow<InboxTaskRow>(
@@ -464,7 +508,7 @@ export const executeInboxTask = api<ExecuteInboxTaskRequest, ExecuteInboxTaskRes
     const requestPayload: ExecuteTaskRequestV1 = {
       version: "v1",
       task_id: executing.id,
-      idempotency_key: `${executing.id}:${executing.updated_at}`,
+      idempotency_key: resolveExecutionIdempotencyKey(executing),
       platform: executing.platform,
       action_type: executing.task_type,
       target_ref: executing.target_ref,
@@ -493,7 +537,7 @@ export const executeInboxTask = api<ExecuteInboxTaskRequest, ExecuteInboxTaskRes
       const parsed = responseJson as Partial<ExecuteTaskResponseV1>;
       execution = {
         version: "v1",
-        task_id: executing.id,
+        task_id: typeof parsed.task_id === "string" ? parsed.task_id : executing.id,
         status:
           parsed.status === "succeeded" ||
           parsed.status === "failed" ||
