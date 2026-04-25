@@ -34,6 +34,14 @@ interface AttachEvidenceResponse {
   candidate_signal: CandidateSignal;
 }
 
+function formatMaybeNumber(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "n/a";
+  }
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n.toFixed(2) : "n/a";
+}
+
 export default function CandidateSignalReviewQueue() {
   const { getToken } = useAuth();
   const [rows, setRows] = useState<CandidateSignalQueueItem[]>([]);
@@ -209,8 +217,8 @@ export default function CandidateSignalReviewQueue() {
                 <div className="text-xs text-muted-foreground grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
                   <span>Matched lead: {row.lead_id ?? "Unknown"}</span>
                   <span>Suggested event: {row.suggested_event_type ?? "other"}</span>
-                  <span>Suggested score: {row.suggested_intent_score?.toFixed(2) ?? "n/a"}</span>
-                  <span>Confidence: {row.suggestion_confidence?.toFixed(2) ?? "n/a"}</span>
+                  <span>Suggested score: {formatMaybeNumber(row.suggested_intent_score)}</span>
+                  <span>Confidence: {formatMaybeNumber(row.suggestion_confidence)}</span>
                   <span>Evidence count: {row.evidence_count}</span>
                   <span>Reminder status: {row.latest_reminder_status ?? "none"}</span>
                 </div>
