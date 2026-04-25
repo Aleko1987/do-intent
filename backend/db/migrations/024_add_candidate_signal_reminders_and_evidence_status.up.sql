@@ -43,6 +43,9 @@ BEGIN
 END $$;
 
 ALTER TABLE candidate_signals
+  DROP CONSTRAINT IF EXISTS candidate_signals_status_check;
+
+ALTER TABLE candidate_signals
   ADD CONSTRAINT candidate_signals_status_check
   CHECK (status IN (
     'pending_review',
