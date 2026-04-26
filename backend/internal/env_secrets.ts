@@ -52,3 +52,12 @@ export function resolveMarketingAdminKey(): string | null {
     "MarketingAdminKey",
   ]);
 }
+
+export function resolveCaptureIntakeToken(): string | null {
+  return resolveFirstEnv([
+    "ENCORE_SECRET_CaptureIntakeToken",
+    "ENCORE_SECRET_CAPTURE_INTAKE_TOKEN",
+    "CAPTURE_INTAKE_TOKEN",
+    "CaptureIntakeToken",
+  ]);
+}

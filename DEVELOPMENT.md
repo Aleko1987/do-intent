@@ -195,6 +195,30 @@ Example:
 export ALLOWED_INGEST_ORIGINS="example.com,app.example.com,localhost"
 ```
 
+#### Hotkey capture intake
+
+- `CAPTURE_INTAKE_TOKEN` (or Encore secret `CaptureIntakeToken`): bearer token required by `POST /marketing/capture-intake`.
+- Keep this token out of source code and rotate it periodically.
+- Correlation IDs are logged; raw bearer tokens are never logged.
+
+### Desktop companion (Windows-first)
+
+The cross-application hotkey capture utility lives in `companion/`.
+
+```bash
+cd companion
+npm install
+npm run dev
+```
+
+Required companion env vars:
+
+- `DO_INTENT_CAPTURE_BASE_URL`
+- `DO_INTENT_CAPTURE_TOKEN`
+- `DO_INTENT_OWNER_USER_ID`
+
+See `docs/HOTKEY_CAPTURE_RUNBOOK.md` for full setup, troubleshooting, and request/response contract details.
+
 ## Website Integration Flow
 
 The website ingestion follows an **identify-first** pattern:

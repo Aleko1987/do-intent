@@ -9,7 +9,8 @@
   },
   "workspaces": [
     "backend",
-    "frontend"
+    "frontend",
+    "companion"
   ],
   "dependencies": {
     "express": "^4.21.2",

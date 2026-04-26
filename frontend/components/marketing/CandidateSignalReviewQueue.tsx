@@ -34,12 +34,41 @@ interface AttachEvidenceResponse {
   candidate_signal: CandidateSignal;
 }
 
+interface HotkeyCaptureMetadata {
+  source: "hotkey_capture";
+  capture_mode?: "region" | "fullscreen";
+  capture_scope?: "region" | "fullscreen";
+  captured_at?: string;
+  workstation_id?: string | null;
+  app_version?: string | null;
+  target_app_hint?: string | null;
+}
+
 function formatMaybeNumber(value: unknown): string {
   if (value === null || value === undefined) {
     return "n/a";
   }
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? n.toFixed(2) : "n/a";
+}
+
+function readHotkeyCaptureMetadata(value: unknown): HotkeyCaptureMetadata | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const obj = value as Record<string, unknown>;
+  if (obj.source !== "hotkey_capture") {
+    return null;
+  }
+  return {
+    source: "hotkey_capture",
+    capture_mode: obj.capture_mode === "fullscreen" ? "fullscreen" : obj.capture_mode === "region" ? "region" : undefined,
+    capture_scope: obj.capture_scope === "fullscreen" ? "fullscreen" : obj.capture_scope === "region" ? "region" : undefined,
+    captured_at: typeof obj.captured_at === "string" ? obj.captured_at : undefined,
+    workstation_id: typeof obj.workstation_id === "string" ? obj.workstation_id : null,
+    app_version: typeof obj.app_version === "string" ? obj.app_version : null,
+    target_app_hint: typeof obj.target_app_hint === "string" ? obj.target_app_hint : null,
+  };
 }
 
 export default function CandidateSignalReviewQueue() {
@@ -206,12 +235,21 @@ export default function CandidateSignalReviewQueue() {
       <div className="space-y-3">
         {rows.map((row) => (
           <Card key={row.id} className="p-4 space-y-3">
+            {(() => {
+              const captureMeta = readHotkeyCaptureMetadata(row.metadata);
+              const captureScope = captureMeta?.capture_scope ?? captureMeta?.capture_mode;
+              return (
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="space-y-2">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-medium">{row.actor_display ?? row.actor_handle ?? "Unknown actor"}</span>
                   <Badge variant={CHANNEL_BADGE_VARIANTS[row.channel] ?? "outline"}>{row.channel}</Badge>
                   <Badge variant="outline">{row.status}</Badge>
+                  {captureMeta && (
+                    <Badge variant="secondary">
+                      Hotkey {captureScope === "fullscreen" ? "fullscreen" : "region"}
+                    </Badge>
+                  )}
                 </div>
                 <p className="text-sm text-muted-foreground">{row.summary ?? row.raw_text ?? "No summary provided"}</p>
                 <div className="text-xs text-muted-foreground grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
@@ -221,6 +259,14 @@ export default function CandidateSignalReviewQueue() {
                   <span>Confidence: {formatMaybeNumber(row.suggestion_confidence)}</span>
                   <span>Evidence count: {row.evidence_count}</span>
                   <span>Reminder status: {row.latest_reminder_status ?? "none"}</span>
+                  {captureMeta?.captured_at && (
+                    <span>Captured at: {new Date(captureMeta.captured_at).toLocaleString()}</span>
+                  )}
+                  {captureMeta?.workstation_id && (
+                    <span>Workstation: {captureMeta.workstation_id}</span>
+                  )}
+                  {captureMeta?.app_version && <span>Companion: {captureMeta.app_version}</span>}
+                  {captureMeta?.target_app_hint && <span>Target app: {captureMeta.target_app_hint}</span>}
                 </div>
               </div>
 
@@ -233,6 +279,8 @@ export default function CandidateSignalReviewQueue() {
                 </Button>
               </div>
             </div>
+              );
+            })()}
 
             {activeId === row.id && (
               <div className="border rounded-md p-3 space-y-3 bg-muted/30">
