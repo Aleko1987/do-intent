@@ -1,4 +1,5 @@
 import { BrowserWindow, ipcMain, screen } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Rect } from "./screenCapture.js";
@@ -7,6 +8,31 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let overlayWindow: BrowserWindow | null = null;
+
+function resolveExistingPath(label: string, candidates: string[]): string {
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error(`${label} not found in expected locations: ${candidates.join(", ")}`);
+}
+
+function resolveOverlayAssetPaths(): { preloadPath: string; htmlPath: string } {
+  const preloadPath = resolveExistingPath("overlay preload", [
+    path.resolve(__dirname, "../preload.js"),
+    path.resolve(__dirname, "../../src/preload.js"),
+    path.resolve(process.cwd(), "companion", "dist", "preload.js"),
+    path.resolve(process.cwd(), "companion", "src", "preload.js"),
+  ]);
+  const htmlPath = resolveExistingPath("overlay html", [
+    path.resolve(__dirname, "../renderer/region-overlay.html"),
+    path.resolve(__dirname, "../../src/renderer/region-overlay.html"),
+    path.resolve(process.cwd(), "companion", "dist", "renderer", "region-overlay.html"),
+    path.resolve(process.cwd(), "companion", "src", "renderer", "region-overlay.html"),
+  ]);
+  return { preloadPath, htmlPath };
+}
 
 export async function selectRegion(): Promise<Rect | null> {
   if (overlayWindow) {
@@ -18,6 +44,7 @@ export async function selectRegion(): Promise<Rect | null> {
   const display = screen.getDisplayNearestPoint(cursorPoint);
   const bounds = display.bounds;
 
+  const assets = resolveOverlayAssetPaths();
   overlayWindow = new BrowserWindow({
     x: bounds.x,
     y: bounds.y,
@@ -31,7 +58,7 @@ export async function selectRegion(): Promise<Rect | null> {
     resizable: false,
     focusable: true,
     webPreferences: {
-      preload: path.join(__dirname, "../preload.js"),
+      preload: assets.preloadPath,
       contextIsolation: true,
     },
   });
@@ -43,7 +70,7 @@ export async function selectRegion(): Promise<Rect | null> {
   overlayWindow.webContents.on("did-fail-load", (_event, code, desc) => {
     console.error("[overlay] failed to load", { code, desc });
   });
-  await overlayWindow.loadFile(path.join(__dirname, "../renderer/region-overlay.html"));
+  await overlayWindow.loadFile(assets.htmlPath);
   console.info("[companion] region overlay loaded");
 
   return await new Promise<Rect | null>((resolve) => {

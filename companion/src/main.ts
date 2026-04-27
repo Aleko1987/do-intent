@@ -157,45 +157,54 @@ async function bootstrap(): Promise<void> {
   const queueDir = path.join(app.getPath("userData"), "queue");
   const retryQueue = new RetryQueue(queueDir);
   await retryQueue.init();
+  let flushInProgress = false;
 
   const flushQueue = async () => {
-    const due = retryQueue.listDue(Date.now());
-    if (due.length > 0) {
-      console.info("[companion] flushing queue", { due: due.length });
+    if (flushInProgress) {
+      return;
     }
-    for (const item of due) {
-      try {
-        const startedAtMs = Date.now();
-        const intakeResponse = await postCaptureIntake({
-          baseUrl: config.intakeBaseUrl,
-          token: config.intakeToken,
-          payload: item.payload,
-        });
-        await retryQueue.markSucceeded(item.idempotencyKey);
-        console.info("[companion] intake success", {
-          idempotencyKey: item.idempotencyKey,
-          deduped: intakeResponse.deduped,
-          candidateSignalId: intakeResponse.candidate_signal_id,
-          evidenceId: intakeResponse.evidence_id,
-          intakeMs: Date.now() - startedAtMs,
-        });
-      } catch (error) {
-        console.error("[companion] intake failed", {
-          idempotencyKey: item.idempotencyKey,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        if (isRetryableError(error)) {
+    flushInProgress = true;
+    const due = retryQueue.listDue(Date.now());
+    try {
+      if (due.length > 0) {
+        console.info("[companion] flushing queue", { due: due.length });
+      }
+      for (const item of due) {
+        try {
+          const startedAtMs = Date.now();
+          const intakeResponse = await postCaptureIntake({
+            baseUrl: config.intakeBaseUrl,
+            token: config.intakeToken,
+            payload: item.payload,
+          });
+          await retryQueue.markSucceeded(item.idempotencyKey);
+          console.info("[companion] intake success", {
+            idempotencyKey: item.idempotencyKey,
+            deduped: intakeResponse.deduped,
+            candidateSignalId: intakeResponse.candidate_signal_id,
+            evidenceId: intakeResponse.evidence_id,
+            intakeMs: Date.now() - startedAtMs,
+          });
+        } catch (error) {
+          console.error("[companion] intake failed", {
+            idempotencyKey: item.idempotencyKey,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          if (isRetryableError(error)) {
+            await retryQueue.markFailed(
+              item.idempotencyKey,
+              error instanceof Error ? error.message : "retryable ingest error"
+            );
+            continue;
+          }
           await retryQueue.markFailed(
             item.idempotencyKey,
-            error instanceof Error ? error.message : "retryable ingest error"
+            error instanceof Error ? error.message : "non-retryable ingest error"
           );
-          continue;
         }
-        await retryQueue.markFailed(
-          item.idempotencyKey,
-          error instanceof Error ? error.message : "non-retryable ingest error"
-        );
       }
+    } finally {
+      flushInProgress = false;
     }
   };
 
