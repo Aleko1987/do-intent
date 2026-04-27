@@ -1,5 +1,7 @@
 # File Map - DO Intent Project
 
+> Recent update summary: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 ## Backend Structure
 ```
 backend/

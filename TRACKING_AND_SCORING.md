@@ -1,5 +1,7 @@
 # Tracking Methods and Scoring System
 
+> Recent tracking pipeline updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 ## Tracking Methods
 
 ### 1. Anonymous-First Website Tracking (Intent Scorer)

@@ -1,5 +1,7 @@
 # Stage 1 MVP Gap Analysis (Current Infra vs Plan)
 
+> Recent gap-closure updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 This document compares current implementation against the Stage 1 scope in `docs/INTENT_GROWTH_PLAN.md`.
 
 ## Summary

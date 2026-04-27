@@ -1,5 +1,7 @@
 # DO-Intent — Codex Build Instructions
 
+> Recent implementation summary: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 You are operating inside the DO-Intent codebase.
 
 ## Mandatory First Step

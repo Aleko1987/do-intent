@@ -1,5 +1,7 @@
 # Stage 1 MVP Implementation Checklist
 
+> Recent implementation status: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 Derived from `docs/INTENT_GROWTH_PLAN.md` and `docs/STAGE1_MVP_GAP_ANALYSIS.md`.
 
 Status legend:

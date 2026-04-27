@@ -1,5 +1,7 @@
 # Render Build Instructions
 
+> Recent platform and workflow updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 ## Build Command
 
 The exact build command that must be set for the backend service in Render:

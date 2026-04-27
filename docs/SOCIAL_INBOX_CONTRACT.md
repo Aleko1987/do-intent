@@ -1,5 +1,7 @@
 # Social Inbox Contract (v1)
 
+> Recent contact ingestion/resolution updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 This document defines the cross-repo contract between DO-Intent (orchestrator)
 and DO-Socials (execution adapter).
 

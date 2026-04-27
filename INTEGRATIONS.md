@@ -1,5 +1,7 @@
 # DO Intent Website Integration
 
+> Recent integration updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 This document describes two supported integration paths:
 1) **Lead-based ingestion** via `/marketing/identify` + `/marketing/ingest-intent-event`
 2) **Anonymous-first tracking** via `/track` + optional `/api/v1/identify`

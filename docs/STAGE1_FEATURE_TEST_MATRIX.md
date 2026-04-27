@@ -1,5 +1,7 @@
 # Stage 1 Feature Test Matrix
 
+> Recent feature updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 Use this file as a practical QA checklist for all Stage 1 features.
 
 Status legend:

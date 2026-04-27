@@ -1,5 +1,7 @@
 # Intent Scorer Service - Implementation Summary
 
+> Recent scoring and capture updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 ## Overview
 
 The Intent Scorer is a deterministic, rule-based scoring engine that processes intent events, computes scores with full explainability, and supports anonymous-first website tracking. It operates independently from the marketing module while reusing the same Postgres database.

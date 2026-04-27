@@ -1,5 +1,7 @@
 # DO-Intent Hotkey Companion (Windows-first)
 
+> Recent companion OCR/LLM updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 This desktop companion captures cross-application screenshots with global hotkeys and sends them to DO-Intent review intake.
 
 ## Scope

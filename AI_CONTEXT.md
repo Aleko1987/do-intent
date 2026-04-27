@@ -1,5 +1,7 @@
 # AI Context - DO Intent Project
 
+> Recent update summary: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 ## Project Overview
 Sales Intelligence platform with deterministic intent scoring engine. Focus: sales-usable outputs, not posting/scheduling/OAuth/CRM tasks.
 

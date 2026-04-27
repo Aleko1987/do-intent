@@ -1,5 +1,7 @@
 # Stage 1 Release Notes
 
+> Recent release updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 Stage 1 MVP is now deployed and stable.
 
 This release focuses on anonymous-first tracking reliability, identity merge, score quality, ABM account rollups, attribution consistency, and lead-magnet growth flow.

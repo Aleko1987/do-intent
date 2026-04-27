@@ -1,5 +1,7 @@
 # DO-Intent Website Tracker
 
+> Recent tracker/intake updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 A lightweight, framework-agnostic JavaScript tracker for capturing user intent signals on any website.
 
 ## Overview

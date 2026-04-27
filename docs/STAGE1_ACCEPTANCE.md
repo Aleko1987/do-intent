@@ -1,5 +1,7 @@
 # Stage 1 Acceptance Criteria
 
+> Recent completion progress: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 This document defines practical pass/fail checks for Stage 1 MVP.
 
 ## Environment Preconditions

@@ -1,5 +1,7 @@
 # Deploying to Render with Docker Image
 
+> Recent workflow updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 This document describes how to deploy the backend to Render using a Docker image built by Encore and pushed to GitHub Container Registry (GHCR).
 
 ## Prerequisites

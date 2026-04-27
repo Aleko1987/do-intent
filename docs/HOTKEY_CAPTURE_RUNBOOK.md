@@ -1,5 +1,7 @@
 # Hotkey Capture Intake Runbook
 
+> Recent capture/entity-resolution updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 ## Purpose
 
 Enable operators to capture evidence from any foreground desktop application and submit it to DO-Intent as candidate signal intake evidence for human review.

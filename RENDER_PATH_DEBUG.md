@@ -1,5 +1,7 @@
 # Render Path Debugging - Current Paths
 
+> Recent deployment/workflow updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 ## Public Health Endpoints
 - `GET /` → `{ ok: true, service: "do-intent", ts: "<iso>" }`
 - `GET /healthz` → `{ ok: true }` (Render health check)

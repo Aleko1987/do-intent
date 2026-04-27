@@ -1,4 +1,6 @@
 # DO Intent — Intent + Identity + Growth Plan (Phased)
+
+> Recent plan execution progress: see `docs/RECENT_PROGRESS_2026-04-27.md`.
 Date: 2026-02-07
 Owner: DO Intent (Encore.dev + Postgres + React/Vite + Clerk)
 

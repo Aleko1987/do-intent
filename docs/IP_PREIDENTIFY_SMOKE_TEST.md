@@ -1,5 +1,7 @@
 # IP Pre-Identify Qualification Smoke Test
 
+> Recent intake and review updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 This checklist verifies that repeated anonymous visits from the same IP fingerprint increase
 pre-identify score and that score carries forward when identify happens.
 

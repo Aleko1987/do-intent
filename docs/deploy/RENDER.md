@@ -1,5 +1,7 @@
 # Render Deployment Notes
 
+> Recent deployment-relevant updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 ## Health Check
 
 Render should use the following endpoint to verify the service is up:

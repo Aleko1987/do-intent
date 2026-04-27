@@ -1,5 +1,7 @@
 # DO-Intent — Architecture & Scoring System
 
+> Recent architecture additions: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 ## Purpose
 
 DO-Intent is a real-time, deterministic intent scoring engine.

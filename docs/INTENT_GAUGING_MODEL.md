@@ -1,5 +1,7 @@
 # Intent Gauging Model
 
+> Recent model integration updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 This document defines how DO-Intent gauges intent from website and social media signals, maps them into marketing stages, and decides when to hand off to sales CRM. It is aligned with the deterministic, rules-driven model and current schema described in `AI_CONTEXT.md` and `docs/ARCHITECTURE.md`.
 
 ## Goals

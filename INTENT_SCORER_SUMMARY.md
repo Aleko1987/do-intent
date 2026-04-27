@@ -1,5 +1,7 @@
 # Intent Scorer - Implementation Summary
 
+> Recent scoring and review-queue updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 ## Completed Features
 
 ### 1. Backend Endpoints (Intent Scorer Service)

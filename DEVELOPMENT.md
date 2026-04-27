@@ -1,5 +1,7 @@
 # Getting Started
 
+> Recent implementation updates: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+
 This project consists of an Encore application. Follow the steps below to get the app running locally.
 
 ## Prerequisites
