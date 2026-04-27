@@ -323,18 +323,17 @@ async function bootstrap(): Promise<void> {
     const isQ = keyName.toUpperCase() === "Q" || event.vKey === 0x51;
     if (!isQ) return;
 
-    console.info("[companion] key event", {
-      keyName,
-      vKey: event.vKey,
-      state: event.state,
-      qDown,
-    });
-
     if (event.state === "DOWN") {
       if (qDown) {
-        // Ignore key repeat events while holding.
+        // Ignore repeated keydown events while holding to avoid log spam/noise.
         return;
       }
+      console.info("[companion] key event", {
+        keyName,
+        vKey: event.vKey,
+        state: event.state,
+        qDown,
+      });
       qDown = true;
 
       const actions = hotkeys.onQKeyDown(Date.now());
@@ -356,6 +355,12 @@ async function bootstrap(): Promise<void> {
     if (!qDown) {
       return;
     }
+    console.info("[companion] key event", {
+      keyName,
+      vKey: event.vKey,
+      state: event.state,
+      qDown,
+    });
     qDown = false;
 
     if (holdTimer) {
