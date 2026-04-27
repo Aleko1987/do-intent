@@ -13,7 +13,7 @@
   "dependencies": {
     "active-win": "^9.0.0",
     "electron": "^37.2.0",
-    "node-global-key-listener": "^0.3.0",
+    "node-global-key-listener": "^0.1.1",
     "screenshot-desktop": "^1.15.0"
   },
   "devDependencies": {

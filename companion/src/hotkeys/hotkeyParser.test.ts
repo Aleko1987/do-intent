@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { HotkeyParser } from "./hotkeyParser";
+import { HotkeyParser } from "./hotkeyParser.js";
 
 describe("HotkeyParser", () => {
   it("starts and finalizes region when q is held", () => {
