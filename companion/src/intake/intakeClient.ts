@@ -15,14 +15,26 @@ export async function postCaptureIntake(params: {
   token: string;
   payload: Record<string, unknown>;
 }): Promise<IntakeResponse> {
-  const response = await fetch(`${params.baseUrl}/marketing/capture-intake`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${params.token}`,
-    },
-    body: JSON.stringify(params.payload),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${params.baseUrl}/marketing/capture-intake`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${params.token}`,
+      },
+      body: JSON.stringify(params.payload),
+    });
+  } catch (cause) {
+    const error = new Error("capture intake network error") as Error & {
+      retryable?: boolean;
+      statusCode?: number;
+      cause?: unknown;
+    };
+    error.retryable = true;
+    error.cause = cause;
+    throw error;
+  }
 
   if (!response.ok) {
     const text = await response.text();

@@ -112,6 +112,17 @@ describe("POST /marketing/capture-intake", () => {
       source: "hotkey_capture",
       capture_mode: "fullscreen",
       captured_at: "2026-04-26T10:00:00.000Z",
+      ocr_text: "Jane from Acme asked for quote",
+      ocr_confidence: 92.5,
+      ocr_engine: "tesseract.js",
+      llm_provider: "ollama",
+      llm_model: "llama3.1:8b",
+      llm_confidence: 0.82,
+      lead_suggestion: {
+        company_name: "Acme",
+        contact_name: "Jane",
+      },
+      suggestion_state: "suggested",
     },
   };
 
@@ -162,5 +173,24 @@ describe("POST /marketing/capture-intake", () => {
     assert.equal(body.ok, true);
     assert.equal(body.deduped, true);
     assert.equal(body.evidence_id, null);
+  });
+
+  it("rejects malformed lead suggestion JSON", async () => {
+    const response = await fetch(`${baseUrl}/marketing/capture-intake`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer capture-token",
+      },
+      body: JSON.stringify({
+        ...payload,
+        idempotency_key: "idemp-2",
+        metadata: {
+          ...payload.metadata,
+          lead_suggestion_json: "{broken",
+        },
+      }),
+    });
+    assert.equal(response.status, 400);
   });
 });

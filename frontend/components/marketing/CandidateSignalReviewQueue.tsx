@@ -9,7 +9,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import ManualScreenshotIntake from "@/components/marketing/ManualScreenshotIntake";
+import type { MarketingLead } from "~backend/marketing/types";
 
 const CHANNEL_BADGE_VARIANTS: Record<string, "default" | "secondary" | "outline"> = {
   facebook: "default",
@@ -34,6 +36,24 @@ interface AttachEvidenceResponse {
   candidate_signal: CandidateSignal;
 }
 
+interface ReviewCandidateSignalResponse {
+  candidate_signal: CandidateSignal;
+}
+
+interface CreateLeadFromCandidateSignalResponse {
+  lead: MarketingLead;
+  candidate_signal: CandidateSignal;
+}
+
+interface MergeCandidateSignalLeadResponse {
+  lead: MarketingLead;
+  candidate_signal: CandidateSignal;
+}
+
+interface ListLeadsResponse {
+  leads: MarketingLead[];
+}
+
 interface ReviewReminderSettings {
   enabled: boolean;
   frequency_unit: "daily" | "weekly";
@@ -54,6 +74,27 @@ interface HotkeyCaptureMetadata {
   workstation_id?: string | null;
   app_version?: string | null;
   target_app_hint?: string | null;
+  ocr_text?: string | null;
+  ocr_confidence?: number | null;
+  ocr_engine?: string | null;
+  ocr_captured_at?: string | null;
+  ocr_error?: string | null;
+  llm_provider?: string | null;
+  llm_model?: string | null;
+  llm_confidence?: number | null;
+  llm_extracted_at?: string | null;
+  llm_error?: string | null;
+  lead_suggestion_json?: string | null;
+  suggestion_state?: "none" | "suggested" | "approved" | "rejected";
+}
+
+interface LeadSuggestionDraft {
+  company_name: string;
+  contact_name: string;
+  email: string;
+  phone: string;
+  reason: string;
+  suggested_event_type: string;
 }
 
 function formatMaybeNumber(value: unknown): string {
@@ -102,7 +143,67 @@ function readHotkeyCaptureMetadata(value: unknown): HotkeyCaptureMetadata | null
     workstation_id: typeof obj.workstation_id === "string" ? obj.workstation_id : null,
     app_version: typeof obj.app_version === "string" ? obj.app_version : null,
     target_app_hint: typeof obj.target_app_hint === "string" ? obj.target_app_hint : null,
+    ocr_text: typeof obj.ocr_text === "string" ? obj.ocr_text : null,
+    ocr_confidence:
+      typeof obj.ocr_confidence === "number"
+        ? obj.ocr_confidence
+        : Number.isFinite(Number(obj.ocr_confidence))
+          ? Number(obj.ocr_confidence)
+          : null,
+    ocr_engine: typeof obj.ocr_engine === "string" ? obj.ocr_engine : null,
+    ocr_captured_at: typeof obj.ocr_captured_at === "string" ? obj.ocr_captured_at : null,
+    ocr_error: typeof obj.ocr_error === "string" ? obj.ocr_error : null,
+    llm_provider: typeof obj.llm_provider === "string" ? obj.llm_provider : null,
+    llm_model: typeof obj.llm_model === "string" ? obj.llm_model : null,
+    llm_confidence:
+      typeof obj.llm_confidence === "number"
+        ? obj.llm_confidence
+        : Number.isFinite(Number(obj.llm_confidence))
+          ? Number(obj.llm_confidence)
+          : null,
+    llm_extracted_at: typeof obj.llm_extracted_at === "string" ? obj.llm_extracted_at : null,
+    llm_error: typeof obj.llm_error === "string" ? obj.llm_error : null,
+    lead_suggestion_json: typeof obj.lead_suggestion_json === "string" ? obj.lead_suggestion_json : null,
+    suggestion_state:
+      obj.suggestion_state === "suggested" ||
+      obj.suggestion_state === "approved" ||
+      obj.suggestion_state === "rejected"
+        ? obj.suggestion_state
+        : "none",
   };
+}
+
+function parseLeadSuggestion(metadata: HotkeyCaptureMetadata | null): LeadSuggestionDraft {
+  if (!metadata?.lead_suggestion_json) {
+    return {
+      company_name: "",
+      contact_name: "",
+      email: "",
+      phone: "",
+      reason: "",
+      suggested_event_type: "",
+    };
+  }
+  try {
+    const parsed = JSON.parse(metadata.lead_suggestion_json) as Record<string, unknown>;
+    return {
+      company_name: typeof parsed.company_name === "string" ? parsed.company_name : "",
+      contact_name: typeof parsed.contact_name === "string" ? parsed.contact_name : "",
+      email: typeof parsed.email === "string" ? parsed.email : "",
+      phone: typeof parsed.phone === "string" ? parsed.phone : "",
+      reason: typeof parsed.reason === "string" ? parsed.reason : "",
+      suggested_event_type: typeof parsed.suggested_event_type === "string" ? parsed.suggested_event_type : "",
+    };
+  } catch {
+    return {
+      company_name: "",
+      contact_name: "",
+      email: "",
+      phone: "",
+      reason: "",
+      suggested_event_type: "",
+    };
+  }
 }
 
 export default function CandidateSignalReviewQueue() {
@@ -118,6 +219,12 @@ export default function CandidateSignalReviewQueue() {
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const [selectedMimeType, setSelectedMimeType] = useState<string | null>(null);
   const [selectedFileData, setSelectedFileData] = useState<string | null>(null);
+  const [suggestionRowId, setSuggestionRowId] = useState<string | null>(null);
+  const [suggestionBusyId, setSuggestionBusyId] = useState<string | null>(null);
+  const [suggestionDraft, setSuggestionDraft] = useState<LeadSuggestionDraft | null>(null);
+  const [mergeLeadId, setMergeLeadId] = useState("");
+  const [leadOptions, setLeadOptions] = useState<MarketingLead[]>([]);
+  const [leadLoading, setLeadLoading] = useState(false);
   const [reminderSettings, setReminderSettings] = useState<ReviewReminderSettings>(
     DEFAULT_REVIEW_REMINDER_SETTINGS
   );
@@ -130,6 +237,7 @@ export default function CandidateSignalReviewQueue() {
   useEffect(() => {
     void loadQueue();
     void loadReviewReminderSettings();
+    void loadLeads();
   }, []);
 
   async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -186,6 +294,21 @@ export default function CandidateSignalReviewQueue() {
     }
   }
 
+  async function loadLeads() {
+    setLeadLoading(true);
+    try {
+      const response = await apiFetch<ListLeadsResponse>("/marketing/leads?limit=100", {
+        method: "GET",
+      });
+      setLeadOptions(response.leads);
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Failed to load leads");
+    } finally {
+      setLeadLoading(false);
+    }
+  }
+
   async function saveReviewReminderSettings() {
     setReminderSaving(true);
     setError(null);
@@ -214,6 +337,10 @@ export default function CandidateSignalReviewQueue() {
   }
 
   const activeRow = useMemo(() => rows.find((row) => row.id === activeId) ?? null, [rows, activeId]);
+  const suggestionRow = useMemo(
+    () => rows.find((row) => row.id === suggestionRowId) ?? null,
+    [rows, suggestionRowId]
+  );
 
   async function handleRequestEvidence(row: CandidateSignalQueueItem) {
     setBusyId(row.id);
@@ -273,6 +400,118 @@ export default function CandidateSignalReviewQueue() {
       setError(err instanceof Error ? err.message : "Failed to attach evidence");
     } finally {
       setBusyId(null);
+    }
+  }
+
+  function openSuggestion(row: CandidateSignalQueueItem) {
+    const metadata = readHotkeyCaptureMetadata(row.metadata);
+    setSuggestionRowId(row.id);
+    setSuggestionDraft(parseLeadSuggestion(metadata));
+    setMergeLeadId("");
+  }
+
+  async function handleRejectSuggestion(row: CandidateSignalQueueItem) {
+    setSuggestionBusyId(row.id);
+    setError(null);
+    try {
+      const response = await apiFetch<ReviewCandidateSignalResponse>(`/marketing/candidate-signals/${row.id}/reviews`, {
+        method: "POST",
+        body: JSON.stringify({
+          decision: "reject",
+          decision_reason: "Operator rejected lead suggestion",
+          set_status: "rejected",
+          metadata_patch: JSON.stringify({
+            suggestion_state: "rejected",
+            suggestion_rejected_at: new Date().toISOString(),
+            suggestion_rejected_by: "operator",
+          }),
+        }),
+      });
+      setRows((prev) => prev.map((item) => (item.id === row.id ? { ...item, ...response.candidate_signal } : item)));
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Failed to reject suggestion");
+    } finally {
+      setSuggestionBusyId(null);
+    }
+  }
+
+  async function handleApproveSuggestion(row: CandidateSignalQueueItem) {
+    if (!suggestionDraft) {
+      setError("Open a suggestion first.");
+      return;
+    }
+
+    setSuggestionBusyId(row.id);
+    setError(null);
+    try {
+      let linkedLeadId = row.lead_id;
+      if (mergeLeadId) {
+        const mergeResponse = await apiFetch<MergeCandidateSignalLeadResponse>(
+          `/marketing/candidate-signals/${row.id}/merge-lead`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              lead_id: mergeLeadId,
+              reason: "Approved LLM suggestion and merged with existing lead",
+            }),
+          }
+        );
+        linkedLeadId = mergeResponse.lead.id;
+      } else {
+        const createLeadResponse = await apiFetch<CreateLeadFromCandidateSignalResponse>(
+          `/marketing/candidate-signals/${row.id}/create-lead`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              company_name: suggestionDraft.company_name || undefined,
+              contact_name: suggestionDraft.contact_name || undefined,
+              email: suggestionDraft.email || undefined,
+              phone: suggestionDraft.phone || undefined,
+              source_type: "manual",
+              reason: "Approved LLM suggestion from review queue",
+            }),
+          }
+        );
+        linkedLeadId = createLeadResponse.lead.id;
+      }
+
+      const reviewResponse = await apiFetch<ReviewCandidateSignalResponse>(
+        `/marketing/candidate-signals/${row.id}/reviews`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            decision: "approve",
+            decision_reason: "Operator approved lead suggestion",
+            set_status: "approved",
+            set_lead_id: linkedLeadId ?? undefined,
+            set_event_type: suggestionDraft.suggested_event_type || undefined,
+            metadata_patch: JSON.stringify({
+              suggestion_state: "approved",
+              approved_at: new Date().toISOString(),
+              approved_by: "operator",
+              lead_suggestion_json: JSON.stringify({
+                company_name: suggestionDraft.company_name || null,
+                contact_name: suggestionDraft.contact_name || null,
+                email: suggestionDraft.email || null,
+                phone: suggestionDraft.phone || null,
+                reason: suggestionDraft.reason || null,
+                suggested_event_type: suggestionDraft.suggested_event_type || null,
+              }),
+            }),
+          }),
+        }
+      );
+
+      setRows((prev) => prev.map((item) => (item.id === row.id ? { ...item, ...reviewResponse.candidate_signal } : item)));
+      setSuggestionRowId(null);
+      setSuggestionDraft(null);
+      setMergeLeadId("");
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Failed to approve suggestion");
+    } finally {
+      setSuggestionBusyId(null);
     }
   }
 
@@ -474,6 +713,8 @@ export default function CandidateSignalReviewQueue() {
             {(() => {
               const captureMeta = readHotkeyCaptureMetadata(row.metadata);
               const captureScope = captureMeta?.capture_scope ?? captureMeta?.capture_mode;
+              const suggestionState = captureMeta?.suggestion_state ?? "none";
+              const hasSuggestion = Boolean(captureMeta?.lead_suggestion_json);
               return (
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="space-y-2">
@@ -486,6 +727,9 @@ export default function CandidateSignalReviewQueue() {
                       Hotkey {captureScope === "fullscreen" ? "fullscreen" : "region"}
                     </Badge>
                   )}
+                  <Badge variant={suggestionState === "approved" ? "default" : suggestionState === "rejected" ? "outline" : "secondary"}>
+                    Suggestion {suggestionState}
+                  </Badge>
                 </div>
                 <p className="text-sm text-muted-foreground">{row.summary ?? row.raw_text ?? "No summary provided"}</p>
                 <div className="text-xs text-muted-foreground grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
@@ -503,7 +747,30 @@ export default function CandidateSignalReviewQueue() {
                   )}
                   {captureMeta?.app_version && <span>Companion: {captureMeta.app_version}</span>}
                   {captureMeta?.target_app_hint && <span>Target app: {captureMeta.target_app_hint}</span>}
+                  {captureMeta?.ocr_engine && (
+                    <span>
+                      OCR: {captureMeta.ocr_engine} ({formatMaybeNumber(captureMeta.ocr_confidence)})
+                    </span>
+                  )}
+                  {captureMeta?.llm_model && (
+                    <span>
+                      LLM: {captureMeta.llm_provider ?? "local"} / {captureMeta.llm_model} (
+                      {formatMaybeNumber(captureMeta.llm_confidence)})
+                    </span>
+                  )}
                 </div>
+                {(captureMeta?.ocr_text || captureMeta?.ocr_error || captureMeta?.llm_error) && (
+                  <div className="rounded-md border bg-muted/20 p-2 text-xs text-muted-foreground space-y-1">
+                    {captureMeta?.ocr_text && (
+                      <p>
+                        OCR preview: {captureMeta.ocr_text.slice(0, 240)}
+                        {captureMeta.ocr_text.length > 240 ? "..." : ""}
+                      </p>
+                    )}
+                    {captureMeta?.ocr_error && <p>OCR error: {captureMeta.ocr_error}</p>}
+                    {captureMeta?.llm_error && <p>LLM error: {captureMeta.llm_error}</p>}
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-wrap gap-2 md:w-[360px] md:justify-end">
@@ -513,10 +780,101 @@ export default function CandidateSignalReviewQueue() {
                 <Button size="sm" onClick={() => void handleRequestEvidence(row)} disabled={busyId === row.id}>
                   Request Evidence
                 </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => openSuggestion(row)}
+                  disabled={!hasSuggestion && suggestionState === "none"}
+                >
+                  Review Suggestion
+                </Button>
               </div>
             </div>
               );
             })()}
+
+            {suggestionRowId === row.id && suggestionDraft && (
+              <div className="border rounded-md p-3 space-y-3 bg-muted/30">
+                <p className="text-sm font-medium">Lead suggestion review</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <Input
+                    placeholder="Company"
+                    value={suggestionDraft.company_name}
+                    onChange={(e) => setSuggestionDraft((prev) => (prev ? { ...prev, company_name: e.target.value } : prev))}
+                  />
+                  <Input
+                    placeholder="Contact"
+                    value={suggestionDraft.contact_name}
+                    onChange={(e) => setSuggestionDraft((prev) => (prev ? { ...prev, contact_name: e.target.value } : prev))}
+                  />
+                  <Input
+                    placeholder="Email"
+                    value={suggestionDraft.email}
+                    onChange={(e) => setSuggestionDraft((prev) => (prev ? { ...prev, email: e.target.value } : prev))}
+                  />
+                  <Input
+                    placeholder="Phone"
+                    value={suggestionDraft.phone}
+                    onChange={(e) => setSuggestionDraft((prev) => (prev ? { ...prev, phone: e.target.value } : prev))}
+                  />
+                  <Input
+                    placeholder="Suggested event type"
+                    value={suggestionDraft.suggested_event_type}
+                    onChange={(e) =>
+                      setSuggestionDraft((prev) => (prev ? { ...prev, suggested_event_type: e.target.value } : prev))
+                    }
+                  />
+                  <select
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
+                    value={mergeLeadId}
+                    onChange={(e) => setMergeLeadId(e.target.value)}
+                    disabled={leadLoading}
+                  >
+                    <option value="">Create new lead</option>
+                    {leadOptions.map((lead) => (
+                      <option key={lead.id} value={lead.id}>
+                        {lead.display_name ?? lead.contact_name ?? lead.company_name ?? lead.id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <Textarea
+                  className="min-h-[72px]"
+                  placeholder="Reason / notes"
+                  value={suggestionDraft.reason}
+                  onChange={(e) => setSuggestionDraft((prev) => (prev ? { ...prev, reason: e.target.value } : prev))}
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => void handleApproveSuggestion(row)}
+                    disabled={suggestionBusyId === row.id}
+                  >
+                    {suggestionBusyId === row.id ? "Applying..." : "Approve as lead"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void handleRejectSuggestion(row)}
+                    disabled={suggestionBusyId === row.id}
+                  >
+                    Reject suggestion
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      setSuggestionRowId(null);
+                      setSuggestionDraft(null);
+                      setMergeLeadId("");
+                    }}
+                    disabled={suggestionBusyId === row.id}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {activeId === row.id && (
               <div className="border rounded-md p-3 space-y-3 bg-muted/30">

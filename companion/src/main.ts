@@ -10,6 +10,8 @@ import { captureFullscreen, captureRegion } from "./capture/screenCapture.js";
 import { selectRegion } from "./capture/regionOverlay.js";
 import { RetryQueue } from "./queue/retryQueue.js";
 import { postCaptureIntake } from "./intake/intakeClient.js";
+import { runOcrFromDataUrl } from "./ocr/runOcr.js";
+import { runLocalLlmExtraction, type LeadSuggestion } from "./extraction/localLlmExtractor.js";
 
 function showError(title: string, body: string): void {
   if (Notification.isSupported()) {
@@ -37,6 +39,115 @@ async function detectTargetAppHint(): Promise<string | null> {
   }
 }
 
+function buildSummaryFromSuggestion(
+  captureMode: "region" | "fullscreen",
+  suggestion: LeadSuggestion,
+  fallback: string
+): string {
+  const primary =
+    suggestion.company_name ?? suggestion.contact_name ?? suggestion.suggested_event_type ?? fallback;
+  return `${captureMode}: ${primary}`.slice(0, 240);
+}
+
+async function enrichCapturePayload(params: {
+  imageDataUrl: string;
+  captureMode: "region" | "fullscreen";
+  capturedAt: string;
+  correlationId: string;
+  config: ReturnType<typeof loadConfig>;
+}): Promise<{
+  summary: string;
+  rawText: string | null;
+  metadata: Record<string, unknown>;
+}> {
+  const metadata: Record<string, unknown> = {};
+  let rawText: string | null = null;
+  let suggestion: LeadSuggestion = {};
+  let llmConfidence: number | null = null;
+
+  if (params.config.ocrEnabled) {
+    const ocrResult = await runOcrFromDataUrl(params.imageDataUrl);
+    if (ocrResult.ok) {
+      rawText = ocrResult.text || null;
+      metadata.ocr_text = ocrResult.text || null;
+      metadata.ocr_confidence = ocrResult.confidence;
+      metadata.ocr_engine = ocrResult.engine;
+      metadata.ocr_captured_at = ocrResult.capturedAt;
+      metadata.ocr_ms = ocrResult.elapsedMs;
+      console.info("[companion] OCR completed", {
+        correlationId: params.correlationId,
+        elapsedMs: ocrResult.elapsedMs,
+        confidence: ocrResult.confidence,
+      });
+    } else {
+      metadata.ocr_error = ocrResult.error;
+      metadata.ocr_engine = ocrResult.engine;
+      metadata.ocr_captured_at = ocrResult.capturedAt;
+      metadata.ocr_ms = ocrResult.elapsedMs;
+      console.warn("[companion] OCR failed", {
+        correlationId: params.correlationId,
+        elapsedMs: ocrResult.elapsedMs,
+        error: ocrResult.error,
+      });
+    }
+  }
+
+  if (params.config.llmEnabled && rawText) {
+    const llmResult = await runLocalLlmExtraction({
+      endpoint: params.config.llmEndpoint,
+      model: params.config.llmModel,
+      timeoutMs: params.config.llmTimeoutMs,
+      ocrText: rawText,
+      minConfidence: params.config.minSuggestionConfidence,
+    });
+    if (llmResult.ok) {
+      suggestion = llmResult.suggestion;
+      llmConfidence = llmResult.confidence;
+      metadata.llm_provider = llmResult.provider;
+      metadata.llm_model = llmResult.model;
+      metadata.llm_confidence = llmResult.confidence;
+      metadata.llm_extracted_at = llmResult.extractedAt;
+      metadata.llm_ms = llmResult.elapsedMs;
+      metadata.lead_suggestion = Object.keys(llmResult.suggestion).length > 0 ? llmResult.suggestion : null;
+      metadata.lead_suggestion_json =
+        Object.keys(llmResult.suggestion).length > 0 ? JSON.stringify(llmResult.suggestion) : null;
+      console.info("[companion] LLM extraction completed", {
+        correlationId: params.correlationId,
+        elapsedMs: llmResult.elapsedMs,
+        confidence: llmResult.confidence,
+        hasSuggestion: Object.keys(llmResult.suggestion).length > 0,
+      });
+    } else {
+      metadata.llm_provider = llmResult.provider;
+      metadata.llm_model = llmResult.model;
+      metadata.llm_extracted_at = llmResult.extractedAt;
+      metadata.llm_ms = llmResult.elapsedMs;
+      metadata.llm_error = llmResult.error;
+      console.warn("[companion] LLM extraction failed", {
+        correlationId: params.correlationId,
+        elapsedMs: llmResult.elapsedMs,
+        error: llmResult.error,
+      });
+    }
+  }
+
+  metadata.suggestion_state = Object.keys(suggestion).length > 0 ? "suggested" : "none";
+  const summary = buildSummaryFromSuggestion(
+    params.captureMode,
+    suggestion,
+    `Hotkey ${params.captureMode} capture`
+  );
+  if (llmConfidence != null) {
+    metadata.prefill_confidence_gate = params.config.minSuggestionConfidence;
+  }
+
+  return {
+    summary,
+    rawText,
+    metadata,
+  };
+}
+
 async function bootstrap(): Promise<void> {
   const config = loadConfig();
   const hotkeys = new HotkeyParser({
@@ -54,6 +165,7 @@ async function bootstrap(): Promise<void> {
     }
     for (const item of due) {
       try {
+        const startedAtMs = Date.now();
         const intakeResponse = await postCaptureIntake({
           baseUrl: config.intakeBaseUrl,
           token: config.intakeToken,
@@ -65,6 +177,7 @@ async function bootstrap(): Promise<void> {
           deduped: intakeResponse.deduped,
           candidateSignalId: intakeResponse.candidate_signal_id,
           evidenceId: intakeResponse.evidence_id,
+          intakeMs: Date.now() - startedAtMs,
         });
       } catch (error) {
         console.error("[companion] intake failed", {
@@ -78,21 +191,32 @@ async function bootstrap(): Promise<void> {
           );
           continue;
         }
-        await retryQueue.markSucceeded(item.idempotencyKey);
+        await retryQueue.markFailed(
+          item.idempotencyKey,
+          error instanceof Error ? error.message : "non-retryable ingest error"
+        );
       }
     }
   };
 
   const enqueueCapture = async (captureMode: "region" | "fullscreen", imageDataUrl: string, mimeType: string) => {
+    const correlationId = randomUUID();
     const capturedAt = new Date().toISOString();
+    const enrichment = await enrichCapturePayload({
+      imageDataUrl,
+      captureMode,
+      capturedAt,
+      correlationId,
+      config,
+    });
     const payload = {
       version: "v1",
       idempotency_key: randomUUID(),
       owner_user_id: config.ownerUserId,
       channel: config.defaultChannel,
       signal_type: config.defaultSignalType,
-      summary: `Hotkey ${captureMode} capture`,
-      raw_text: null,
+      summary: enrichment.summary,
+      raw_text: enrichment.rawText,
       image_data_url: imageDataUrl,
       mime_type: mimeType,
       source_ref: null,
@@ -104,6 +228,8 @@ async function bootstrap(): Promise<void> {
         workstation_id: config.workstationId,
         app_version: config.appVersion,
         target_app_hint: await detectTargetAppHint(),
+        capture_correlation_id: correlationId,
+        ...enrichment.metadata,
       },
     } satisfies Record<string, unknown>;
 

@@ -19,6 +19,13 @@ Enable operators to capture evidence from any foreground desktop application and
    - `DO_INTENT_CAPTURE_BASE_URL`
    - `DO_INTENT_CAPTURE_TOKEN`
    - `DO_INTENT_OWNER_USER_ID`
+   - Optional local extraction:
+     - `DO_INTENT_OCR_ENABLED` (default `true`)
+     - `DO_INTENT_LLM_ENABLED` (default `false`)
+     - `DO_INTENT_LLM_ENDPOINT` (default `http://127.0.0.1:11434`)
+     - `DO_INTENT_LLM_MODEL` (default `llama3.1:8b`)
+     - `DO_INTENT_LLM_TIMEOUT_MS` (default `12000`)
+     - `DO_INTENT_MIN_SUGGESTION_CONFIDENCE` (default `0.35`)
 4. Start companion:
    - `cd companion`
    - `npm install`
@@ -30,6 +37,12 @@ Enable operators to capture evidence from any foreground desktop application and
 2. Full-screen capture (`qq`) -> appears in Review Queue with fullscreen provenance metadata.
 3. Cancel region selection (`Esc` or invalid selection) -> no queue item created.
 4. Network down -> capture is queued locally, then ingested after network recovers.
+5. OCR failure -> capture still ingests with `ocr_error` metadata.
+6. LLM timeout/failure -> capture still ingests with OCR metadata and `llm_error`.
+7. Suggestion approval path:
+   - Suggestion appears in review queue with model provenance and OCR preview.
+   - Lead is created/merged only when operator clicks Approve.
+   - Reject keeps signal in candidate queue with `suggestion_state=rejected`.
 
 ## Troubleshooting
 
@@ -67,6 +80,22 @@ Enable operators to capture evidence from any foreground desktop application and
     "workstation_id": "string|null",
     "app_version": "string|null",
     "target_app_hint": "string|null"
+    "capture_correlation_id": "string|null",
+    "ocr_text": "string|null",
+    "ocr_confidence": "number|null (0..100)",
+    "ocr_engine": "string|null",
+    "ocr_captured_at": "ISO8601|null",
+    "ocr_error": "string|null",
+    "ocr_ms": "number|null",
+    "llm_provider": "string|null",
+    "llm_model": "string|null",
+    "llm_confidence": "number|null (0..1)",
+    "llm_extracted_at": "ISO8601|null",
+    "llm_error": "string|null",
+    "llm_ms": "number|null",
+    "lead_suggestion_json": "string|null",
+    "suggestion_state": "none|suggested (capture intake accepts only these values)",
+    "prefill_confidence_gate": "number|null (0..1)"
   }
 }
 ```
@@ -108,3 +137,8 @@ Enable operators to capture evidence from any foreground desktop application and
 ## DO-Socials Boundary
 
 DO-Socials is not used in this ingestion step. Hotkey captures only create DO-Intent candidate signals/evidence for review. DO-Socials may only be involved later if a human-approved action enters execution workflows.
+
+## Safety Notes
+
+- Intake metadata cannot set suggestion lifecycle to `approved` or `rejected`; those states are only written by explicit review actions.
+- Review queue approval/rejection calls authenticated candidate-signal review endpoints and records audit trail rows in `candidate_signal_reviews`.

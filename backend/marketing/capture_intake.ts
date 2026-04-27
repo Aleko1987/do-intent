@@ -8,6 +8,11 @@ import type { JsonObject } from "../internal/json_types";
 import { attachEvidenceToSignal, createCandidateSignalForOwner } from "./candidate_signal_intake_helpers";
 
 const MAX_IMAGE_DATA_URL_BYTES = 8 * 1024 * 1024;
+const MAX_METADATA_TEXT_BYTES = 12 * 1024;
+const MAX_ERROR_BYTES = 512;
+const MAX_MODEL_BYTES = 128;
+const MAX_ENGINE_BYTES = 64;
+const MAX_SUGGESTION_JSON_BYTES = 8 * 1024;
 
 interface CaptureIntakeMetadata {
   source: "hotkey_capture";
@@ -17,6 +22,22 @@ interface CaptureIntakeMetadata {
   workstation_id?: string | null;
   app_version?: string | null;
   target_app_hint?: string | null;
+  capture_correlation_id?: string | null;
+  ocr_text?: string | null;
+  ocr_confidence?: number | null;
+  ocr_engine?: string | null;
+  ocr_captured_at?: string | null;
+  ocr_error?: string | null;
+  ocr_ms?: number | null;
+  llm_provider?: string | null;
+  llm_model?: string | null;
+  llm_confidence?: number | null;
+  llm_extracted_at?: string | null;
+  llm_error?: string | null;
+  llm_ms?: number | null;
+  lead_suggestion_json?: string | null;
+  suggestion_state?: "none" | "suggested" | "approved" | "rejected";
+  prefill_confidence_gate?: number | null;
 }
 
 interface CaptureIntakeRequest {
@@ -66,6 +87,78 @@ function parseString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function parseBoundedString(value: unknown, maxBytes: number): string | null {
+  const parsed = parseString(value);
+  if (!parsed) return null;
+  if (Buffer.byteLength(parsed, "utf8") > maxBytes) {
+    throw APIError.invalidArgument("metadata field exceeds max supported size");
+  }
+  return parsed;
+}
+
+function parseOptionalIsoString(value: unknown, label: string): string | null {
+  const raw = parseString(value);
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    throw APIError.invalidArgument(`${label} must be ISO8601`);
+  }
+  return parsed.toISOString();
+}
+
+function parseBoundedNumber(value: unknown, label: string, min: number, max: number): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n < min || n > max) {
+    throw APIError.invalidArgument(`${label} must be between ${min} and ${max}`);
+  }
+  return n;
+}
+
+function sanitizeLeadSuggestionObject(value: unknown): Record<string, string> {
+  if (!isObject(value)) return {};
+  const companyName = parseBoundedString(value.company_name, 180);
+  const contactName = parseBoundedString(value.contact_name, 120);
+  const email = parseBoundedString(value.email, 254);
+  const phone = parseBoundedString(value.phone, 48);
+  const reason = parseBoundedString(value.reason, 512);
+  const suggestedEventType = parseBoundedString(value.suggested_event_type, 48);
+  const result: Record<string, string> = {};
+  if (companyName) result.company_name = companyName;
+  if (contactName) result.contact_name = contactName;
+  if (email) result.email = email;
+  if (phone) result.phone = phone;
+  if (reason) result.reason = reason;
+  if (suggestedEventType) result.suggested_event_type = suggestedEventType;
+  return result;
+}
+
+function parseLeadSuggestionJson(
+  leadSuggestionValue: unknown,
+  leadSuggestionJsonValue: unknown
+): string | null {
+  if (leadSuggestionValue !== undefined && leadSuggestionValue !== null) {
+    const normalized = sanitizeLeadSuggestionObject(leadSuggestionValue);
+    if (Object.keys(normalized).length === 0) return null;
+    const json = JSON.stringify(normalized);
+    if (Buffer.byteLength(json, "utf8") > MAX_SUGGESTION_JSON_BYTES) {
+      throw APIError.invalidArgument("metadata.lead_suggestion exceeds max supported size");
+    }
+    return json;
+  }
+
+  const rawJson = parseBoundedString(leadSuggestionJsonValue, MAX_SUGGESTION_JSON_BYTES);
+  if (!rawJson) return null;
+  try {
+    const parsed = JSON.parse(rawJson);
+    const normalized = sanitizeLeadSuggestionObject(parsed);
+    if (Object.keys(normalized).length === 0) return null;
+    return JSON.stringify(normalized);
+  } catch {
+    throw APIError.invalidArgument("metadata.lead_suggestion_json must be valid JSON");
+  }
 }
 
 function parseCaptureMode(value: unknown): "region" | "fullscreen" {
@@ -161,6 +254,30 @@ export function parseCaptureIntakePayload(payload: unknown): CaptureIntakeReques
       workstation_id: parseString(metadataRaw.workstation_id),
       app_version: parseString(metadataRaw.app_version),
       target_app_hint: parseString(metadataRaw.target_app_hint),
+      capture_correlation_id: parseBoundedString(metadataRaw.capture_correlation_id, 128),
+      ocr_text: parseBoundedString(metadataRaw.ocr_text, MAX_METADATA_TEXT_BYTES),
+      ocr_confidence: parseBoundedNumber(metadataRaw.ocr_confidence, "metadata.ocr_confidence", 0, 100),
+      ocr_engine: parseBoundedString(metadataRaw.ocr_engine, MAX_ENGINE_BYTES),
+      ocr_captured_at: parseOptionalIsoString(metadataRaw.ocr_captured_at, "metadata.ocr_captured_at"),
+      ocr_error: parseBoundedString(metadataRaw.ocr_error, MAX_ERROR_BYTES),
+      ocr_ms: parseBoundedNumber(metadataRaw.ocr_ms, "metadata.ocr_ms", 0, 120000),
+      llm_provider: parseBoundedString(metadataRaw.llm_provider, 32),
+      llm_model: parseBoundedString(metadataRaw.llm_model, MAX_MODEL_BYTES),
+      llm_confidence: parseBoundedNumber(metadataRaw.llm_confidence, "metadata.llm_confidence", 0, 1),
+      llm_extracted_at: parseOptionalIsoString(metadataRaw.llm_extracted_at, "metadata.llm_extracted_at"),
+      llm_error: parseBoundedString(metadataRaw.llm_error, MAX_ERROR_BYTES),
+      llm_ms: parseBoundedNumber(metadataRaw.llm_ms, "metadata.llm_ms", 0, 120000),
+      lead_suggestion_json: parseLeadSuggestionJson(metadataRaw.lead_suggestion, metadataRaw.lead_suggestion_json),
+      suggestion_state:
+        metadataRaw.suggestion_state === "suggested"
+          ? "suggested"
+          : "none",
+      prefill_confidence_gate: parseBoundedNumber(
+        metadataRaw.prefill_confidence_gate,
+        "metadata.prefill_confidence_gate",
+        0,
+        1
+      ),
     },
   };
 }
@@ -204,6 +321,22 @@ function buildCandidateMetadata(body: CaptureIntakeRequest, correlationId: strin
     workstation_id: body.metadata.workstation_id ?? null,
     app_version: body.metadata.app_version ?? null,
     target_app_hint: body.metadata.target_app_hint ?? null,
+    capture_correlation_id: body.metadata.capture_correlation_id ?? null,
+    ocr_text: body.metadata.ocr_text ?? null,
+    ocr_confidence: body.metadata.ocr_confidence ?? null,
+    ocr_engine: body.metadata.ocr_engine ?? null,
+    ocr_captured_at: body.metadata.ocr_captured_at ?? null,
+    ocr_error: body.metadata.ocr_error ?? null,
+    ocr_ms: body.metadata.ocr_ms ?? null,
+    llm_provider: body.metadata.llm_provider ?? null,
+    llm_model: body.metadata.llm_model ?? null,
+    llm_confidence: body.metadata.llm_confidence ?? null,
+    llm_extracted_at: body.metadata.llm_extracted_at ?? null,
+    llm_error: body.metadata.llm_error ?? null,
+    llm_ms: body.metadata.llm_ms ?? null,
+    lead_suggestion_json: body.metadata.lead_suggestion_json ?? null,
+    suggestion_state: body.metadata.suggestion_state ?? "none",
+    prefill_confidence_gate: body.metadata.prefill_confidence_gate ?? null,
     ingestion_correlation_id: correlationId,
   };
 }

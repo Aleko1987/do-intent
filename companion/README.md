@@ -29,6 +29,12 @@ This desktop companion captures cross-application screenshots with global hotkey
 - `DO_INTENT_CAPTURE_MAX_BYTES` (default `4194304`)
 - `DO_INTENT_WORKSTATION_ID` (optional provenance field)
 - `DO_INTENT_CAPTURE_APP_VERSION` (default `1.0.0`)
+- `DO_INTENT_OCR_ENABLED` (`true`/`false`, default `true`)
+- `DO_INTENT_LLM_ENABLED` (`true`/`false`, default `false`)
+- `DO_INTENT_LLM_ENDPOINT` (default `http://127.0.0.1:11434`)
+- `DO_INTENT_LLM_MODEL` (default `llama3.1:8b`)
+- `DO_INTENT_LLM_TIMEOUT_MS` (default `12000`)
+- `DO_INTENT_MIN_SUGGESTION_CONFIDENCE` (`0..1`, default `0.35`)
 
 ## Run
 
