@@ -8,6 +8,7 @@ import ScoringModel from "@/components/marketing/ScoringModel";
 import CandidateSignalReviewQueue from "@/components/marketing/CandidateSignalReviewQueue";
 import UnifiedInbox from "@/components/marketing/UnifiedInbox";
 import LeadDirectory from "@/components/marketing/LeadDirectory";
+import OwnerContactDirectory from "@/components/marketing/OwnerContactDirectory";
 
 export default function Marketing() {
   const [activeTab, setActiveTab] = useState("pipeline");
@@ -23,9 +24,10 @@ export default function Marketing() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full max-w-[1400px] grid-cols-8">
+          <TabsList className="grid w-full max-w-[1600px] grid-cols-9">
             <TabsTrigger value="pipeline">Pipeline</TabsTrigger>
             <TabsTrigger value="leads">Lead Directory</TabsTrigger>
+            <TabsTrigger value="contacts">Contact Directory</TabsTrigger>
             <TabsTrigger value="content">Content Plan</TabsTrigger>
             <TabsTrigger value="signals">Intent Signals</TabsTrigger>
             <TabsTrigger value="import">Import</TabsTrigger>
@@ -40,6 +42,10 @@ export default function Marketing() {
 
           <TabsContent value="leads" className="mt-6">
             <LeadDirectory />
+          </TabsContent>
+
+          <TabsContent value="contacts" className="mt-6">
+            <OwnerContactDirectory />
           </TabsContent>
 
           <TabsContent value="content" className="mt-6">

@@ -46,6 +46,12 @@ interface ImportOwnerContactsResult {
   errors: OwnerContactImportError[];
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const err = error as { code?: string };
+  return err.code === "23505";
+}
+
 function normalizeImportedPlatform(value: string, fallback: OwnerContactPlatform): OwnerContactPlatform {
   const normalized = normalizeContactString(value);
   if (
@@ -488,43 +494,83 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
       continue;
     }
 
-    await db.exec`
-      INSERT INTO owner_contact_directory (
-        owner_user_id,
-        source,
-        platform,
-        external_ref,
-        display_name,
-        normalized_name,
-        aliases,
-        handles,
-        emails,
-        phones,
-        confidence_hint,
-        is_active,
-        source_updated_at,
-        import_batch_id,
-        created_at,
-        updated_at
-      ) VALUES (
-        ${params.ownerUserId},
-        ${params.source},
-        ${row.platform},
-        ${row.external_ref},
-        ${row.display_name},
-        ${normalizedName},
-        ${JSON.stringify(row.aliases)},
-        ${JSON.stringify(row.handles)},
-        ${JSON.stringify(row.emails)},
-        ${JSON.stringify(row.phones)},
-        ${row.confidence_hint},
-        true,
-        ${row.source_updated_at},
-        ${batchId},
-        now(),
-        now()
-      )
-    `;
+    try {
+      await db.exec`
+        INSERT INTO owner_contact_directory (
+          owner_user_id,
+          source,
+          platform,
+          external_ref,
+          display_name,
+          normalized_name,
+          aliases,
+          handles,
+          emails,
+          phones,
+          confidence_hint,
+          is_active,
+          source_updated_at,
+          import_batch_id,
+          created_at,
+          updated_at
+        ) VALUES (
+          ${params.ownerUserId},
+          ${params.source},
+          ${row.platform},
+          ${row.external_ref},
+          ${row.display_name},
+          ${normalizedName},
+          ${JSON.stringify(row.aliases)},
+          ${JSON.stringify(row.handles)},
+          ${JSON.stringify(row.emails)},
+          ${JSON.stringify(row.phones)},
+          ${row.confidence_hint},
+          true,
+          ${row.source_updated_at},
+          ${batchId},
+          now(),
+          now()
+        )
+      `;
+    } catch (error) {
+      if (!isUniqueViolation(error)) {
+        throw error;
+      }
+
+      const conflict = row.external_ref
+        ? await db.queryRow<{ id: string }>`
+            SELECT id
+            FROM owner_contact_directory
+            WHERE owner_user_id = ${params.ownerUserId}
+              AND source = ${params.source}
+              AND external_ref = ${row.external_ref}
+            LIMIT 1
+          `
+        : null;
+
+      if (!conflict) {
+        throw error;
+      }
+
+      await db.exec`
+        UPDATE owner_contact_directory
+        SET
+          platform = ${row.platform},
+          display_name = ${row.display_name},
+          normalized_name = ${normalizedName},
+          aliases = ${JSON.stringify(row.aliases)},
+          handles = ${JSON.stringify(row.handles)},
+          emails = ${JSON.stringify(row.emails)},
+          phones = ${JSON.stringify(row.phones)},
+          confidence_hint = ${row.confidence_hint},
+          is_active = true,
+          source_updated_at = ${row.source_updated_at},
+          import_batch_id = ${batchId},
+          updated_at = now()
+        WHERE id = ${conflict.id}
+          AND owner_user_id = ${params.ownerUserId}
+      `;
+    }
   }
 
   return {

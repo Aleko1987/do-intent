@@ -317,7 +317,7 @@ export function parseContactDirectoryListQuery(raw: {
   }
   return {
     search,
-    limit: Math.min(limitValue, 200),
+    limit: Math.min(limitValue, 5000),
     includeInactive: raw.include_inactive === true,
     platform: raw.platform ? parseOwnerContactPlatform(raw.platform) : null,
   };
