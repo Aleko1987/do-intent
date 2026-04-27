@@ -7,6 +7,7 @@ import type {
   OwnerContactDirectoryRow,
   OwnerContactImportMode,
   OwnerContactInputFormat,
+  OwnerContactPlatform,
   OwnerContactSource,
   ResolverAuditV2,
   ResolverDecision,
@@ -15,6 +16,7 @@ import type {
 import type { OwnerContactImportError } from "./entity_resolution_schema";
 
 interface ParsedContactImportRecord {
+  platform: OwnerContactPlatform;
   external_ref: string | null;
   display_name: string;
   aliases: string[];
@@ -29,6 +31,7 @@ interface ImportOwnerContactsParams {
   ownerUserId: string;
   actorUserId: string;
   source: OwnerContactSource;
+  platform: OwnerContactPlatform;
   mode: OwnerContactImportMode;
   format: OwnerContactInputFormat;
   payload: string;
@@ -41,6 +44,21 @@ interface ImportOwnerContactsResult {
   accepted_rows: number;
   rejected_rows: number;
   errors: OwnerContactImportError[];
+}
+
+function normalizeImportedPlatform(value: string, fallback: OwnerContactPlatform): OwnerContactPlatform {
+  const normalized = normalizeContactString(value);
+  if (
+    normalized === "instagram" ||
+    normalized === "facebook" ||
+    normalized === "whatsapp" ||
+    normalized === "email" ||
+    normalized === "website" ||
+    normalized === "manual_upload"
+  ) {
+    return normalized;
+  }
+  return fallback;
 }
 
 function normalizeWhitespace(value: string): string {
@@ -103,7 +121,10 @@ function parseDelimitedList(value: string): string[] {
     .filter((item) => item.length > 0);
 }
 
-function parseHandleList(value: string): ParsedContactImportRecord["handles"] {
+function parseHandleList(
+  value: string,
+  defaultPlatform: OwnerContactPlatform
+): ParsedContactImportRecord["handles"] {
   const handles: ParsedContactImportRecord["handles"] = [];
   for (const item of parseDelimitedList(value)) {
     const [platformRaw, handleRaw] = item.includes(":")
@@ -112,7 +133,7 @@ function parseHandleList(value: string): ParsedContactImportRecord["handles"] {
     const normalized = normalizeHandle(handleRaw ?? "");
     if (!normalized) continue;
     handles.push({
-      platform: platformRaw ? normalizeContactString(platformRaw).slice(0, 32) : null,
+      platform: platformRaw ? normalizeContactString(platformRaw).slice(0, 32) : defaultPlatform,
       value: normalizeWhitespace(handleRaw ?? "").slice(0, 96),
       normalized: normalized.slice(0, 96),
     });
@@ -156,7 +177,10 @@ function parseConfidenceOrNull(value: string): number | null {
   return Math.round(n * 1000) / 1000;
 }
 
-function parseRecordsFromCsv(payload: string): { rows: ParsedContactImportRecord[]; errors: OwnerContactImportError[] } {
+function parseRecordsFromCsv(
+  payload: string,
+  defaultPlatform: OwnerContactPlatform
+): { rows: ParsedContactImportRecord[]; errors: OwnerContactImportError[] } {
   const lines = payload
     .split(/\r?\n/g)
     .map((line) => line.trim())
@@ -174,6 +198,7 @@ function parseRecordsFromCsv(payload: string): { rows: ParsedContactImportRecord
   }
 
   const idxExternalRef = index("external_ref");
+  const idxPlatform = index("platform");
   const idxAliases = index("aliases");
   const idxHandles = index("handles");
   const idxEmails = index("emails");
@@ -193,10 +218,14 @@ function parseRecordsFromCsv(payload: string): { rows: ParsedContactImportRecord
     }
 
     const parsed: ParsedContactImportRecord = {
+      platform:
+        idxPlatform >= 0 && normalizeContactString(values[idxPlatform] ?? "")
+          ? normalizeImportedPlatform(values[idxPlatform] ?? "", defaultPlatform)
+          : defaultPlatform,
       external_ref: normalizeWhitespace(values[idxExternalRef] ?? "") || null,
       display_name: displayName.slice(0, 180),
       aliases: parseDelimitedList(values[idxAliases] ?? "").slice(0, 12),
-      handles: parseHandleList(values[idxHandles] ?? "").slice(0, 12),
+      handles: parseHandleList(values[idxHandles] ?? "", defaultPlatform).slice(0, 12),
       emails: parseEmailList(values[idxEmails] ?? ""),
       phones: parsePhoneList(values[idxPhones] ?? ""),
       source_updated_at: parseDateOrNull(values[idxSourceUpdatedAt] ?? ""),
@@ -207,7 +236,10 @@ function parseRecordsFromCsv(payload: string): { rows: ParsedContactImportRecord
   return { rows, errors };
 }
 
-function parseRecordsFromText(payload: string): { rows: ParsedContactImportRecord[]; errors: OwnerContactImportError[] } {
+function parseRecordsFromText(
+  payload: string,
+  defaultPlatform: OwnerContactPlatform
+): { rows: ParsedContactImportRecord[]; errors: OwnerContactImportError[] } {
   const lines = payload
     .split(/\r?\n/g)
     .map((line) => line.trim())
@@ -237,13 +269,14 @@ function parseRecordsFromText(payload: string): { rows: ParsedContactImportRecor
 
     const handles = handleMatches
       .map((match) => ({
-        platform: null,
+        platform: defaultPlatform,
         value: `@${match[1]}`,
         normalized: normalizeHandle(match[1]).slice(0, 96),
       }))
       .filter((handle) => handle.normalized.length > 0);
 
     rows.push({
+      platform: defaultPlatform,
       external_ref: null,
       display_name: cleanedName.slice(0, 180),
       aliases: [],
@@ -260,12 +293,13 @@ function parseRecordsFromText(payload: string): { rows: ParsedContactImportRecor
 
 function parseImportRecords(
   format: OwnerContactInputFormat,
+  platform: OwnerContactPlatform,
   payload: string
 ): { rows: ParsedContactImportRecord[]; errors: OwnerContactImportError[] } {
   if (format === "csv") {
-    return parseRecordsFromCsv(payload);
+    return parseRecordsFromCsv(payload, platform);
   }
-  return parseRecordsFromText(payload);
+  return parseRecordsFromText(payload, platform);
 }
 
 function parseJsonStringArray(value: unknown): string[] {
@@ -295,6 +329,7 @@ function normalizeContactRow(row: OwnerContactDirectoryRow): OwnerContactDirecto
   return {
     id: row.id,
     source: row.source,
+    platform: row.platform,
     external_ref: row.external_ref,
     display_name: row.display_name,
     normalized_name: row.normalized_name,
@@ -314,12 +349,17 @@ export async function listOwnerContactDirectory(params: {
   search: string | null;
   limit: number;
   includeInactive: boolean;
+  platform: OwnerContactPlatform | null;
 }): Promise<OwnerContactDirectoryItem[]> {
   const queryParams: unknown[] = [params.ownerUserId];
   const where: string[] = ["owner_user_id = $1"];
 
   if (!params.includeInactive) {
     where.push("is_active = true");
+  }
+  if (params.platform) {
+    queryParams.push(params.platform);
+    where.push(`platform = $${queryParams.length}`);
   }
   if (params.search) {
     queryParams.push(`%${normalizeContactString(params.search)}%`);
@@ -342,7 +382,7 @@ export async function listOwnerContactDirectory(params: {
 }
 
 export async function importOwnerContacts(params: ImportOwnerContactsParams): Promise<ImportOwnerContactsResult> {
-  const parsed = parseImportRecords(params.format, params.payload);
+  const parsed = parseImportRecords(params.format, params.platform, params.payload);
   const acceptedRows = parsed.rows;
   const rejectedRows = parsed.errors.length;
   const totalRows = acceptedRows.length + rejectedRows;
@@ -353,6 +393,7 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
       id,
       owner_user_id,
       source,
+      platform,
       mode,
       input_format,
       total_rows,
@@ -366,6 +407,7 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
       ${batchId},
       ${params.ownerUserId},
       ${params.source},
+      ${params.platform},
       ${params.mode},
       ${params.format},
       ${totalRows},
@@ -387,6 +429,7 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
         updated_at = now()
       WHERE owner_user_id = ${params.ownerUserId}
         AND source = ${params.source}
+        AND platform = ${params.platform}
         AND is_active = true
     `;
   }
@@ -404,6 +447,7 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
         FROM owner_contact_directory
         WHERE owner_user_id = ${params.ownerUserId}
           AND source = ${params.source}
+          AND platform IS NOT DISTINCT FROM ${row.platform}
           AND external_ref = ${row.external_ref}
       `);
 
@@ -414,6 +458,7 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
           FROM owner_contact_directory
           WHERE owner_user_id = ${params.ownerUserId}
             AND source = ${params.source}
+            AND platform IS NOT DISTINCT FROM ${row.platform}
             AND normalized_name = ${normalizedName}
           ORDER BY updated_at DESC
           LIMIT 1
@@ -426,6 +471,7 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
         SET
           display_name = ${row.display_name},
           normalized_name = ${normalizedName},
+          platform = ${row.platform},
           aliases = ${JSON.stringify(row.aliases)},
           handles = ${JSON.stringify(row.handles)},
           emails = ${JSON.stringify(row.emails)},
@@ -446,6 +492,7 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
       INSERT INTO owner_contact_directory (
         owner_user_id,
         source,
+        platform,
         external_ref,
         display_name,
         normalized_name,
@@ -462,6 +509,7 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
       ) VALUES (
         ${params.ownerUserId},
         ${params.source},
+        ${row.platform},
         ${row.external_ref},
         ${row.display_name},
         ${normalizedName},
@@ -672,6 +720,7 @@ export async function resolveLeadCandidatesAgainstOwnerContacts(params: {
     search: null,
     limit: 500,
     includeInactive: false,
+    platform: null,
   });
 
   if (contacts.length === 0) {

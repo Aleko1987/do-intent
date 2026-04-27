@@ -8,6 +8,7 @@ interface ListOwnerContactDirectoryRequest {
   search?: string;
   limit?: number;
   include_inactive?: boolean;
+  platform?: "instagram" | "facebook" | "whatsapp" | "email" | "website" | "manual_upload" | "unknown";
 }
 
 interface ListOwnerContactDirectoryResponse {
@@ -30,6 +31,7 @@ export const listOwnerContacts = api<
     search: query.search,
     limit: query.limit,
     includeInactive: query.includeInactive,
+    platform: query.platform,
   });
   return { items };
 });

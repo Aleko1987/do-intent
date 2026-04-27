@@ -22,6 +22,16 @@ const CHANNEL_BADGE_VARIANTS: Record<string, "default" | "secondary" | "outline"
   manual_upload: "outline",
 };
 
+const PLATFORM_OPTIONS = [
+  { value: "instagram", label: "Instagram" },
+  { value: "facebook", label: "Facebook" },
+  { value: "whatsapp", label: "WhatsApp" },
+  { value: "email", label: "Email" },
+  { value: "website", label: "Website" },
+  { value: "manual_upload", label: "Manual upload" },
+  { value: "unknown", label: "Unknown" },
+] as const;
+
 interface ListCandidateSignalsResponse {
   items: CandidateSignalQueueItem[];
 }
@@ -64,6 +74,7 @@ interface ListLeadsResponse {
 interface OwnerContactDirectoryItemView {
   id: string;
   source: "csv_upload" | "paste_text" | "api_refresh";
+  platform: "instagram" | "facebook" | "whatsapp" | "email" | "website" | "manual_upload" | "unknown";
   display_name: string;
   normalized_name: string;
   is_active: boolean;
@@ -118,6 +129,7 @@ interface HotkeyCaptureMetadata {
   lead_analysis_json?: string | null;
   lead_candidates_v2_json?: string | null;
   resolver_output_v2_json?: string | null;
+  operator_source_platform?: string | null;
   suggestion_state?: "none" | "suggested" | "approved" | "rejected";
 }
 
@@ -245,6 +257,8 @@ function readHotkeyCaptureMetadata(value: unknown): HotkeyCaptureMetadata | null
     lead_analysis_json: typeof obj.lead_analysis_json === "string" ? obj.lead_analysis_json : null,
     lead_candidates_v2_json: typeof obj.lead_candidates_v2_json === "string" ? obj.lead_candidates_v2_json : null,
     resolver_output_v2_json: typeof obj.resolver_output_v2_json === "string" ? obj.resolver_output_v2_json : null,
+    operator_source_platform:
+      typeof obj.operator_source_platform === "string" ? obj.operator_source_platform : null,
     suggestion_state:
       obj.suggestion_state === "suggested" ||
       obj.suggestion_state === "approved" ||
@@ -479,8 +493,12 @@ export default function CandidateSignalReviewQueue() {
   const [contactImportSource, setContactImportSource] = useState<"csv_upload" | "paste_text" | "api_refresh">(
     "csv_upload"
   );
+  const [contactImportPlatform, setContactImportPlatform] = useState<
+    "instagram" | "facebook" | "whatsapp" | "email" | "website" | "manual_upload" | "unknown"
+  >("instagram");
   const [contactImportPayload, setContactImportPayload] = useState("");
   const [contactImportBusy, setContactImportBusy] = useState(false);
+  const [rowChannelDrafts, setRowChannelDrafts] = useState<Record<string, CandidateSignalQueueItem["channel"]>>({});
   const [reminderSettings, setReminderSettings] = useState<ReviewReminderSettings>(
     DEFAULT_REVIEW_REMINDER_SETTINGS
   );
@@ -527,6 +545,13 @@ export default function CandidateSignalReviewQueue() {
         method: "GET",
       });
       setRows(response.items);
+      setRowChannelDrafts(
+        Object.fromEntries(
+          response.items.map((item) => [item.id, item.channel]) as Array<
+            [string, CandidateSignalQueueItem["channel"]]
+          >
+        )
+      );
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : "Failed to load candidate signal queue");
@@ -599,6 +624,7 @@ export default function CandidateSignalReviewQueue() {
         method: "POST",
         body: JSON.stringify({
           source,
+          platform: contactImportPlatform,
           mode: contactImportMode,
           format: contactImportFormat,
           payload: contactImportPayload,
@@ -612,7 +638,7 @@ export default function CandidateSignalReviewQueue() {
               .join("; ")}`
           : "";
       setError(
-        `Contacts imported (${response.accepted_rows}/${response.total_rows}). Rejected: ${response.rejected_rows}.${errorsPreview}`
+        `Contacts imported for ${contactImportPlatform} (${response.accepted_rows}/${response.total_rows}). Rejected: ${response.rejected_rows}.${errorsPreview}`
       );
       await loadOwnerContacts();
     } catch (err) {
@@ -899,6 +925,42 @@ export default function CandidateSignalReviewQueue() {
     }
   }
 
+  async function handleApplySignalChannel(row: CandidateSignalQueueItem) {
+    const selectedChannel = rowChannelDrafts[row.id] ?? row.channel;
+    if (selectedChannel === row.channel) {
+      return;
+    }
+    setBusyId(row.id);
+    setError(null);
+    try {
+      const response = await apiFetch<ReviewCandidateSignalResponse>(
+        `/marketing/candidate-signals/${row.id}/reviews`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            decision: "edit",
+            decision_reason: "Operator updated source platform/channel",
+            set_status: row.status,
+            set_channel: selectedChannel,
+            metadata_patch: JSON.stringify({
+              operator_source_platform: selectedChannel,
+              operator_source_platform_set_at: new Date().toISOString(),
+            }),
+          }),
+        }
+      );
+      setRows((prev) =>
+        prev.map((item) => (item.id === row.id ? { ...item, ...response.candidate_signal } : item))
+      );
+      setRowChannelDrafts((prev) => ({ ...prev, [row.id]: selectedChannel }));
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Failed to update signal source platform");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   function onFileChange(file: File | null) {
     if (!file) {
       setSelectedFileData(null);
@@ -952,7 +1014,7 @@ export default function CandidateSignalReviewQueue() {
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
           <select
             className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
             value={contactImportFormat}
@@ -980,6 +1042,28 @@ export default function CandidateSignalReviewQueue() {
             <option value="paste_text">Source: Paste text</option>
             <option value="api_refresh">Source: API refresh</option>
           </select>
+          <select
+            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
+            value={contactImportPlatform}
+            onChange={(e) =>
+              setContactImportPlatform(
+                e.target.value as
+                  | "instagram"
+                  | "facebook"
+                  | "whatsapp"
+                  | "email"
+                  | "website"
+                  | "manual_upload"
+                  | "unknown"
+              )
+            }
+          >
+            {PLATFORM_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                Platform: {option.label}
+              </option>
+            ))}
+          </select>
           <Button size="sm" onClick={() => void handleImportOwnerContacts()} disabled={contactImportBusy}>
             {contactImportBusy ? "Importing..." : "Import contacts"}
           </Button>
@@ -1002,6 +1086,7 @@ export default function CandidateSignalReviewQueue() {
             ownerContacts.slice(0, 5).map((contact) => (
               <p key={contact.id}>
                 {contact.display_name}
+                {contact.platform ? ` · ${contact.platform}` : ""}
                 {contact.emails[0] ? ` · ${contact.emails[0]}` : ""}
                 {contact.handles[0]?.value ? ` · ${contact.handles[0].value}` : ""}
               </p>
@@ -1202,6 +1287,9 @@ export default function CandidateSignalReviewQueue() {
                   <span>Confidence: {formatMaybeNumber(row.suggestion_confidence)}</span>
                   <span>Evidence count: {row.evidence_count}</span>
                   <span>Reminder status: {row.latest_reminder_status ?? "none"}</span>
+                  <span>
+                    Source platform: {captureMeta?.operator_source_platform ?? row.channel}
+                  </span>
                   {captureMeta?.captured_at && (
                     <span>Captured at: {new Date(captureMeta.captured_at).toLocaleString()}</span>
                   )}
@@ -1287,6 +1375,34 @@ export default function CandidateSignalReviewQueue() {
               </div>
 
               <div className="flex flex-wrap gap-2 md:w-[360px] md:justify-end">
+                <div className="flex gap-2 w-full md:justify-end">
+                  <select
+                    className="flex h-9 min-w-[170px] rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
+                    value={rowChannelDrafts[row.id] ?? row.channel}
+                    onChange={(e) =>
+                      setRowChannelDrafts((prev) => ({
+                        ...prev,
+                        [row.id]: e.target.value as CandidateSignalQueueItem["channel"],
+                      }))
+                    }
+                    disabled={busyId === row.id}
+                  >
+                    <option value="instagram">instagram</option>
+                    <option value="facebook">facebook</option>
+                    <option value="whatsapp">whatsapp</option>
+                    <option value="email">email</option>
+                    <option value="website">website</option>
+                    <option value="manual_upload">manual_upload</option>
+                  </select>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void handleApplySignalChannel(row)}
+                    disabled={busyId === row.id || (rowChannelDrafts[row.id] ?? row.channel) === row.channel}
+                  >
+                    Apply source
+                  </Button>
+                </div>
                 <Button size="sm" variant="outline" onClick={() => setActiveId(row.id)}>
                   Open Evidence Flow
                 </Button>

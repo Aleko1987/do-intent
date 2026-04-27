@@ -3,12 +3,18 @@ import { getAuthData } from "~encore/auth";
 import { db } from "../db/db";
 import type { JsonObject } from "../internal/json_types";
 import type {
+  CandidateSignalChannel,
   CandidateSignal,
   CandidateSignalEventType,
   CandidateSignalReview,
   CandidateSignalStatus,
 } from "./candidate_signal_types";
-import { fetchCandidateSignalById, normalizeEventType, promoteCandidateSignalToIntentEvent } from "./candidate_signal_service";
+import {
+  fetchCandidateSignalById,
+  normalizeChannel,
+  normalizeEventType,
+  promoteCandidateSignalToIntentEvent,
+} from "./candidate_signal_service";
 import type { IntentEvent } from "./types";
 
 interface ReviewCandidateSignalRequest {
@@ -17,6 +23,7 @@ interface ReviewCandidateSignalRequest {
   decision_reason?: string;
   set_status?: "pending_review" | "approved" | "rejected" | "needs_evidence" | "reminder_sent" | "evidence_attached";
   set_lead_id?: string;
+  set_channel?: string;
   set_event_type?: string;
   set_stage?: "M1" | "M2" | "M3" | "M4" | "M5";
   set_intent_score?: number;
@@ -70,6 +77,9 @@ export const reviewCandidateSignal = api<ReviewCandidateSignalRequest, ReviewCan
     const existing = await fetchCandidateSignalById(req.id, authData.userID);
     const patch = parseMetadataPatch(req.metadata_patch);
     const selectedStatus = normalizeReviewStatus(req.set_status, req.decision);
+    const selectedChannel: CandidateSignalChannel = req.set_channel
+      ? normalizeChannel(req.set_channel)
+      : existing.channel;
     const selectedEventType: CandidateSignalEventType | null = req.set_event_type
       ? normalizeEventType(req.set_event_type)
       : existing.suggested_event_type;
@@ -82,6 +92,7 @@ export const reviewCandidateSignal = api<ReviewCandidateSignalRequest, ReviewCan
     const updatedSignal = await db.queryRow<CandidateSignal>`
       UPDATE candidate_signals
       SET
+        channel = ${selectedChannel},
         status = ${selectedStatus},
         lead_id = ${req.set_lead_id ?? existing.lead_id},
         suggested_event_type = ${selectedEventType},
@@ -118,6 +129,7 @@ export const reviewCandidateSignal = api<ReviewCandidateSignalRequest, ReviewCan
         ${req.decision},
         ${req.decision_reason ?? null},
         ${JSON.stringify({
+          channel: existing.channel,
           status: existing.status,
           lead_id: existing.lead_id,
           suggested_event_type: existing.suggested_event_type,
@@ -125,6 +137,7 @@ export const reviewCandidateSignal = api<ReviewCandidateSignalRequest, ReviewCan
           suggested_intent_score: existing.suggested_intent_score,
         } satisfies JsonObject)},
         ${JSON.stringify({
+          channel: updatedSignal.channel,
           status: updatedSignal.status,
           lead_id: updatedSignal.lead_id,
           suggested_event_type: updatedSignal.suggested_event_type,

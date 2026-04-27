@@ -4,6 +4,7 @@ import {
   parseOwnerContactImportMode,
   parseOwnerContactInputFormat,
   parseOwnerContactPayloadText,
+  parseOwnerContactPlatform,
   parseOwnerContactSource,
   truncateImportErrors,
 } from "./entity_resolution_schema";
@@ -11,6 +12,7 @@ import { importOwnerContacts } from "./owner_contact_directory_service";
 
 interface ImportOwnerContactsRequest {
   source: "csv_upload" | "paste_text" | "api_refresh";
+  platform: "instagram" | "facebook" | "whatsapp" | "email" | "website" | "manual_upload" | "unknown";
   mode: "full_refresh" | "delta";
   format: "csv" | "text";
   payload: string;
@@ -36,6 +38,7 @@ export const importOwnerContactsDirectory = api<
   }
 
   const source = parseOwnerContactSource(req.source);
+  const platform = parseOwnerContactPlatform(req.platform);
   const mode = parseOwnerContactImportMode(req.mode);
   const format = parseOwnerContactInputFormat(req.format);
   const payload = parseOwnerContactPayloadText(req.payload);
@@ -44,6 +47,7 @@ export const importOwnerContactsDirectory = api<
     ownerUserId: authData.userID,
     actorUserId: authData.userID,
     source,
+    platform,
     mode,
     format,
     payload,

@@ -1,6 +1,14 @@
 export type OwnerContactSource = "csv_upload" | "paste_text" | "api_refresh";
 export type OwnerContactImportMode = "full_refresh" | "delta";
 export type OwnerContactInputFormat = "csv" | "text";
+export type OwnerContactPlatform =
+  | "instagram"
+  | "facebook"
+  | "whatsapp"
+  | "email"
+  | "website"
+  | "manual_upload"
+  | "unknown";
 
 export type ResolverMatchMethod = "exact" | "prefix" | "fuzzy";
 export type ResolverDecision = "resolved" | "ambiguous" | "unresolved";
@@ -107,6 +115,7 @@ export interface OwnerContactDirectoryRow {
   id: string;
   owner_user_id: string;
   source: OwnerContactSource;
+  platform: OwnerContactPlatform;
   external_ref: string | null;
   display_name: string;
   normalized_name: string;
@@ -125,6 +134,7 @@ export interface OwnerContactDirectoryRow {
 export interface OwnerContactDirectoryItem {
   id: string;
   source: OwnerContactSource;
+  platform: OwnerContactPlatform;
   external_ref: string | null;
   display_name: string;
   normalized_name: string;

@@ -9,6 +9,7 @@ import type {
   OwnerContactDirectoryItem,
   OwnerContactImportMode,
   OwnerContactInputFormat,
+  OwnerContactPlatform,
   OwnerContactSource,
   ResolverAuditV2,
   ResolverMatchMethod,
@@ -273,6 +274,23 @@ export function parseOwnerContactSource(value: unknown): OwnerContactSource {
   throw APIError.invalidArgument("source must be csv_upload, paste_text, or api_refresh");
 }
 
+export function parseOwnerContactPlatform(value: unknown): OwnerContactPlatform {
+  if (
+    value === "instagram" ||
+    value === "facebook" ||
+    value === "whatsapp" ||
+    value === "email" ||
+    value === "website" ||
+    value === "manual_upload" ||
+    value === "unknown"
+  ) {
+    return value;
+  }
+  throw APIError.invalidArgument(
+    "platform must be instagram, facebook, whatsapp, email, website, manual_upload, or unknown"
+  );
+}
+
 export function parseOwnerContactPayloadText(value: unknown): string {
   const parsed = parseString(value, 2 * 1024 * 1024);
   if (!parsed) {
@@ -285,7 +303,13 @@ export function parseContactDirectoryListQuery(raw: {
   search?: string;
   limit?: number;
   include_inactive?: boolean;
-}): { search: string | null; limit: number; includeInactive: boolean } {
+  platform?: string;
+}): {
+  search: string | null;
+  limit: number;
+  includeInactive: boolean;
+  platform: OwnerContactPlatform | null;
+} {
   const search = parseString(raw.search, MAX_SMALL_TEXT_BYTES);
   const limitValue = raw.limit ?? 50;
   if (!Number.isInteger(limitValue) || limitValue <= 0) {
@@ -295,6 +319,7 @@ export function parseContactDirectoryListQuery(raw: {
     search,
     limit: Math.min(limitValue, 200),
     includeInactive: raw.include_inactive === true,
+    platform: raw.platform ? parseOwnerContactPlatform(raw.platform) : null,
   };
 }
 

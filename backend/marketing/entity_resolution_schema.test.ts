@@ -4,6 +4,7 @@ import { APIError } from "encore.dev/api";
 import {
   parseContactDirectoryListQuery,
   parseLeadCandidatesV2Json,
+  parseOwnerContactPlatform,
   serializeLeadCandidatesV2,
 } from "./entity_resolution_schema";
 
@@ -59,5 +60,10 @@ describe("entity_resolution_schema list query", () => {
     assert.equal(query.limit, 50);
     assert.equal(query.search, null);
     assert.equal(query.includeInactive, false);
+  });
+
+  it("parses owner contact platform enum", () => {
+    assert.equal(parseOwnerContactPlatform("instagram"), "instagram");
+    assert.throws(() => parseOwnerContactPlatform("x"), APIError);
   });
 });
