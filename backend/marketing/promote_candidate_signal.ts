@@ -29,15 +29,34 @@ export const promoteCandidateSignal = api<PromoteCandidateSignalRequest, Promote
 
     const signal = await fetchCandidateSignalById(req.id, authData.userID);
 
-    if (!["approved", "pending_review", "needs_evidence", "reminder_sent", "evidence_attached"].includes(signal.status)) {
-      throw APIError.failedPrecondition("candidate signal status is not promotable");
+    if (signal.status !== "approved") {
+      throw APIError.failedPrecondition("candidate signal must be approved before promotion");
     }
+
+    const selectedLeadId = req.lead_id ?? signal.lead_id;
+    if (!selectedLeadId) {
+      throw APIError.invalidArgument("lead_id is required for promotion");
+    }
+
+    const lead = await db.queryRow<{ id: string }>`
+      SELECT id
+      FROM marketing_leads
+      WHERE id = ${selectedLeadId}
+        AND owner_user_id = ${authData.userID}
+    `;
+    if (!lead) {
+      throw APIError.notFound("lead not found");
+    }
+
+    const selectedEventType = req.event_type
+      ? normalizeEventType(req.event_type)
+      : signal.suggested_event_type ?? signal.signal_type;
 
     const promoted = await promoteCandidateSignalToIntentEvent({
       candidateSignal: signal,
       ownerUserId: authData.userID,
-      eventType: req.event_type ? normalizeEventType(req.event_type) : signal.suggested_event_type,
-      overrideLeadId: req.lead_id ?? signal.lead_id,
+      eventType: selectedEventType,
+      overrideLeadId: selectedLeadId,
     });
 
     const review = await db.queryRow<CandidateSignalReview>`

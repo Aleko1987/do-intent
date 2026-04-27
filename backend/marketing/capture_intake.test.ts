@@ -25,6 +25,31 @@ describe("capture_intake payload validation", () => {
         llm_provider: "ollama",
         llm_model: "llama3.1:8b",
         llm_confidence: 0.81,
+        lead_candidates_v2: {
+          schema_version: "v2",
+          lead_candidates: [
+            {
+              candidate_id: "c1",
+              intent_type: "quote_requested",
+              confidence: 0.81,
+              evidence_snippets: [{ source: "llm", text: "Requested quote" }],
+              next_action: "review",
+              reasons: ["Buyer intent"],
+              resolved_contact: null,
+              resolution_candidates: [],
+            },
+          ],
+          model_meta: {
+            provider: "ollama",
+            model: "llama3.1:8b",
+            prompt_version: "local_extractor_v2",
+            schema_version: "v2",
+            elapsed_ms: 250,
+            timeout_ms: 12000,
+            fallback_used: false,
+          },
+          quality_flags: [],
+        },
         lead_suggestion: {
           company_name: "Acme",
           contact_name: "Jane",
@@ -42,6 +67,7 @@ describe("capture_intake payload validation", () => {
     assert.equal(payload.metadata.ocr_engine, "tesseract.js");
     assert.equal(payload.metadata.suggestion_state, "suggested");
     assert.equal(payload.metadata.lead_suggestion_json, '{"company_name":"Acme","contact_name":"Jane","email":"jane@acme.com"}');
+    assert.ok(payload.metadata.lead_candidates_v2_json?.includes('"schema_version":"v2"'));
     assert.equal(
       payload.metadata.lead_analysis_json,
       '{"entries":["Acme","Jane"],"actions":["Requested quote"],"potential_lead":true,"rationale":"Buyer intent"}'
@@ -98,6 +124,28 @@ describe("capture_intake payload validation", () => {
             capture_mode: "region",
             captured_at: "2026-04-26T10:00:00.000Z",
             lead_analysis_json: "{bad-json",
+          },
+        }),
+      APIError
+    );
+  });
+
+  it("rejects malformed lead candidates v2 JSON", () => {
+    assert.throws(
+      () =>
+        parseCaptureIntakePayload({
+          version: "v1",
+          idempotency_key: "key-1",
+          owner_user_id: "user_1",
+          channel: "instagram",
+          signal_type: "post_published",
+          image_data_url: "data:image/png;base64,aGVsbG8=",
+          mime_type: "image/png",
+          metadata: {
+            source: "hotkey_capture",
+            capture_mode: "region",
+            captured_at: "2026-04-26T10:00:00.000Z",
+            lead_candidates_v2_json: '{"schema_version":"v1"}',
           },
         }),
       APIError

@@ -75,6 +75,9 @@ describe("runLocalLlmExtraction", () => {
     assert.equal(result.suggestion.company_name, "Acme");
     assert.equal(result.analysis.potential_lead, true);
     assert.deepEqual(result.analysis.actions, ["Requested quote"]);
+    assert.equal(result.leadCandidates.schema_version, "v2");
+    assert.equal(result.leadCandidates.lead_candidates.length, 1);
+    assert.equal(result.leadCandidates.model_meta.prompt_version, "local_extractor_v2");
   });
 
   it("returns empty suggestion when below confidence threshold", async () => {
@@ -99,5 +102,6 @@ describe("runLocalLlmExtraction", () => {
     if (!result.ok) return;
     assert.deepEqual(result.suggestion, {});
     assert.equal(result.analysis.potential_lead, null);
+    assert.equal(result.leadCandidates.quality_flags.includes("low_confidence"), true);
   });
 });

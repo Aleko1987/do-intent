@@ -40,9 +40,13 @@ Enable operators to capture evidence from any foreground desktop application and
 5. OCR failure -> capture still ingests with `ocr_error` metadata.
 6. LLM timeout/failure -> capture still ingests with OCR metadata and `llm_error`.
 7. Suggestion approval path:
-   - Suggestion appears in review queue with model provenance and OCR preview.
+   - Candidate rows appear in review queue with model provenance, resolver confidence, and OCR preview.
    - Lead is created/merged only when operator clicks Approve.
    - Reject keeps signal in candidate queue with `suggestion_state=rejected`.
+8. Contact resolution path:
+   - Import owner contacts from review queue (`CSV` or pasted text).
+   - New captures resolve candidate names/handles against owner contacts with audit metadata.
+   - Ambiguous matches are shown as alternatives; reviewer must still choose.
 
 ## Troubleshooting
 
@@ -93,7 +97,10 @@ Enable operators to capture evidence from any foreground desktop application and
     "llm_extracted_at": "ISO8601|null",
     "llm_error": "string|null",
     "llm_ms": "number|null",
+    "llm_timeout_ms": "number|null",
     "lead_suggestion_json": "string|null",
+    "lead_candidates_v2_json": "string|null (strict v2 lead_candidates payload)",
+    "resolver_output_v2_json": "string|null (resolver match audit list)",
     "suggestion_state": "none|suggested (capture intake accepts only these values)",
     "prefill_confidence_gate": "number|null (0..1)"
   }
@@ -142,3 +149,4 @@ DO-Socials is not used in this ingestion step. Hotkey captures only create DO-In
 
 - Intake metadata cannot set suggestion lifecycle to `approved` or `rejected`; those states are only written by explicit review actions.
 - Review queue approval/rejection calls authenticated candidate-signal review endpoints and records audit trail rows in `candidate_signal_reviews`.
+- Promotion endpoint requires explicit approved status and valid owner lead before intent creation.
