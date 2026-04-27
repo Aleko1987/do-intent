@@ -6,6 +6,15 @@ import { applyCorsHeaders } from "../internal/cors";
 import { resolveCaptureIntakeToken } from "../internal/env_secrets";
 import type { JsonObject } from "../internal/json_types";
 import { attachEvidenceToSignal, createCandidateSignalForOwner } from "./candidate_signal_intake_helpers";
+import {
+  parseLeadCandidatesV2Json,
+  serializeLeadCandidatesV2,
+} from "./entity_resolution_schema";
+import {
+  projectLegacySuggestionToLeadCandidates,
+  resolveLeadCandidatesAgainstOwnerContacts,
+} from "./owner_contact_directory_service";
+import type { LeadCandidatesPayloadV2 } from "./entity_resolution_contracts";
 
 const MAX_IMAGE_DATA_URL_BYTES = 8 * 1024 * 1024;
 const MAX_METADATA_TEXT_BYTES = 12 * 1024;
@@ -37,8 +46,10 @@ interface CaptureIntakeMetadata {
   llm_ms?: number | null;
   lead_suggestion_json?: string | null;
   lead_analysis_json?: string | null;
+  lead_candidates_v2_json?: string | null;
   suggestion_state?: "none" | "suggested" | "approved" | "rejected";
   prefill_confidence_gate?: number | null;
+  llm_timeout_ms?: number | null;
 }
 
 interface CaptureIntakeRequest {
@@ -304,6 +315,14 @@ export function parseCaptureIntakePayload(payload: unknown): CaptureIntakeReques
       llm_ms: parseBoundedNumber(metadataRaw.llm_ms, "metadata.llm_ms", 0, 120000),
       lead_suggestion_json: parseLeadSuggestionJson(metadataRaw.lead_suggestion, metadataRaw.lead_suggestion_json),
       lead_analysis_json: parseLeadAnalysisJson(metadataRaw.lead_analysis_json),
+      lead_candidates_v2_json: (() => {
+        const parsed = parseLeadCandidatesV2Json(
+          metadataRaw.lead_candidates_v2,
+          metadataRaw.lead_candidates_v2_json
+        );
+        if (!parsed) return null;
+        return serializeLeadCandidatesV2(parsed);
+      })(),
       suggestion_state:
         metadataRaw.suggestion_state === "suggested"
           ? "suggested"
@@ -314,6 +333,7 @@ export function parseCaptureIntakePayload(payload: unknown): CaptureIntakeReques
         0,
         1
       ),
+      llm_timeout_ms: parseBoundedNumber(metadataRaw.llm_timeout_ms, "metadata.llm_timeout_ms", 0, 120000),
     },
   };
 }
@@ -348,7 +368,12 @@ async function readBody(req: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function buildCandidateMetadata(body: CaptureIntakeRequest, correlationId: string): JsonObject {
+function buildCandidateMetadata(
+  body: CaptureIntakeRequest,
+  correlationId: string,
+  leadCandidatesV2Json: string | null,
+  resolverOutputV2Json: string | null
+): JsonObject {
   return {
     source: "hotkey_capture",
     capture_mode: body.metadata.capture_mode,
@@ -372,18 +397,73 @@ function buildCandidateMetadata(body: CaptureIntakeRequest, correlationId: strin
     llm_ms: body.metadata.llm_ms ?? null,
     lead_suggestion_json: body.metadata.lead_suggestion_json ?? null,
     lead_analysis_json: body.metadata.lead_analysis_json ?? null,
+    lead_candidates_v2_json: leadCandidatesV2Json,
+    lead_candidates_schema_version: leadCandidatesV2Json ? "v2" : null,
+    resolver_output_v2_json: resolverOutputV2Json,
     suggestion_state: body.metadata.suggestion_state ?? "none",
     prefill_confidence_gate: body.metadata.prefill_confidence_gate ?? null,
+    llm_timeout_ms: body.metadata.llm_timeout_ms ?? null,
     ingestion_correlation_id: correlationId,
   };
 }
 
-function buildEvidenceMetadata(body: CaptureIntakeRequest, correlationId: string): JsonObject {
+function buildEvidenceMetadata(
+  body: CaptureIntakeRequest,
+  correlationId: string,
+  leadCandidatesV2Json: string | null,
+  resolverOutputV2Json: string | null
+): JsonObject {
   const imageHash = createHash("sha256").update(body.image_data_url).digest("hex");
   return {
-    ...buildCandidateMetadata(body, correlationId),
+    ...buildCandidateMetadata(body, correlationId, leadCandidatesV2Json, resolverOutputV2Json),
     image_sha256: imageHash,
     source_note: "Desktop hotkey capture",
+  };
+}
+
+async function shapeLeadCandidatesV2(params: {
+  payload: CaptureIntakeRequest;
+}): Promise<{ leadCandidatesJson: string | null; resolverOutputJson: string | null }> {
+  let leadCandidatesPayload: LeadCandidatesPayloadV2 | null = null;
+  if (params.payload.metadata.lead_candidates_v2_json) {
+    try {
+      leadCandidatesPayload = JSON.parse(
+        params.payload.metadata.lead_candidates_v2_json
+      ) as LeadCandidatesPayloadV2;
+    } catch {
+      leadCandidatesPayload = null;
+    }
+  }
+
+  if (!leadCandidatesPayload) {
+    leadCandidatesPayload = projectLegacySuggestionToLeadCandidates({
+      leadSuggestionJson: params.payload.metadata.lead_suggestion_json,
+      leadAnalysisJson: params.payload.metadata.lead_analysis_json,
+      llmProvider: params.payload.metadata.llm_provider,
+      llmModel: params.payload.metadata.llm_model,
+      llmMs: params.payload.metadata.llm_ms,
+      llmTimeoutMs: params.payload.metadata.llm_timeout_ms,
+      llmError: params.payload.metadata.llm_error,
+      ocrText: params.payload.metadata.ocr_text,
+      llmConfidence: params.payload.metadata.llm_confidence,
+    });
+  }
+
+  if (leadCandidatesPayload.lead_candidates.length === 0) {
+    return {
+      leadCandidatesJson: null,
+      resolverOutputJson: null,
+    };
+  }
+
+  const resolved = await resolveLeadCandidatesAgainstOwnerContacts({
+    ownerUserId: params.payload.owner_user_id,
+    payload: leadCandidatesPayload,
+  });
+  return {
+    leadCandidatesJson: serializeLeadCandidatesV2(resolved.payload),
+    resolverOutputJson:
+      resolved.resolverAudits.length > 0 ? JSON.stringify(resolved.resolverAudits.slice(0, 5)) : null,
   };
 }
 
@@ -407,8 +487,19 @@ export function createCaptureIntakeHandler(deps: CaptureIntakeDeps) {
 
       const rawBody = await readBody(req);
       const payload = parseCaptureIntakePayload(parseJsonBody(rawBody));
-      const candidateMetadata = buildCandidateMetadata(payload, correlationId);
-      const evidenceMetadata = buildEvidenceMetadata(payload, correlationId);
+      const shapedCandidates = await shapeLeadCandidatesV2({ payload });
+      const candidateMetadata = buildCandidateMetadata(
+        payload,
+        correlationId,
+        shapedCandidates.leadCandidatesJson,
+        shapedCandidates.resolverOutputJson
+      );
+      const evidenceMetadata = buildEvidenceMetadata(
+        payload,
+        correlationId,
+        shapedCandidates.leadCandidatesJson,
+        shapedCandidates.resolverOutputJson
+      );
 
       const created = await deps.createSignal({
         ownerUserId: payload.owner_user_id,

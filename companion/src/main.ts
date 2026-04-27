@@ -124,6 +124,8 @@ async function enrichCapturePayload(params: {
         llmResult.analysis.potential_lead !== null
           ? JSON.stringify(llmResult.analysis)
           : null;
+      metadata.lead_candidates_v2_json = JSON.stringify(llmResult.leadCandidates);
+      metadata.llm_timeout_ms = params.config.llmTimeoutMs;
       console.info("[companion] LLM extraction completed", {
         correlationId: params.correlationId,
         elapsedMs: llmResult.elapsedMs,
@@ -140,6 +142,7 @@ async function enrichCapturePayload(params: {
       metadata.llm_extracted_at = llmResult.extractedAt;
       metadata.llm_ms = llmResult.elapsedMs;
       metadata.llm_error = llmResult.error;
+      metadata.llm_timeout_ms = params.config.llmTimeoutMs;
       console.warn("[companion] LLM extraction failed", {
         correlationId: params.correlationId,
         elapsedMs: llmResult.elapsedMs,

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 const MAX_SUGGESTION_JSON_BYTES = 8 * 1024;
 const MAX_FREEFORM_CHARS = 500;
 
@@ -17,6 +19,37 @@ export interface LeadAnalysis {
   rationale?: string;
 }
 
+export interface LeadCandidateV2 {
+  candidate_id: string;
+  intent_type: string;
+  confidence: number;
+  evidence_snippets: Array<{ source: "ocr" | "llm" | "manual"; text: string }>;
+  next_action: "review" | "request_evidence" | "defer";
+  reasons: string[];
+  resolved_contact: null;
+  resolution_candidates: Array<{
+    contact_id: string;
+    display_name: string;
+    score: number;
+    method: "exact" | "prefix" | "fuzzy";
+  }>;
+}
+
+export interface LeadCandidatesPayloadV2 {
+  schema_version: "v2";
+  lead_candidates: LeadCandidateV2[];
+  model_meta: {
+    provider: "ollama";
+    model: string;
+    prompt_version: string;
+    schema_version: "v2";
+    elapsed_ms: number | null;
+    timeout_ms: number;
+    fallback_used: boolean;
+  };
+  quality_flags: Array<"llm_timeout" | "low_confidence" | "ocr_sparse" | "resolver_ambiguous" | "legacy_projection">;
+}
+
 export interface LlmExtractionSuccess {
   ok: true;
   suggestion: LeadSuggestion;
@@ -26,6 +59,7 @@ export interface LlmExtractionSuccess {
   model: string;
   extractedAt: string;
   elapsedMs: number;
+  leadCandidates: LeadCandidatesPayloadV2;
 }
 
 export interface LlmExtractionFailure {
@@ -168,6 +202,74 @@ function buildPrompt(ocrText: string): string {
   ].join("\n");
 }
 
+function buildLeadCandidatesFromExtraction(params: {
+  suggestion: LeadSuggestion;
+  analysis: LeadAnalysis;
+  confidence: number | null;
+  model: string;
+  elapsedMs: number;
+  timeoutMs: number;
+  fallbackUsed: boolean;
+  llmError: boolean;
+  minConfidence: number;
+  ocrText: string;
+}): LeadCandidatesPayloadV2 {
+  const normalizedConfidence = typeof params.confidence === "number" ? params.confidence : 0;
+  const reasons = [params.suggestion.reason, params.analysis.rationale]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .slice(0, 8);
+  const intentType =
+    typeof params.suggestion.suggested_event_type === "string" && params.suggestion.suggested_event_type.length > 0
+      ? params.suggestion.suggested_event_type
+      : "other";
+
+  const snippets: LeadCandidateV2["evidence_snippets"] = [];
+  if (params.ocrText.trim().length > 0) {
+    snippets.push({ source: "ocr", text: params.ocrText.slice(0, 220) });
+  }
+  if (params.analysis.entries[0]) {
+    snippets.push({ source: "llm", text: params.analysis.entries[0].slice(0, 220) });
+  }
+  if (params.analysis.actions[0]) {
+    snippets.push({ source: "llm", text: params.analysis.actions[0].slice(0, 220) });
+  }
+
+  const qualityFlags = new Set<LeadCandidatesPayloadV2["quality_flags"][number]>();
+  if (params.llmError) qualityFlags.add("llm_timeout");
+  if (normalizedConfidence > 0 && normalizedConfidence < params.minConfidence) {
+    qualityFlags.add("low_confidence");
+  }
+  if (params.ocrText.trim().length < 20) {
+    qualityFlags.add("ocr_sparse");
+  }
+
+  const candidate: LeadCandidateV2 = {
+    candidate_id: randomUUID(),
+    intent_type: intentType,
+    confidence: Math.max(0, Math.min(1, normalizedConfidence)),
+    evidence_snippets: snippets.slice(0, 6),
+    next_action: normalizedConfidence >= params.minConfidence ? "review" : "request_evidence",
+    reasons,
+    resolved_contact: null,
+    resolution_candidates: [],
+  };
+
+  return {
+    schema_version: "v2",
+    lead_candidates: [candidate],
+    model_meta: {
+      provider: "ollama",
+      model: params.model,
+      prompt_version: "local_extractor_v2",
+      schema_version: "v2",
+      elapsed_ms: params.elapsedMs,
+      timeout_ms: params.timeoutMs,
+      fallback_used: params.fallbackUsed,
+    },
+    quality_flags: Array.from(qualityFlags),
+  };
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message.slice(0, 512);
@@ -215,6 +317,7 @@ export async function runLocalLlmExtraction(params: {
       (confidence ?? 0) < params.minConfidence ||
       (countSuggestionFields(suggestion) === 0 && analysis.entries.length === 0 && analysis.actions.length === 0)
     ) {
+      const elapsedMs = Date.now() - startedAt;
       return {
         ok: true,
         suggestion: {},
@@ -223,9 +326,22 @@ export async function runLocalLlmExtraction(params: {
         provider: "ollama",
         model: params.model,
         extractedAt,
-        elapsedMs: Date.now() - startedAt,
+        elapsedMs,
+        leadCandidates: buildLeadCandidatesFromExtraction({
+          suggestion: {},
+          analysis: { ...analysis, potential_lead: null },
+          confidence,
+          model: params.model,
+          elapsedMs,
+          timeoutMs: params.timeoutMs,
+          fallbackUsed: true,
+          llmError: false,
+          minConfidence: params.minConfidence,
+          ocrText: params.ocrText,
+        }),
       };
     }
+    const elapsedMs = Date.now() - startedAt;
     return {
       ok: true,
       suggestion,
@@ -234,7 +350,19 @@ export async function runLocalLlmExtraction(params: {
       provider: "ollama",
       model: params.model,
       extractedAt,
-      elapsedMs: Date.now() - startedAt,
+      elapsedMs,
+      leadCandidates: buildLeadCandidatesFromExtraction({
+        suggestion,
+        analysis,
+        confidence,
+        model: params.model,
+        elapsedMs,
+        timeoutMs: params.timeoutMs,
+        fallbackUsed: false,
+        llmError: false,
+        minConfidence: params.minConfidence,
+        ocrText: params.ocrText,
+      }),
     };
   } catch (error) {
     return {
