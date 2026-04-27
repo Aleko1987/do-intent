@@ -63,6 +63,12 @@ async function enrichCapturePayload(params: {
   const metadata: Record<string, unknown> = {};
   let rawText: string | null = null;
   let suggestion: LeadSuggestion = {};
+  let leadAnalysis: {
+    entries: string[];
+    actions: string[];
+    potential_lead: boolean | null;
+    rationale?: string;
+  } = { entries: [], actions: [], potential_lead: null };
   let llmConfidence: number | null = null;
 
   if (params.config.ocrEnabled) {
@@ -102,6 +108,7 @@ async function enrichCapturePayload(params: {
     });
     if (llmResult.ok) {
       suggestion = llmResult.suggestion;
+      leadAnalysis = llmResult.analysis;
       llmConfidence = llmResult.confidence;
       metadata.llm_provider = llmResult.provider;
       metadata.llm_model = llmResult.model;
@@ -111,11 +118,21 @@ async function enrichCapturePayload(params: {
       metadata.lead_suggestion = Object.keys(llmResult.suggestion).length > 0 ? llmResult.suggestion : null;
       metadata.lead_suggestion_json =
         Object.keys(llmResult.suggestion).length > 0 ? JSON.stringify(llmResult.suggestion) : null;
+      metadata.lead_analysis_json =
+        llmResult.analysis.entries.length > 0 ||
+        llmResult.analysis.actions.length > 0 ||
+        llmResult.analysis.potential_lead !== null
+          ? JSON.stringify(llmResult.analysis)
+          : null;
       console.info("[companion] LLM extraction completed", {
         correlationId: params.correlationId,
         elapsedMs: llmResult.elapsedMs,
         confidence: llmResult.confidence,
-        hasSuggestion: Object.keys(llmResult.suggestion).length > 0,
+        hasSuggestion:
+          Object.keys(llmResult.suggestion).length > 0 ||
+          llmResult.analysis.entries.length > 0 ||
+          llmResult.analysis.actions.length > 0,
+        potentialLead: llmResult.analysis.potential_lead,
       });
     } else {
       metadata.llm_provider = llmResult.provider;
@@ -131,7 +148,8 @@ async function enrichCapturePayload(params: {
     }
   }
 
-  metadata.suggestion_state = Object.keys(suggestion).length > 0 ? "suggested" : "none";
+  metadata.suggestion_state =
+    Object.keys(suggestion).length > 0 || leadAnalysis.potential_lead === true ? "suggested" : "none";
   const summary = buildSummaryFromSuggestion(
     params.captureMode,
     suggestion,

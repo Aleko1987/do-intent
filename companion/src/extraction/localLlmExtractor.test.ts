@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { runLocalLlmExtraction, sanitizeSuggestion } from "./localLlmExtractor.js";
+import { runLocalLlmExtraction, sanitizeLeadAnalysis, sanitizeSuggestion } from "./localLlmExtractor.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -31,13 +31,30 @@ describe("sanitizeSuggestion", () => {
   });
 });
 
+describe("sanitizeLeadAnalysis", () => {
+  it("keeps bounded entries and action lists", () => {
+    const analysis = sanitizeLeadAnalysis({
+      entries: ["Lead A", "Lead B"],
+      actions: ["Requested quote", "Asked for a demo"],
+      potential_lead: true,
+      rationale: "Clear buying intent",
+    });
+    assert.deepEqual(analysis, {
+      entries: ["Lead A", "Lead B"],
+      actions: ["Requested quote", "Asked for a demo"],
+      potential_lead: true,
+      rationale: "Clear buying intent",
+    });
+  });
+});
+
 describe("runLocalLlmExtraction", () => {
   it("returns sanitized suggestion from ollama JSON response", async () => {
     globalThis.fetch = (async () =>
       new Response(
         JSON.stringify({
           response:
-            '{"lead_suggestion":{"company_name":"Acme","contact_name":"Jane","email":"jane@acme.com","phone":"+15551234567","reason":"Requested quote","suggested_event_type":"quote_requested"},"llm_confidence":0.9}',
+            '{"lead_suggestion":{"company_name":"Acme","contact_name":"Jane","email":"jane@acme.com","phone":"+15551234567","reason":"Requested quote","suggested_event_type":"quote_requested"},"lead_analysis":{"entries":["Acme","Jane"],"actions":["Requested quote"],"potential_lead":true,"rationale":"Buyer intent"},"llm_confidence":0.9}',
         }),
         { status: 200 }
       )) as typeof fetch;
@@ -56,6 +73,8 @@ describe("runLocalLlmExtraction", () => {
     assert.equal(result.model, "llama3.1:8b");
     assert.equal(result.confidence, 0.9);
     assert.equal(result.suggestion.company_name, "Acme");
+    assert.equal(result.analysis.potential_lead, true);
+    assert.deepEqual(result.analysis.actions, ["Requested quote"]);
   });
 
   it("returns empty suggestion when below confidence threshold", async () => {
@@ -63,7 +82,7 @@ describe("runLocalLlmExtraction", () => {
       new Response(
         JSON.stringify({
           response:
-            '{"lead_suggestion":{"company_name":"Acme"},"llm_confidence":0.2}',
+            '{"lead_suggestion":{"company_name":"Acme"},"lead_analysis":{"entries":["Acme"],"actions":["Viewed profile"],"potential_lead":false},"llm_confidence":0.2}',
         }),
         { status: 200 }
       )) as typeof fetch;
@@ -79,5 +98,6 @@ describe("runLocalLlmExtraction", () => {
     assert.equal(result.ok, true);
     if (!result.ok) return;
     assert.deepEqual(result.suggestion, {});
+    assert.equal(result.analysis.potential_lead, null);
   });
 });

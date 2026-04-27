@@ -36,6 +36,7 @@ interface CaptureIntakeMetadata {
   llm_error?: string | null;
   llm_ms?: number | null;
   lead_suggestion_json?: string | null;
+  lead_analysis_json?: string | null;
   suggestion_state?: "none" | "suggested" | "approved" | "rejected";
   prefill_confidence_gate?: number | null;
 }
@@ -161,6 +162,40 @@ function parseLeadSuggestionJson(
   }
 }
 
+function parseLeadAnalysisJson(value: unknown): string | null {
+  const rawJson = parseBoundedString(value, MAX_SUGGESTION_JSON_BYTES);
+  if (!rawJson) return null;
+  try {
+    const parsed = JSON.parse(rawJson);
+    if (!isObject(parsed)) {
+      throw new Error("invalid analysis");
+    }
+    const entries = Array.isArray(parsed.entries)
+      ? parsed.entries
+          .map((item) => parseBoundedString(item, 220))
+          .filter((item): item is string => Boolean(item))
+          .slice(0, 20)
+      : [];
+    const actions = Array.isArray(parsed.actions)
+      ? parsed.actions
+          .map((item) => parseBoundedString(item, 220))
+          .filter((item): item is string => Boolean(item))
+          .slice(0, 20)
+      : [];
+    const potentialLead =
+      parsed.potential_lead === true ? true : parsed.potential_lead === false ? false : null;
+    const rationale = parseBoundedString(parsed.rationale, 512);
+    return JSON.stringify({
+      entries,
+      actions,
+      potential_lead: potentialLead,
+      rationale: rationale ?? null,
+    });
+  } catch {
+    throw APIError.invalidArgument("metadata.lead_analysis_json must be valid JSON");
+  }
+}
+
 function parseCaptureMode(value: unknown): "region" | "fullscreen" {
   if (value === "region" || value === "fullscreen") {
     return value;
@@ -268,6 +303,7 @@ export function parseCaptureIntakePayload(payload: unknown): CaptureIntakeReques
       llm_error: parseBoundedString(metadataRaw.llm_error, MAX_ERROR_BYTES),
       llm_ms: parseBoundedNumber(metadataRaw.llm_ms, "metadata.llm_ms", 0, 120000),
       lead_suggestion_json: parseLeadSuggestionJson(metadataRaw.lead_suggestion, metadataRaw.lead_suggestion_json),
+      lead_analysis_json: parseLeadAnalysisJson(metadataRaw.lead_analysis_json),
       suggestion_state:
         metadataRaw.suggestion_state === "suggested"
           ? "suggested"
@@ -335,6 +371,7 @@ function buildCandidateMetadata(body: CaptureIntakeRequest, correlationId: strin
     llm_error: body.metadata.llm_error ?? null,
     llm_ms: body.metadata.llm_ms ?? null,
     lead_suggestion_json: body.metadata.lead_suggestion_json ?? null,
+    lead_analysis_json: body.metadata.lead_analysis_json ?? null,
     suggestion_state: body.metadata.suggestion_state ?? "none",
     prefill_confidence_gate: body.metadata.prefill_confidence_gate ?? null,
     ingestion_correlation_id: correlationId,

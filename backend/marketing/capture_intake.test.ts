@@ -30,6 +30,8 @@ describe("capture_intake payload validation", () => {
           contact_name: "Jane",
           email: "jane@acme.com",
         },
+        lead_analysis_json:
+          '{"entries":["Acme","Jane"],"actions":["Requested quote"],"potential_lead":true,"rationale":"Buyer intent"}',
         suggestion_state: "suggested",
       },
     });
@@ -40,6 +42,10 @@ describe("capture_intake payload validation", () => {
     assert.equal(payload.metadata.ocr_engine, "tesseract.js");
     assert.equal(payload.metadata.suggestion_state, "suggested");
     assert.equal(payload.metadata.lead_suggestion_json, '{"company_name":"Acme","contact_name":"Jane","email":"jane@acme.com"}');
+    assert.equal(
+      payload.metadata.lead_analysis_json,
+      '{"entries":["Acme","Jane"],"actions":["Requested quote"],"potential_lead":true,"rationale":"Buyer intent"}'
+    );
   });
 
   it("rejects invalid payload shape", () => {
@@ -70,6 +76,28 @@ describe("capture_intake payload validation", () => {
             capture_mode: "region",
             captured_at: "2026-04-26T10:00:00.000Z",
             lead_suggestion_json: "{bad-json",
+          },
+        }),
+      APIError
+    );
+  });
+
+  it("rejects malformed lead analysis JSON", () => {
+    assert.throws(
+      () =>
+        parseCaptureIntakePayload({
+          version: "v1",
+          idempotency_key: "key-1",
+          owner_user_id: "user_1",
+          channel: "instagram",
+          signal_type: "post_published",
+          image_data_url: "data:image/png;base64,aGVsbG8=",
+          mime_type: "image/png",
+          metadata: {
+            source: "hotkey_capture",
+            capture_mode: "region",
+            captured_at: "2026-04-26T10:00:00.000Z",
+            lead_analysis_json: "{bad-json",
           },
         }),
       APIError

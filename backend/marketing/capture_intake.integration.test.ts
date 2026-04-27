@@ -122,6 +122,8 @@ describe("POST /marketing/capture-intake", () => {
         company_name: "Acme",
         contact_name: "Jane",
       },
+      lead_analysis_json:
+        '{"entries":["Acme","Jane"],"actions":["Requested quote"],"potential_lead":true,"rationale":"Buyer intent"}',
       suggestion_state: "suggested",
     },
   };

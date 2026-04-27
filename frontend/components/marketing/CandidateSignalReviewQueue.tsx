@@ -50,6 +50,13 @@ interface MergeCandidateSignalLeadResponse {
   candidate_signal: CandidateSignal;
 }
 
+interface PromoteCandidateSignalResponse {
+  event: {
+    id: string;
+    event_type: string;
+  };
+}
+
 interface ListLeadsResponse {
   leads: MarketingLead[];
 }
@@ -85,6 +92,7 @@ interface HotkeyCaptureMetadata {
   llm_extracted_at?: string | null;
   llm_error?: string | null;
   lead_suggestion_json?: string | null;
+  lead_analysis_json?: string | null;
   suggestion_state?: "none" | "suggested" | "approved" | "rejected";
 }
 
@@ -95,6 +103,13 @@ interface LeadSuggestionDraft {
   phone: string;
   reason: string;
   suggested_event_type: string;
+}
+
+interface LeadAnalysisView {
+  entries: string[];
+  actions: string[];
+  potential_lead: boolean | null;
+  rationale: string;
 }
 
 function formatMaybeNumber(value: unknown): string {
@@ -164,6 +179,7 @@ function readHotkeyCaptureMetadata(value: unknown): HotkeyCaptureMetadata | null
     llm_extracted_at: typeof obj.llm_extracted_at === "string" ? obj.llm_extracted_at : null,
     llm_error: typeof obj.llm_error === "string" ? obj.llm_error : null,
     lead_suggestion_json: typeof obj.lead_suggestion_json === "string" ? obj.lead_suggestion_json : null,
+    lead_analysis_json: typeof obj.lead_analysis_json === "string" ? obj.lead_analysis_json : null,
     suggestion_state:
       obj.suggestion_state === "suggested" ||
       obj.suggestion_state === "approved" ||
@@ -171,6 +187,29 @@ function readHotkeyCaptureMetadata(value: unknown): HotkeyCaptureMetadata | null
         ? obj.suggestion_state
         : "none",
   };
+}
+
+function parseLeadAnalysis(metadata: HotkeyCaptureMetadata | null): LeadAnalysisView {
+  if (!metadata?.lead_analysis_json) {
+    return { entries: [], actions: [], potential_lead: null, rationale: "" };
+  }
+  try {
+    const parsed = JSON.parse(metadata.lead_analysis_json) as Record<string, unknown>;
+    const entries = Array.isArray(parsed.entries)
+      ? parsed.entries.filter((item): item is string => typeof item === "string").slice(0, 20)
+      : [];
+    const actions = Array.isArray(parsed.actions)
+      ? parsed.actions.filter((item): item is string => typeof item === "string").slice(0, 20)
+      : [];
+    return {
+      entries,
+      actions,
+      potential_lead: parsed.potential_lead === true ? true : parsed.potential_lead === false ? false : null,
+      rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
+    };
+  } catch {
+    return { entries: [], actions: [], potential_lead: null, rationale: "" };
+  }
 }
 
 function parseLeadSuggestion(metadata: HotkeyCaptureMetadata | null): LeadSuggestionDraft {
@@ -515,6 +554,42 @@ export default function CandidateSignalReviewQueue() {
     }
   }
 
+  async function handleAddIntent(row: CandidateSignalQueueItem) {
+    if (!row.lead_id) {
+      setError("Approve or merge to a lead before adding intent to the marketing pipeline.");
+      return;
+    }
+
+    setBusyId(row.id);
+    setError(null);
+    try {
+      const metadata = readHotkeyCaptureMetadata(row.metadata);
+      const suggestion = parseLeadSuggestion(metadata);
+      const response = await apiFetch<PromoteCandidateSignalResponse>(
+        `/marketing/candidate-signals/${row.id}/promote`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            lead_id: row.lead_id,
+            event_type: suggestion.suggested_event_type || row.suggested_event_type || undefined,
+            reason: "Reviewer added intent to marketing pipeline",
+          }),
+        }
+      );
+      console.info("[review-queue] promoted candidate signal", {
+        candidateSignalId: row.id,
+        eventId: response.event.id,
+        eventType: response.event.event_type,
+      });
+      await loadQueue();
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Failed to add intent to pipeline");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   function onFileChange(file: File | null) {
     if (!file) {
       setSelectedFileData(null);
@@ -715,6 +790,7 @@ export default function CandidateSignalReviewQueue() {
               const captureScope = captureMeta?.capture_scope ?? captureMeta?.capture_mode;
               const suggestionState = captureMeta?.suggestion_state ?? "none";
               const hasSuggestion = Boolean(captureMeta?.lead_suggestion_json);
+              const leadAnalysis = parseLeadAnalysis(captureMeta);
               return (
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="space-y-2">
@@ -730,6 +806,8 @@ export default function CandidateSignalReviewQueue() {
                   <Badge variant={suggestionState === "approved" ? "default" : suggestionState === "rejected" ? "outline" : "secondary"}>
                     Suggestion {suggestionState}
                   </Badge>
+                  {leadAnalysis.potential_lead === true && <Badge variant="default">Potential lead</Badge>}
+                  {leadAnalysis.potential_lead === false && <Badge variant="outline">Not a lead</Badge>}
                 </div>
                 <p className="text-sm text-muted-foreground">{row.summary ?? row.raw_text ?? "No summary provided"}</p>
                 <div className="text-xs text-muted-foreground grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
@@ -771,6 +849,21 @@ export default function CandidateSignalReviewQueue() {
                     {captureMeta?.llm_error && <p>LLM error: {captureMeta.llm_error}</p>}
                   </div>
                 )}
+                {(leadAnalysis.entries.length > 0 || leadAnalysis.actions.length > 0 || leadAnalysis.rationale) && (
+                  <div className="rounded-md border bg-muted/20 p-2 text-xs text-muted-foreground space-y-2">
+                    {leadAnalysis.entries.length > 0 && (
+                      <p>
+                        Entries: {leadAnalysis.entries.join(" | ")}
+                      </p>
+                    )}
+                    {leadAnalysis.actions.length > 0 && (
+                      <p>
+                        Actions: {leadAnalysis.actions.join(" | ")}
+                      </p>
+                    )}
+                    {leadAnalysis.rationale && <p>Rationale: {leadAnalysis.rationale}</p>}
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-wrap gap-2 md:w-[360px] md:justify-end">
@@ -787,6 +880,14 @@ export default function CandidateSignalReviewQueue() {
                   disabled={!hasSuggestion && suggestionState === "none"}
                 >
                   Review Suggestion
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void handleAddIntent(row)}
+                  disabled={busyId === row.id || !row.lead_id}
+                >
+                  Add Intent to Pipeline
                 </Button>
               </div>
             </div>

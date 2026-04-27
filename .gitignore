@@ -17,6 +17,7 @@ bun.lock
 *.tsbuildinfo
 frontend/dist/
 companion/dist/
+eng.traineddata
 
 # encore generated
 backend/encore.gen/

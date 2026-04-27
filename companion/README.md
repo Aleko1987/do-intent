@@ -36,6 +36,8 @@ This desktop companion captures cross-application screenshots with global hotkey
 - `DO_INTENT_LLM_TIMEOUT_MS` (default `12000`)
 - `DO_INTENT_MIN_SUGGESTION_CONFIDENCE` (`0..1`, default `0.35`)
 
+To enable local LLM extraction, set `DO_INTENT_LLM_ENABLED=true` and ensure Ollama is running at `DO_INTENT_LLM_ENDPOINT`.
+
 ## Run
 
 ```bash

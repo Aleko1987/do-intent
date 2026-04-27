@@ -10,9 +10,17 @@ export interface LeadSuggestion {
   suggested_event_type?: string;
 }
 
+export interface LeadAnalysis {
+  entries: string[];
+  actions: string[];
+  potential_lead: boolean | null;
+  rationale?: string;
+}
+
 export interface LlmExtractionSuccess {
   ok: true;
   suggestion: LeadSuggestion;
+  analysis: LeadAnalysis;
   confidence: number | null;
   provider: "ollama";
   model: string;
@@ -68,6 +76,24 @@ function sanitizeSuggestedEventType(value: unknown): string | undefined {
     .slice(0, 48);
 }
 
+function sanitizeStringList(value: unknown, maxItems: number, maxChars: number): string[] {
+  if (!Array.isArray(value)) return [];
+  const sanitized: string[] = [];
+  for (const item of value) {
+    const cleaned = sanitizeText(item, maxChars);
+    if (cleaned) sanitized.push(cleaned);
+    if (sanitized.length >= maxItems) break;
+  }
+  return sanitized;
+}
+
+function sanitizePotentialLead(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return null;
+}
+
 export function sanitizeSuggestion(value: unknown): LeadSuggestion {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -80,6 +106,19 @@ export function sanitizeSuggestion(value: unknown): LeadSuggestion {
     phone: sanitizePhone(input.phone),
     reason: sanitizeText(input.reason, MAX_FREEFORM_CHARS),
     suggested_event_type: sanitizeSuggestedEventType(input.suggested_event_type),
+  };
+}
+
+export function sanitizeLeadAnalysis(value: unknown): LeadAnalysis {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { entries: [], actions: [], potential_lead: null };
+  }
+  const input = value as Record<string, unknown>;
+  return {
+    entries: sanitizeStringList(input.entries, 20, 220),
+    actions: sanitizeStringList(input.actions, 20, 220),
+    potential_lead: sanitizePotentialLead(input.potential_lead),
+    rationale: sanitizeText(input.rationale, MAX_FREEFORM_CHARS),
   };
 }
 
@@ -114,6 +153,12 @@ function buildPrompt(ocrText: string): string {
     '    "phone": string|null,',
     '    "reason": string|null,',
     '    "suggested_event_type": string|null',
+    "  },",
+    '  "lead_analysis": {',
+    '    "entries": string[],',
+    '    "actions": string[],',
+    '    "potential_lead": boolean|null,',
+    '    "rationale": string|null',
     "  },",
     '  "llm_confidence": number|null',
     "}",
@@ -164,11 +209,16 @@ export async function runLocalLlmExtraction(params: {
     }
     const parsed = JSON.parse(jsonSlice) as Record<string, unknown>;
     const suggestion = sanitizeSuggestion(parsed.lead_suggestion);
+    const analysis = sanitizeLeadAnalysis(parsed.lead_analysis);
     const confidence = sanitizeConfidence(parsed.llm_confidence);
-    if ((confidence ?? 0) < params.minConfidence || countSuggestionFields(suggestion) === 0) {
+    if (
+      (confidence ?? 0) < params.minConfidence ||
+      (countSuggestionFields(suggestion) === 0 && analysis.entries.length === 0 && analysis.actions.length === 0)
+    ) {
       return {
         ok: true,
         suggestion: {},
+        analysis: { ...analysis, potential_lead: null },
         confidence,
         provider: "ollama",
         model: params.model,
@@ -179,6 +229,7 @@ export async function runLocalLlmExtraction(params: {
     return {
       ok: true,
       suggestion,
+      analysis,
       confidence,
       provider: "ollama",
       model: params.model,
