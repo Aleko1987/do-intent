@@ -16,6 +16,7 @@ payload.json
 bun.lock
 *.tsbuildinfo
 frontend/dist/
+companion/dist/
 
 # encore generated
 backend/encore.gen/
