@@ -13,10 +13,7 @@ import type {
   ResolverDecision,
   ResolverMatchMethod,
 } from "./entity_resolution_contracts";
-import {
-  parseOwnerContactLeadProbabilityScore,
-  type OwnerContactImportError,
-} from "./entity_resolution_schema";
+import type { OwnerContactImportError } from "./entity_resolution_schema";
 
 interface ParsedContactImportRecord {
   platform: OwnerContactPlatform;
@@ -28,7 +25,6 @@ interface ParsedContactImportRecord {
   phones: string[];
   source_updated_at: string | null;
   confidence_hint: number | null;
-  lead_probability_score: number;
 }
 
 interface ImportOwnerContactsParams {
@@ -171,29 +167,6 @@ function parsePhoneList(value: string): string[] {
   return Array.from(new Set(phones)).slice(0, 12);
 }
 
-function inferLeadProbabilityScore(params: {
-  displayName: string;
-  handles: Array<{ platform: string | null; value: string; normalized: string }>;
-  emails: string[];
-}): number {
-  const loweredName = params.displayName.toLowerCase();
-  const loweredHandles = params.handles.map((handle) => handle.normalized.toLowerCase());
-  const businessKeyword =
-    /(enterprise|agency|store|shop|official|toys|services|ltd|inc|co\b|marketing|media)/.test(loweredName) ||
-    loweredHandles.some((handle) =>
-      /(enterprise|agency|store|shop|official|toys|services|marketing|media)/.test(handle)
-    );
-  const completeName = /\s/.test(params.displayName.trim()) && !businessKeyword;
-  const hasEmail = params.emails.length > 0;
-
-  if (businessKeyword && hasEmail) return 88;
-  if (businessKeyword) return 78;
-  if (completeName && hasEmail) return 74;
-  if (completeName) return 62;
-  if (hasEmail) return 58;
-  return 40;
-}
-
 function parseDateOrNull(value: string): string | null {
   const trimmed = normalizeWhitespace(value);
   if (!trimmed) return null;
@@ -238,10 +211,6 @@ function parseRecordsFromCsv(
   const idxPhones = index("phones");
   const idxSourceUpdatedAt = index("source_updated_at");
   const idxConfidenceHint = index("confidence_hint");
-  const idxLeadProbabilityScore =
-    index("lead_probability_score") >= 0
-      ? index("lead_probability_score")
-      : index("propensity_to_convert_to_lead");
 
   const rows: ParsedContactImportRecord[] = [];
   const errors: OwnerContactImportError[] = [];
@@ -254,8 +223,6 @@ function parseRecordsFromCsv(
       continue;
     }
 
-    const handles = parseHandleList(values[idxHandles] ?? "", defaultPlatform).slice(0, 12);
-    const emails = parseEmailList(values[idxEmails] ?? "");
     const parsed: ParsedContactImportRecord = {
       platform:
         idxPlatform >= 0 && normalizeContactString(values[idxPlatform] ?? "")
@@ -264,19 +231,11 @@ function parseRecordsFromCsv(
       external_ref: normalizeWhitespace(values[idxExternalRef] ?? "") || null,
       display_name: displayName.slice(0, 180),
       aliases: parseDelimitedList(values[idxAliases] ?? "").slice(0, 12),
-      handles,
-      emails,
+      handles: parseHandleList(values[idxHandles] ?? "", defaultPlatform).slice(0, 12),
+      emails: parseEmailList(values[idxEmails] ?? ""),
       phones: parsePhoneList(values[idxPhones] ?? ""),
       source_updated_at: parseDateOrNull(values[idxSourceUpdatedAt] ?? ""),
       confidence_hint: parseConfidenceOrNull(values[idxConfidenceHint] ?? ""),
-      lead_probability_score:
-        idxLeadProbabilityScore >= 0
-          ? parseOwnerContactLeadProbabilityScore(values[idxLeadProbabilityScore] ?? "")
-          : inferLeadProbabilityScore({
-              displayName: displayName.slice(0, 180),
-              handles,
-              emails,
-            }),
     };
     rows.push(parsed);
   }
@@ -287,32 +246,22 @@ function parseRecordsFromText(
   payload: string,
   defaultPlatform: OwnerContactPlatform
 ): { rows: ParsedContactImportRecord[]; errors: OwnerContactImportError[] } {
-  const normalizedPayload = payload.replace(/\s+/g, " ").trim();
-  const pairPattern = /([A-Za-z0-9._-]{2,})\s*·\s*([^·]+?)(?=\s+[A-Za-z0-9._-]{2,}\s*·|$)/g;
-  const pairMatches = Array.from(normalizedPayload.matchAll(pairPattern));
-  const lines =
-    pairMatches.length > 0
-      ? pairMatches.map((match) => `${match[1]} · ${match[2]}`)
-      : payload
-          .split(/\r?\n/g)
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0);
+  const lines = payload
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 
   const rows: ParsedContactImportRecord[] = [];
   const errors: OwnerContactImportError[] = [];
 
   lines.forEach((line, index) => {
     const row = index + 1;
-    const pairMatch = line.match(/^([A-Za-z0-9._-]{2,})\s*·\s*(.+)$/);
-    const explicitHandle = pairMatch?.[1] ?? null;
-    const explicitName = pairMatch?.[2] ?? line;
-
-    const emailMatch = explicitName.match(/[^\s,;]+@[^\s,;]+\.[^\s,;]+/);
-    const handleMatches = Array.from(explicitName.matchAll(/@([A-Za-z0-9._-]{2,40})/g));
+    const emailMatch = line.match(/[^\s,;]+@[^\s,;]+\.[^\s,;]+/);
+    const handleMatches = Array.from(line.matchAll(/@([A-Za-z0-9._-]{2,40})/g));
     const phoneMatch = line.match(/\+?\d[\d()\-\s]{5,20}\d/g);
 
     const cleanedName = normalizeWhitespace(
-      explicitName
+      line
         .replace(emailMatch?.[0] ?? "", "")
         .replace(phoneMatch?.[0] ?? "", "")
         .replace(/@([A-Za-z0-9._-]{2,40})/g, "")
@@ -324,25 +273,13 @@ function parseRecordsFromText(
       return;
     }
 
-    const handles = [
-      ...(explicitHandle
-        ? [
-            {
-              platform: defaultPlatform,
-              value: explicitHandle,
-              normalized: normalizeHandle(explicitHandle).slice(0, 96),
-            },
-          ]
-        : []),
-      ...handleMatches
+    const handles = handleMatches
       .map((match) => ({
         platform: defaultPlatform,
         value: `@${match[1]}`,
         normalized: normalizeHandle(match[1]).slice(0, 96),
       }))
-      .filter((handle) => handle.normalized.length > 0),
-    ];
-    const emails = emailMatch ? parseEmailList(emailMatch[0]) : [];
+      .filter((handle) => handle.normalized.length > 0);
 
     rows.push({
       platform: defaultPlatform,
@@ -350,15 +287,10 @@ function parseRecordsFromText(
       display_name: cleanedName.slice(0, 180),
       aliases: [],
       handles,
-      emails,
+      emails: emailMatch ? parseEmailList(emailMatch[0]) : [],
       phones: phoneMatch ? parsePhoneList(phoneMatch[0]) : [],
       source_updated_at: null,
       confidence_hint: null,
-      lead_probability_score: inferLeadProbabilityScore({
-        displayName: cleanedName.slice(0, 180),
-        handles,
-        emails,
-      }),
     });
   });
 
@@ -412,7 +344,6 @@ function normalizeContactRow(row: OwnerContactDirectoryRow): OwnerContactDirecto
     emails: parseJsonStringArray(row.emails),
     phones: parseJsonStringArray(row.phones),
     confidence_hint: row.confidence_hint,
-    lead_probability_score: row.lead_probability_score,
     is_active: row.is_active,
     source_updated_at: row.source_updated_at,
     updated_at: row.updated_at,
@@ -552,7 +483,6 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
           emails = ${JSON.stringify(row.emails)},
           phones = ${JSON.stringify(row.phones)},
           confidence_hint = ${row.confidence_hint},
-          lead_probability_score = ${row.lead_probability_score},
           is_active = true,
           source_updated_at = ${row.source_updated_at},
           import_batch_id = ${batchId},
@@ -578,7 +508,6 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
           emails,
           phones,
           confidence_hint,
-        lead_probability_score,
           is_active,
           source_updated_at,
           import_batch_id,
@@ -596,7 +525,6 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
           ${JSON.stringify(row.emails)},
           ${JSON.stringify(row.phones)},
           ${row.confidence_hint},
-        ${row.lead_probability_score},
           true,
           ${row.source_updated_at},
           ${batchId},

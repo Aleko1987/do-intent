@@ -23,27 +23,11 @@ interface OwnerContactDirectoryItemView {
   emails: string[];
   handles: Array<{ platform: string | null; value: string; normalized: string }>;
   phones: string[];
-  lead_probability_score: number;
   updated_at: string;
 }
 
 interface ListOwnerContactDirectoryResponse {
   items: OwnerContactDirectoryItemView[];
-}
-
-interface LeadScoreUpdateView {
-  id: string;
-  surname: string | null;
-  name: string | null;
-  handle: string | null;
-  platform: string;
-  score_delta: number;
-  new_score: number;
-  created_at: string;
-}
-
-interface ListLeadScoreUpdatesResponse {
-  items: LeadScoreUpdateView[];
 }
 
 const PLATFORM_OPTIONS: Array<{ id: ContactPlatform | "all"; label: string }> = [
@@ -65,7 +49,6 @@ export default function OwnerContactDirectory() {
   const [search, setSearch] = useState("");
   const [platform, setPlatform] = useState<ContactPlatform | "all">("all");
   const [includeInactive, setIncludeInactive] = useState(false);
-  const [updates, setUpdates] = useState<LeadScoreUpdateView[]>([]);
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -99,10 +82,6 @@ export default function OwnerContactDirectory() {
         `/marketing/owner-contacts?${queryString}`
       );
       setRows(response.items);
-      const updatesResponse = await apiFetch<ListLeadScoreUpdatesResponse>(
-        "/marketing/lead-score-updates?limit=1000"
-      );
-      setUpdates(updatesResponse.items);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : "Failed to load contacts");
@@ -114,17 +93,6 @@ export default function OwnerContactDirectory() {
   useEffect(() => {
     void loadDirectory();
   }, [queryString]);
-
-  function splitName(displayName: string): { name: string; surname: string } {
-    const tokens = displayName.trim().split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) {
-      return { name: "—", surname: "—" };
-    }
-    if (tokens.length === 1) {
-      return { name: tokens[0], surname: "—" };
-    }
-    return { name: tokens[0], surname: tokens.slice(1).join(" ") };
-  }
 
   return (
     <div className="space-y-4">
@@ -172,91 +140,53 @@ export default function OwnerContactDirectory() {
       ) : error ? (
         <Card className="p-4 text-sm text-red-600">Failed to load contacts: {error}</Card>
       ) : (
-        <div className="space-y-4">
-          <Card className="p-4">
-            <p className="font-medium mb-2">
-              Base DB - This DB stores base information of all contacts per platform
-            </p>
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-muted/40">
-                  <tr className="text-left">
-                    <th className="px-3 py-2 font-medium">Surname</th>
-                    <th className="px-3 py-2 font-medium">Name</th>
-                    <th className="px-3 py-2 font-medium">Handle</th>
-                    <th className="px-3 py-2 font-medium">Platform</th>
-                    <th className="px-3 py-2 font-medium">Propensity to convert to lead</th>
-                    <th className="px-3 py-2 font-medium">Timestamp of last update</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => {
-                    const split = splitName(row.display_name);
-                    return (
-                      <tr key={row.id} className="border-t">
-                        <td className="px-3 py-2">{split.surname}</td>
-                        <td className="px-3 py-2">{split.name}</td>
-                        <td className="px-3 py-2">{row.handles[0]?.value ?? "—"}</td>
-                        <td className="px-3 py-2">{row.platform}</td>
-                        <td className="px-3 py-2">{row.lead_probability_score}</td>
-                        <td className="px-3 py-2">{new Date(row.updated_at).toLocaleString()}</td>
-                      </tr>
-                    );
-                  })}
-                  {rows.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
-                        No contacts found for current filters.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-
-          <Card className="p-4">
-            <p className="font-medium mb-2">
-              Updates DB - dynamic log of marketing score changes
-            </p>
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-muted/40">
-                  <tr className="text-left">
-                    <th className="px-3 py-2 font-medium">Surname</th>
-                    <th className="px-3 py-2 font-medium">Name</th>
-                    <th className="px-3 py-2 font-medium">Handle</th>
-                    <th className="px-3 py-2 font-medium">Platform</th>
-                    <th className="px-3 py-2 font-medium">Increased/Decreased marketing score</th>
-                    <th className="px-3 py-2 font-medium">Timestamp</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {updates.map((item) => (
-                    <tr key={item.id} className="border-t">
-                      <td className="px-3 py-2">{item.surname ?? "—"}</td>
-                      <td className="px-3 py-2">{item.name ?? "—"}</td>
-                      <td className="px-3 py-2">{item.handle ?? "—"}</td>
-                      <td className="px-3 py-2">{item.platform}</td>
-                      <td className="px-3 py-2">
-                        {item.score_delta >= 0 ? "+" : ""}
-                        {item.score_delta.toFixed(2)}
-                      </td>
-                      <td className="px-3 py-2">{new Date(item.created_at).toLocaleString()}</td>
-                    </tr>
-                  ))}
-                  {updates.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
-                        No score updates recorded yet.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </div>
+        <Card className="p-0 overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-muted/40">
+              <tr className="text-left">
+                <th className="px-3 py-2 font-medium">Display</th>
+                <th className="px-3 py-2 font-medium">Platform</th>
+                <th className="px-3 py-2 font-medium">Source</th>
+                <th className="px-3 py-2 font-medium">Handle(s)</th>
+                <th className="px-3 py-2 font-medium">Email(s)</th>
+                <th className="px-3 py-2 font-medium">Phone(s)</th>
+                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-2 font-medium">Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.id} className="border-t">
+                  <td className="px-3 py-2">
+                    <div className="font-medium">{row.display_name}</div>
+                    <div className="text-xs text-muted-foreground">{row.id}</div>
+                  </td>
+                  <td className="px-3 py-2">{row.platform}</td>
+                  <td className="px-3 py-2">{row.source}</td>
+                  <td className="px-3 py-2">
+                    {row.handles.length > 0
+                      ? row.handles
+                          .slice(0, 3)
+                          .map((handle) => handle.value)
+                          .join(", ")
+                      : "—"}
+                  </td>
+                  <td className="px-3 py-2">{row.emails.slice(0, 2).join(", ") || "—"}</td>
+                  <td className="px-3 py-2">{row.phones.slice(0, 2).join(", ") || "—"}</td>
+                  <td className="px-3 py-2">{row.is_active ? "active" : "inactive"}</td>
+                  <td className="px-3 py-2">{new Date(row.updated_at).toLocaleString()}</td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">
+                    No contacts found for current filters.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </Card>
       )}
     </div>
   );

@@ -80,22 +80,6 @@ export async function calculateLeadScore(leadId: string): Promise<ScoreResult> {
 }
 
 export async function updateLeadScoring(leadId: string): Promise<void> {
-  const before = await db.queryRow<{
-    id: string;
-    owner_user_id: string;
-    contact_name: string | null;
-    email: string | null;
-    source_type: string | null;
-    intent_score: number;
-  }>`
-    SELECT id, owner_user_id, contact_name, email, source_type, intent_score
-    FROM marketing_leads
-    WHERE id = ${leadId}
-  `;
-  if (!before) {
-    return;
-  }
-
   const result = await calculateLeadScore(leadId);
 
   await db.exec`
@@ -106,50 +90,5 @@ export async function updateLeadScoring(leadId: string): Promise<void> {
       last_signal_at = now(),
       updated_at = now()
     WHERE id = ${leadId}
-  `;
-
-  const scoreDelta = result.score - Number(before.intent_score ?? 0);
-  if (Math.abs(scoreDelta) < 0.0001) {
-    return;
-  }
-
-  const contactName = (before.contact_name ?? "").trim();
-  const tokens = contactName.split(/\s+/).filter(Boolean);
-  const firstName = tokens.length > 0 ? tokens[0] : null;
-  const surname = tokens.length > 1 ? tokens.slice(1).join(" ") : null;
-  const handle = before.email?.includes("@") ? before.email.split("@")[0] : null;
-  const platform =
-    before.source_type === "website"
-      ? "website"
-      : before.source_type === "manual"
-        ? "manual_upload"
-        : before.source_type === "other"
-          ? "unknown"
-          : before.source_type ?? "unknown";
-
-  await db.exec`
-    INSERT INTO marketing_lead_score_updates (
-      owner_user_id,
-      lead_id,
-      surname,
-      name,
-      handle,
-      platform,
-      score_delta,
-      new_score,
-      metadata,
-      created_at
-    ) VALUES (
-      ${before.owner_user_id},
-      ${before.id},
-      ${surname},
-      ${firstName},
-      ${handle},
-      ${platform},
-      ${scoreDelta},
-      ${result.score},
-      ${JSON.stringify({ suggested_stage: result.suggested_stage })},
-      now()
-    )
   `;
 }
