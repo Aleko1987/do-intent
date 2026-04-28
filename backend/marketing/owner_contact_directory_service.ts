@@ -183,6 +183,63 @@ function parseConfidenceOrNull(value: string): number | null {
   return Math.round(n * 1000) / 1000;
 }
 
+function isHandleToken(token: string): boolean {
+  return /^[A-Za-z0-9._-]{2,40}$/.test(token);
+}
+
+function startsWithUppercase(value: string): boolean {
+  return /^[A-Z]/.test(value);
+}
+
+function isLikelyHandle(value: string): boolean {
+  return /[._\d]/.test(value) || value === value.toLowerCase();
+}
+
+function shouldStartInlinePair(tokens: string[], index: number): boolean {
+  const token = tokens[index];
+  if (!token || token === "·" || !isHandleToken(token)) return false;
+  const next = tokens[index + 1] ?? null;
+  if (next === "·") return true;
+  if (!next || !startsWithUppercase(next)) return false;
+  return isLikelyHandle(token);
+}
+
+function parseInlineHandleNamePairs(payload: string): string[] {
+  const normalized = normalizeWhitespace(payload.replace(/\s*·\s*/g, " · "));
+  if (!normalized) return [];
+
+  const tokens = normalized.split(" ").filter(Boolean);
+  const lines: string[] = [];
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    if (!shouldStartInlinePair(tokens, i)) continue;
+
+    const handle = tokens[i];
+    i += tokens[i + 1] === "·" ? 1 : 0;
+
+    const nameTokens: string[] = [];
+    let j = i + 1;
+    while (j < tokens.length) {
+      if (shouldStartInlinePair(tokens, j)) {
+        break;
+      }
+      if (tokens[j] !== "·") {
+        nameTokens.push(tokens[j]);
+      }
+      j += 1;
+    }
+
+    const displayName = normalizeWhitespace(nameTokens.join(" "));
+    if (displayName) {
+      lines.push(`${handle} · ${displayName}`);
+    }
+
+    i = j - 1;
+  }
+
+  return lines;
+}
+
 function parseRecordsFromCsv(
   payload: string,
   defaultPlatform: OwnerContactPlatform
@@ -249,7 +306,7 @@ function parseRecordsFromText(
   const normalizedPayload = payload.replace(/\s+/g, " ").trim();
   const pairStartRegex = /([A-Za-z0-9._-]{2,})\s*·\s*/g;
   const pairStarts = Array.from(normalizedPayload.matchAll(pairStartRegex));
-  const lines =
+  const pairLines =
     pairStarts.length > 0
       ? pairStarts.map((match, index) => {
           const handle = match[1];
@@ -258,10 +315,17 @@ function parseRecordsFromText(
           const nameSegment = normalizedPayload.slice(contentStart, nextStart).trim();
           return `${handle} · ${nameSegment}`;
         })
-      : payload
-          .split(/\r?\n/g)
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0);
+      : [];
+  const heuristicLines = parseInlineHandleNamePairs(payload);
+  const lines =
+    pairLines.length >= 2
+      ? pairLines
+      : heuristicLines.length >= 2
+        ? heuristicLines
+        : payload
+            .split(/\r?\n/g)
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0);
 
   const rows: ParsedContactImportRecord[] = [];
   const errors: OwnerContactImportError[] = [];
