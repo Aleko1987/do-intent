@@ -70,6 +70,38 @@ Notes:
 }
 ```
 
+## D) Execution status behavior for scoring
+
+- `pending` / `approved` / `executing` / `rejected`: never score.
+- `failed` / `blocked` / `unsupported`: never score.
+- `executed`: score-eligible only when provider outcome is `succeeded` and DO-Intent
+  writes an idempotent scoring ledger entry.
+
+DO-Intent scoring write conditions:
+- execution attempt persisted with `status = succeeded`
+- scoring feature flag enabled (`SOCIAL_EXECUTION_SCORING_ENABLED != false`)
+- `lead_id` present (no auto-create lead from inbox)
+- mapping exists for `(platform, action_type, executed)`
+- idempotency not previously consumed for the same task+idempotency key
+
+Deterministic idempotency keys:
+- social activity dedupe: `(owner_user_id, inbox_task_id, execution_idempotency_key)`
+- intent bridge dedupe: `event_source = social_inbox_execution` +
+  `dedupe_key = social_exec:{owner_user_id}:{task_id}:{execution_idempotency_key}`
+
+## E) Inbox task response extensions (DO-Intent -> frontend)
+
+`GET /inbox/tasks` returns the existing task shape plus optional explainability fields:
+
+```json
+{
+  "score_impact_status": "none|pending_execution|applied|skipped",
+  "score_delta_points": 0,
+  "score_impact_reason": "string|null",
+  "latest_execution_attempt_id": "uuid|null"
+}
+```
+
 ## DO-Intent Endpoints
 
 - `POST /social-events/ingest` (service-to-service, bearer required)

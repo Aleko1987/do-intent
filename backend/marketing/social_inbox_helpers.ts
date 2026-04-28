@@ -3,6 +3,8 @@ import type {
   InboxTaskRow,
   NormalizedSocialEventV1,
   SocialActionType,
+  SocialExecutionScoringRule,
+  SocialExecutionStatus,
   SocialPlatform,
 } from "./social_inbox_types";
 
@@ -126,4 +128,123 @@ export function isTaskExecutable(task: InboxTaskRow): boolean {
 
 export function isHumanApprovalRequired(actionType: SocialActionType): boolean {
   return actionType === "like" || actionType === "comment" || actionType === "dm";
+}
+
+const SOCIAL_EXECUTION_SCORING_RULES: readonly SocialExecutionScoringRule[] = [
+  {
+    platform: "facebook",
+    action_type: "like",
+    execution_status: "executed",
+    score_rule_key: "social.facebook.like.executed",
+    event_type: "social_facebook_like_executed",
+    delta_points: 1,
+    enabled: true,
+  },
+  {
+    platform: "facebook",
+    action_type: "comment",
+    execution_status: "executed",
+    score_rule_key: "social.facebook.comment.executed",
+    event_type: "social_facebook_comment_executed",
+    delta_points: 3,
+    enabled: true,
+  },
+  {
+    platform: "facebook",
+    action_type: "reply",
+    execution_status: "executed",
+    score_rule_key: "social.facebook.reply.executed",
+    event_type: "social_facebook_reply_executed",
+    delta_points: 4,
+    enabled: true,
+  },
+  {
+    platform: "facebook",
+    action_type: "dm",
+    execution_status: "executed",
+    score_rule_key: "social.facebook.dm.executed",
+    event_type: "social_facebook_dm_executed",
+    delta_points: 6,
+    enabled: true,
+  },
+  {
+    platform: "instagram",
+    action_type: "like",
+    execution_status: "executed",
+    score_rule_key: "social.instagram.like.executed",
+    event_type: "social_instagram_like_executed",
+    delta_points: 1,
+    enabled: true,
+  },
+  {
+    platform: "instagram",
+    action_type: "comment",
+    execution_status: "executed",
+    score_rule_key: "social.instagram.comment.executed",
+    event_type: "social_instagram_comment_executed",
+    delta_points: 3,
+    enabled: true,
+  },
+  {
+    platform: "instagram",
+    action_type: "reply",
+    execution_status: "executed",
+    score_rule_key: "social.instagram.reply.executed",
+    event_type: "social_instagram_reply_executed",
+    delta_points: 4,
+    enabled: true,
+  },
+  {
+    platform: "instagram",
+    action_type: "dm",
+    execution_status: "executed",
+    score_rule_key: "social.instagram.dm.executed",
+    event_type: "social_instagram_dm_executed",
+    delta_points: 6,
+    enabled: true,
+  },
+  {
+    platform: "whatsapp",
+    action_type: "reply",
+    execution_status: "executed",
+    score_rule_key: "social.whatsapp.reply.executed",
+    event_type: "social_whatsapp_reply_executed",
+    delta_points: 5,
+    enabled: true,
+  },
+  {
+    platform: "whatsapp",
+    action_type: "dm",
+    execution_status: "executed",
+    score_rule_key: "social.whatsapp.dm.executed",
+    event_type: "social_whatsapp_dm_executed",
+    delta_points: 7,
+    enabled: true,
+  },
+];
+
+export function isScoreEligibleExecution(params: {
+  taskStatus: InboxTaskRow["status"];
+  executionStatus: SocialExecutionStatus;
+}): boolean {
+  return params.taskStatus === "executed" && params.executionStatus === "succeeded";
+}
+
+export function resolveSocialExecutionScoringRule(params: {
+  platform: SocialPlatform;
+  actionType: SocialActionType;
+  taskStatus: InboxTaskRow["status"];
+  executionStatus: SocialExecutionStatus;
+}): SocialExecutionScoringRule | null {
+  if (!isScoreEligibleExecution({ taskStatus: params.taskStatus, executionStatus: params.executionStatus })) {
+    return null;
+  }
+  return (
+    SOCIAL_EXECUTION_SCORING_RULES.find(
+      (rule) =>
+        rule.enabled &&
+        rule.platform === params.platform &&
+        rule.action_type === params.actionType
+    ) ?? null
+  );
 }

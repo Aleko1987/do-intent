@@ -4,12 +4,17 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { db } from "../db/db";
 import { applyCorrelationId } from "../internal/correlation";
 import type { JsonObject } from "../internal/json_types";
+import { autoScoreEvent } from "../intent_scorer/auto_score";
+import { checkAndPushToSales } from "./auto_push";
+import { updateLeadScoring } from "./scoring";
 import {
+  isScoreEligibleExecution,
   isHumanApprovalRequired,
   isTaskExecutable,
   mapEventTypeToTaskType,
   parseJsonObject,
   parseNormalizedSocialEvent,
+  resolveSocialExecutionScoringRule,
   resolveExecutionUrl,
   resolveDefaultCap,
 } from "./social_inbox_helpers";
@@ -67,6 +72,22 @@ interface ExecuteInboxTaskRequest {
 interface ExecuteInboxTaskResponse {
   task: InboxTaskRow;
   execution: ExecuteTaskResponseV1;
+  score_effect?: ScoreEffect;
+}
+
+interface ScoreEffect {
+  status: "applied" | "skipped";
+  reason:
+    | "execution_succeeded"
+    | "execution_not_succeeded"
+    | "feature_disabled"
+    | "no_lead_linked"
+    | "duplicate_execution"
+    | "missing_scoring_rule"
+    | "rule_not_score_eligible"
+    | "scoring_pipeline_error";
+  ledger_id?: string;
+  delta_points?: number;
 }
 
 interface ListWatchlistsResponse {
@@ -101,6 +122,27 @@ interface DeleteWatchlistRequest {
   id: string;
 }
 
+interface ExecutionAttemptRow {
+  id: string;
+}
+
+interface SocialActivityEventRow {
+  id: string;
+  lead_id: string | null;
+}
+
+interface LeadScoreLedgerRow {
+  id: string;
+}
+
+interface InboxTaskListQueryRow extends InboxTaskRow {
+  social_activity_event_id: string | null;
+  lead_score_ledger_id: string | null;
+  lead_score_ledger_delta_points: number | null;
+  lead_score_ledger_reason_code: string | null;
+  latest_execution_attempt_id: string | null;
+}
+
 function parseMetadataString(metadata: string | undefined): JsonObject {
   if (!metadata) return {};
   try {
@@ -118,6 +160,22 @@ function resolveExecutionIdempotencyKey(task: InboxTaskRow): string {
     return externalKey.trim();
   }
   return `execute:${task.id}`;
+}
+
+function isSocialExecutionScoringEnabled(): boolean {
+  const raw = process.env.SOCIAL_EXECUTION_SCORING_ENABLED;
+  if (typeof raw !== "string") {
+    return true;
+  }
+  return raw.trim().toLowerCase() !== "false";
+}
+
+async function readLeadIntentScore(leadId: string): Promise<number | null> {
+  const row = await db.rawQueryRow<{ intent_score: number | null }>(
+    `SELECT intent_score FROM marketing_leads WHERE id = $1`,
+    leadId
+  );
+  return row?.intent_score ?? null;
 }
 
 function requireUserId(): string {
@@ -295,27 +353,105 @@ export const listInboxTasks = api<ListInboxTasksRequest, ListInboxTasksResponse>
   async (req) => {
     const ownerUserId = requireUserId();
     const params: unknown[] = [ownerUserId];
-    const where: string[] = ["owner_user_id = $1"];
+    const where: string[] = ["it.owner_user_id = $1"];
 
     if (req.status) {
       params.push(req.status.trim().toLowerCase());
-      where.push(`status = $${params.length}`);
+      where.push(`it.status = $${params.length}`);
     }
     if (req.platform) {
       const platform = normalizePlatform(req.platform);
       params.push(platform);
-      where.push(`platform = $${params.length}`);
+      where.push(`it.platform = $${params.length}`);
     }
     params.push(parseLimit(req.limit));
 
-    const items = await db.rawQueryAll<InboxTaskRow>(
-      `SELECT *
-       FROM inbox_tasks
-       WHERE ${where.join(" AND ")}
-       ORDER BY priority DESC, created_at DESC
-       LIMIT $${params.length}`,
-      ...params
-    );
+    let rows: InboxTaskListQueryRow[];
+    try {
+      rows = await db.rawQueryAll<InboxTaskListQueryRow>(
+        `SELECT
+           it.*,
+           sa.id AS social_activity_event_id,
+           lsl.id AS lead_score_ledger_id,
+           lsl.delta_points AS lead_score_ledger_delta_points,
+           lsl.reason_code AS lead_score_ledger_reason_code,
+           lea.id AS latest_execution_attempt_id
+         FROM inbox_tasks it
+         LEFT JOIN LATERAL (
+           SELECT ea.id
+           FROM execution_attempts ea
+           WHERE ea.task_id = it.id
+           ORDER BY ea.attempted_at DESC
+           LIMIT 1
+         ) lea ON TRUE
+         LEFT JOIN LATERAL (
+           SELECT sae.id
+           FROM social_activity_events sae
+           WHERE sae.owner_user_id = it.owner_user_id
+             AND sae.inbox_task_id = it.id
+           ORDER BY sae.created_at DESC
+           LIMIT 1
+         ) sa ON TRUE
+         LEFT JOIN LATERAL (
+           SELECT ledger.id, ledger.delta_points, ledger.reason_code
+           FROM lead_score_ledger ledger
+           WHERE ledger.owner_user_id = it.owner_user_id
+             AND ledger.inbox_task_id = it.id
+           ORDER BY ledger.applied_at DESC
+           LIMIT 1
+         ) lsl ON TRUE
+         WHERE ${where.join(" AND ")}
+         ORDER BY it.priority DESC, it.created_at DESC
+         LIMIT $${params.length}`,
+        ...params
+      );
+    } catch (error) {
+      const dbError = error as { code?: string };
+      if (dbError.code !== "42P01") {
+        throw error;
+      }
+      rows = await db.rawQueryAll<InboxTaskListQueryRow>(
+        `SELECT
+           it.*,
+           NULL::uuid AS social_activity_event_id,
+           NULL::uuid AS lead_score_ledger_id,
+           NULL::integer AS lead_score_ledger_delta_points,
+           NULL::text AS lead_score_ledger_reason_code,
+           lea.id AS latest_execution_attempt_id
+         FROM inbox_tasks it
+         LEFT JOIN LATERAL (
+           SELECT ea.id
+           FROM execution_attempts ea
+           WHERE ea.task_id = it.id
+           ORDER BY ea.attempted_at DESC
+           LIMIT 1
+         ) lea ON TRUE
+         WHERE ${where.join(" AND ")}
+         ORDER BY it.priority DESC, it.created_at DESC
+         LIMIT $${params.length}`,
+        ...params
+      );
+    }
+    const items: InboxTaskRow[] = rows.map((row) => {
+      let scoreImpactStatus: InboxTaskRow["score_impact_status"] = "none";
+      let scoreImpactReason: string | null = null;
+      if (row.lead_score_ledger_id) {
+        scoreImpactStatus = "applied";
+        scoreImpactReason = row.lead_score_ledger_reason_code ?? "execution_succeeded";
+      } else if (row.status === "pending" || row.status === "approved" || row.status === "executing") {
+        scoreImpactStatus = "pending_execution";
+      } else if (row.status === "executed") {
+        scoreImpactStatus = "skipped";
+        scoreImpactReason = row.lead_id ? "duplicate_execution" : "no_lead_linked";
+      }
+      return {
+        ...row,
+        score_impact_status: scoreImpactStatus,
+        score_delta_points: row.lead_score_ledger_delta_points,
+        score_impact_reason: scoreImpactReason,
+        latest_execution_attempt_id: row.latest_execution_attempt_id,
+      };
+    });
     return { items };
   }
 );
@@ -566,9 +702,10 @@ export const executeInboxTask = api<ExecuteInboxTaskRequest, ExecuteInboxTaskRes
       };
     }
 
-    await db.rawExec(
+    const executionAttempt = await db.rawQueryRow<ExecutionAttemptRow>(
       `INSERT INTO execution_attempts (owner_user_id, task_id, status, request_payload, response_payload, error, attempted_at)
-       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, now())`,
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, now())
+       RETURNING id`,
       ownerUserId,
       executing.id,
       execution.status,
@@ -576,6 +713,9 @@ export const executeInboxTask = api<ExecuteInboxTaskRequest, ExecuteInboxTaskRes
       JSON.stringify(execution),
       errorMessage
     );
+    if (!executionAttempt) {
+      throw APIError.internal("failed to record execution attempt");
+    }
 
     if (execution.status === "succeeded") {
       await db.rawExec(
@@ -599,6 +739,13 @@ export const executeInboxTask = api<ExecuteInboxTaskRequest, ExecuteInboxTaskRes
             ? "unsupported"
             : "failed";
 
+    const scoreRule = resolveSocialExecutionScoringRule({
+      platform: executing.platform,
+      actionType: executing.task_type,
+      taskStatus: nextStatus,
+      executionStatus: execution.status,
+    });
+
     const task = await db.rawQueryRow<InboxTaskRow>(
       `UPDATE inbox_tasks
        SET status = $3,
@@ -615,7 +762,220 @@ export const executeInboxTask = api<ExecuteInboxTaskRequest, ExecuteInboxTaskRes
     if (!task) {
       throw APIError.internal("failed to update task after execution");
     }
-    return { task, execution };
+    let scoreEffect: ScoreEffect | undefined;
+    if (!isScoreEligibleExecution({ taskStatus: nextStatus, executionStatus: execution.status })) {
+      scoreEffect = { status: "skipped", reason: "execution_not_succeeded" };
+      return { task, execution, score_effect: scoreEffect };
+    }
+    if (!isSocialExecutionScoringEnabled()) {
+      scoreEffect = { status: "skipped", reason: "feature_disabled" };
+      return { task, execution, score_effect: scoreEffect };
+    }
+    if (!scoreRule) {
+      scoreEffect = { status: "skipped", reason: "missing_scoring_rule" };
+      return { task, execution, score_effect: scoreEffect };
+    }
+
+    try {
+      const activityMetadata = parseJsonObject({
+        ...(parseJsonObject(executing.payload_json) as Record<string, string | number | boolean | null>),
+        source_task_status: nextStatus,
+        execution_status: execution.status,
+        execution_reason_code: execution.reason_code,
+        execution_reason_message: execution.reason_message,
+        provider_action_id: execution.provider_action_id,
+        approved_by_user_id: executing.approved_by_user_id,
+        approved_at: executing.approved_at,
+        executed_by_user_id: ownerUserId,
+      }) as JsonObject;
+
+      const socialActivityEvent = await db.rawQueryRow<SocialActivityEventRow>(
+        `INSERT INTO social_activity_events (
+         owner_user_id,
+         lead_id,
+         inbox_task_id,
+         execution_attempt_id,
+         execution_idempotency_key,
+         source_event_id,
+         platform,
+         action_type,
+         actor_ref,
+         actor_display,
+         target_ref,
+         occurred_at,
+         metadata,
+         created_by_user_id,
+         created_at
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::timestamptz, $13::jsonb, $14, now()
+       )
+       ON CONFLICT (owner_user_id, inbox_task_id, execution_idempotency_key)
+       DO UPDATE SET occurred_at = EXCLUDED.occurred_at
+         RETURNING id, lead_id`,
+        ownerUserId,
+        executing.lead_id,
+        executing.id,
+        executionAttempt.id,
+        requestPayload.idempotency_key,
+        executing.source_event_id,
+        executing.platform,
+        executing.task_type,
+        executing.actor_ref,
+        executing.actor_display,
+        executing.target_ref,
+        execution.occurred_at,
+        JSON.stringify(activityMetadata),
+        ownerUserId
+      );
+      if (!socialActivityEvent) {
+        throw APIError.internal("failed to persist social activity event");
+      }
+
+      if (!socialActivityEvent.lead_id) {
+        scoreEffect = { status: "skipped", reason: "no_lead_linked" };
+        return { task, execution, score_effect: scoreEffect };
+      }
+
+      const leadId = socialActivityEvent.lead_id;
+      const previousScore = await readLeadIntentScore(leadId);
+      const reasonCode = "execution_succeeded";
+      const reasonMessage = execution.reason_message ?? "Scoring applied after successful execution";
+      const ledgerMetadata = parseJsonObject({
+        source_event_id: executing.source_event_id,
+        provider_action_id: execution.provider_action_id,
+        execution_reason_code: execution.reason_code,
+        execution_status: execution.status,
+        platform: executing.platform,
+        action_type: executing.task_type,
+        actor_ref: executing.actor_ref,
+        actor_display: executing.actor_display,
+        target_ref: executing.target_ref,
+        source_url: executing.source_url,
+      }) as JsonObject;
+
+      const leadScoreLedger = await db.rawQueryRow<LeadScoreLedgerRow>(
+        `INSERT INTO lead_score_ledger (
+         owner_user_id,
+         lead_id,
+         source_kind,
+         source_id,
+         inbox_task_id,
+         execution_attempt_id,
+         score_rule_key,
+         delta_points,
+         previous_score,
+         new_score,
+         applied_at,
+         applied_by_user_id,
+         reason_code,
+         reason_message,
+         metadata
+       ) VALUES (
+         $1, $2, 'social_execution', $3, $4, $5, $6, $7, $8, NULL, now(), $9, $10, $11, $12::jsonb
+       )
+         ON CONFLICT (owner_user_id, source_kind, source_id) DO NOTHING
+         RETURNING id`,
+        ownerUserId,
+        leadId,
+        socialActivityEvent.id,
+        executing.id,
+        executionAttempt.id,
+        scoreRule.score_rule_key,
+        scoreRule.delta_points,
+        previousScore,
+        ownerUserId,
+        reasonCode,
+        reasonMessage,
+        JSON.stringify(ledgerMetadata)
+      );
+
+      if (!leadScoreLedger) {
+        scoreEffect = { status: "skipped", reason: "duplicate_execution" };
+        return { task, execution, score_effect: scoreEffect };
+      }
+
+      const dedupeKey = `social_exec:${ownerUserId}:${executing.id}:${requestPayload.idempotency_key}`;
+      let event = await db.rawQueryRow<{ id: string }>(
+        `INSERT INTO intent_events (
+         lead_id,
+         anonymous_id,
+         event_type,
+         event_source,
+         event_value,
+         dedupe_key,
+         metadata,
+         occurred_at,
+         created_at
+       ) VALUES (
+         $1, NULL, $2, 'social_inbox_execution', $3, $4, $5::jsonb, $6::timestamptz, now()
+       )
+         ON CONFLICT (event_source, dedupe_key) DO NOTHING
+         RETURNING id`,
+        leadId,
+        scoreRule.event_type,
+        scoreRule.delta_points,
+        dedupeKey,
+        JSON.stringify(
+          parseJsonObject({
+            social_activity_event_id: socialActivityEvent.id,
+            inbox_task_id: executing.id,
+            execution_attempt_id: executionAttempt.id,
+            platform: executing.platform,
+            action_type: executing.task_type,
+            actor_ref: executing.actor_ref,
+            actor_display: executing.actor_display,
+            target_ref: executing.target_ref,
+            source_url: executing.source_url,
+            source_event_id: executing.source_event_id,
+            provider_action_id: execution.provider_action_id,
+          }) as JsonObject
+        ),
+        execution.occurred_at
+      );
+      if (!event) {
+        event = await db.rawQueryRow<{ id: string }>(
+          `SELECT id FROM intent_events WHERE event_source = 'social_inbox_execution' AND dedupe_key = $1`,
+          dedupeKey
+        );
+      }
+      if (!event) {
+        throw APIError.internal("failed to persist social execution intent event");
+      }
+
+      await autoScoreEvent(event.id);
+      await updateLeadScoring(leadId);
+      await checkAndPushToSales(leadId);
+      const newScore = await readLeadIntentScore(leadId);
+      await db.rawExec(
+        `UPDATE lead_score_ledger
+         SET new_score = $3
+         WHERE id = $1 AND owner_user_id = $2`,
+        leadScoreLedger.id,
+        ownerUserId,
+        newScore
+      );
+
+      scoreEffect = {
+        status: "applied",
+        reason: "execution_succeeded",
+        ledger_id: leadScoreLedger.id,
+        delta_points: scoreRule.delta_points,
+      };
+      return { task, execution, score_effect: scoreEffect };
+    } catch (error) {
+      const dbError = error as { code?: string };
+      if (dbError.code === "42P01") {
+        scoreEffect = { status: "skipped", reason: "feature_disabled" };
+        return { task, execution, score_effect: scoreEffect };
+      }
+      console.error("[social-inbox] scoring pipeline failed after execution", {
+        task_id: executing.id,
+        owner_user_id: ownerUserId,
+        error,
+      });
+      scoreEffect = { status: "skipped", reason: "scoring_pipeline_error" };
+      return { task, execution, score_effect: scoreEffect };
+    }
   }
 );
 

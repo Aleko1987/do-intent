@@ -17,7 +17,15 @@ export default function IntentTimeline({ events }: IntentTimelineProps) {
 
   return (
     <div className="space-y-3">
-      {events.map((event, index) => (
+      {events.map((event, index) => {
+          const metadata = event.metadata as Record<string, unknown>;
+          const platform = typeof metadata.platform === "string" ? metadata.platform : null;
+          const actionType = typeof metadata.action_type === "string" ? metadata.action_type : null;
+          const actorDisplay = typeof metadata.actor_display === "string" ? metadata.actor_display : null;
+          const actorRef = typeof metadata.actor_ref === "string" ? metadata.actor_ref : null;
+          const inboxTaskId = typeof metadata.inbox_task_id === "string" ? metadata.inbox_task_id : null;
+          const executionAttemptId = typeof metadata.execution_attempt_id === "string" ? metadata.execution_attempt_id : null;
+          return (
         <div key={event.id} className="flex gap-3">
           <div className="flex flex-col items-center">
             <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
@@ -45,9 +53,19 @@ export default function IntentTimeline({ events }: IntentTimelineProps) {
             <p className="text-xs text-muted-foreground mt-1">
               Source: {event.event_source}
             </p>
+            {(platform || actionType || actorDisplay || actorRef || inboxTaskId || executionAttemptId) && (
+              <p className="text-xs text-muted-foreground mt-1">
+                {platform ? `Platform: ${platform}` : "Platform: n/a"}
+                {actionType ? ` · Action: ${actionType}` : ""}
+                {(actorDisplay || actorRef) ? ` · Actor: ${actorDisplay ?? actorRef}` : ""}
+                {inboxTaskId ? ` · Task: ${inboxTaskId}` : ""}
+                {executionAttemptId ? ` · Execution: ${executionAttemptId}` : ""}
+              </p>
+            )}
           </div>
         </div>
-      ))}
+          );
+      })}
     </div>
   );
 }

@@ -16,6 +16,7 @@ type TaskStatus =
   | "failed"
   | "blocked"
   | "unsupported";
+type ScoreImpactStatus = "none" | "pending_execution" | "applied" | "skipped";
 
 interface InboxTask {
   id: string;
@@ -29,6 +30,11 @@ interface InboxTask {
   content_excerpt: string | null;
   source_url: string | null;
   suggested_reply: string | null;
+  lead_id?: string | null;
+  score_impact_status?: ScoreImpactStatus;
+  score_delta_points?: number | null;
+  score_impact_reason?: string | null;
+  latest_execution_attempt_id?: string | null;
   updated_at: string;
 }
 
@@ -251,12 +257,25 @@ export default function UnifiedInbox() {
               <Badge variant="outline">{task.platform}</Badge>
               <Badge variant="secondary">{task.status}</Badge>
               <Badge variant="default">{task.task_type}</Badge>
+              {task.score_impact_status && task.score_impact_status !== "none" && (
+                <Badge variant={task.score_impact_status === "applied" ? "default" : "outline"}>
+                  score {task.score_impact_status}
+                  {typeof task.score_delta_points === "number" ? ` (${task.score_delta_points > 0 ? "+" : ""}${task.score_delta_points})` : ""}
+                </Badge>
+              )}
               <span className="text-xs text-muted-foreground">
                 Priority {task.priority} · {new Date(task.updated_at).toLocaleString()}
               </span>
             </div>
             <p className="text-sm font-medium">{task.actor_display ?? task.actor_ref}</p>
             <p className="text-sm text-muted-foreground">{task.content_excerpt ?? "No excerpt provided"}</p>
+            {(task.score_impact_reason || task.lead_id || task.latest_execution_attempt_id) && (
+              <p className="text-xs text-muted-foreground">
+                {task.score_impact_reason ? `Impact: ${task.score_impact_reason}` : "Impact: n/a"}
+                {task.lead_id ? ` · lead ${task.lead_id}` : " · no lead"}
+                {task.latest_execution_attempt_id ? ` · execution ${task.latest_execution_attempt_id}` : ""}
+              </p>
+            )}
             {task.source_url && (
               <a className="text-xs underline text-blue-600" href={task.source_url} target="_blank" rel="noreferrer">
                 Open source

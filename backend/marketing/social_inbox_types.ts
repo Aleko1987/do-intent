@@ -18,6 +18,12 @@ export type InboxTaskStatus =
   | "failed"
   | "blocked"
   | "unsupported";
+export type SocialExecutionStatus = ExecuteTaskResponseV1["status"];
+export type ScoreImpactStatus =
+  | "none"
+  | "pending_execution"
+  | "applied"
+  | "skipped";
 
 export interface NormalizedSocialEventV1 {
   version: "v1";
@@ -54,6 +60,16 @@ export interface ExecuteTaskResponseV1 {
   reason_code: string | null;
   reason_message: string | null;
   raw: JsonObject | null;
+}
+
+export interface SocialExecutionScoringRule {
+  platform: SocialPlatform;
+  action_type: SocialActionType;
+  execution_status: "executed";
+  score_rule_key: string;
+  event_type: string;
+  delta_points: number;
+  enabled: boolean;
 }
 
 export interface SocialWatchlistRow {
@@ -96,4 +112,8 @@ export interface InboxTaskRow {
   rejection_reason: string | null;
   created_at: string;
   updated_at: string;
+  score_impact_status?: ScoreImpactStatus;
+  score_delta_points?: number | null;
+  score_impact_reason?: string | null;
+  latest_execution_attempt_id?: string | null;
 }

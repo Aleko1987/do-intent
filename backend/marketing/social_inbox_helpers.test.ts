@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  isScoreEligibleExecution,
   mapEventTypeToTaskType,
   parseNormalizedSocialEvent,
+  resolveSocialExecutionScoringRule,
   resolveDefaultCap,
 } from "./social_inbox_helpers";
 
@@ -36,5 +38,29 @@ describe("social_inbox_helpers", () => {
   test("default caps are platform aware", () => {
     expect(resolveDefaultCap("whatsapp", "like")).toBe(0);
     expect(resolveDefaultCap("facebook", "dm")).toBeGreaterThan(0);
+  });
+
+  test("score eligibility only allows executed/succeeded", () => {
+    expect(isScoreEligibleExecution({ taskStatus: "executed", executionStatus: "succeeded" })).toBe(true);
+    expect(isScoreEligibleExecution({ taskStatus: "approved", executionStatus: "succeeded" })).toBe(false);
+    expect(isScoreEligibleExecution({ taskStatus: "executed", executionStatus: "failed" })).toBe(false);
+  });
+
+  test("maps social execution scoring rules by platform and action", () => {
+    const rule = resolveSocialExecutionScoringRule({
+      platform: "instagram",
+      actionType: "dm",
+      taskStatus: "executed",
+      executionStatus: "succeeded",
+    });
+    expect(rule?.score_rule_key).toBe("social.instagram.dm.executed");
+
+    const skipped = resolveSocialExecutionScoringRule({
+      platform: "instagram",
+      actionType: "dm",
+      taskStatus: "failed",
+      executionStatus: "failed",
+    });
+    expect(skipped).toBeNull();
   });
 });
