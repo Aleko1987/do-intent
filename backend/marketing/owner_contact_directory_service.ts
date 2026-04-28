@@ -300,24 +300,39 @@ function parseRecordsFromText(
 
   const rows: ParsedContactImportRecord[] = [];
   const errors: OwnerContactImportError[] = [];
+  const usedHandles = new Set<string>();
+  const extractedTrailingHandles: string[] = [];
 
   lines.forEach((line, index) => {
     const row = index + 1;
     const pairMatch = line.match(/^([A-Za-z0-9._-]{2,})\s*·\s*(.+)$/);
     const explicitHandle = pairMatch?.[1] ?? null;
     const explicitName = pairMatch?.[2] ?? line;
+    if (explicitHandle) {
+      usedHandles.add(normalizeHandle(explicitHandle));
+    }
 
     const emailMatch = explicitName.match(/[^\s,;]+@[^\s,;]+\.[^\s,;]+/);
     const handleMatches = Array.from(explicitName.matchAll(/@([A-Za-z0-9._-]{2,40})/g));
     const phoneMatch = line.match(/\+?\d[\d()\-\s]{5,20}\d/g);
 
-    const cleanedName = normalizeWhitespace(
+    let cleanedName = normalizeWhitespace(
       explicitName
         .replace(emailMatch?.[0] ?? "", "")
         .replace(phoneMatch?.[0] ?? "", "")
         .replace(/@([A-Za-z0-9._-]{2,40})/g, "")
         .replace(/[|,;]+/g, " ")
     );
+
+    const trailingHandleMatch = cleanedName.match(/^(.*)\s+([A-Za-z0-9._-]*[._0-9][A-Za-z0-9._-]*)$/);
+    if (trailingHandleMatch) {
+      const possibleName = normalizeWhitespace(trailingHandleMatch[1]);
+      const trailingHandle = normalizeHandle(trailingHandleMatch[2]);
+      if (possibleName && trailingHandle && trailingHandle !== normalizeHandle(explicitHandle ?? "")) {
+        cleanedName = possibleName;
+        extractedTrailingHandles.push(trailingHandle);
+      }
+    }
 
     if (!cleanedName) {
       errors.push({ row, reason: "could not infer display name from line" });
@@ -359,6 +374,40 @@ function parseRecordsFromText(
         handles,
         emails,
       }),
+    });
+  });
+
+  const allHandleTokens = Array.from(
+    new Set((normalizedPayload.match(/\b[A-Za-z0-9._-]{2,}\b/g) ?? []).map((token) => normalizeHandle(token)))
+  ).filter((token) => token.length > 0);
+  const trailingStandaloneHandles = Array.from(
+    new Set([...allHandleTokens, ...extractedTrailingHandles])
+  ).filter((handle) => !usedHandles.has(handle));
+
+  trailingStandaloneHandles.forEach((handleToken, index) => {
+    // Ignore obvious non-handle words that come from names.
+    if (!/[._0-9]/.test(handleToken)) return;
+    rows.push({
+      platform: defaultPlatform,
+      external_ref: null,
+      display_name: handleToken,
+      aliases: [],
+      handles: [
+        {
+          platform: defaultPlatform,
+          value: handleToken,
+          normalized: handleToken,
+        },
+      ],
+      emails: [],
+      phones: [],
+      source_updated_at: null,
+      confidence_hint: null,
+      lead_probability_score: 35,
+    });
+    errors.push({
+      row: lines.length + index + 1,
+      reason: `standalone handle '${handleToken}' imported without paired name`,
     });
   });
 
