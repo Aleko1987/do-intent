@@ -124,6 +124,7 @@ export interface OwnerContactDirectoryRow {
   emails: unknown;
   phones: unknown;
   confidence_hint: number | null;
+  lead_probability_score: number;
   is_active: boolean;
   source_updated_at: string | null;
   import_batch_id: string | null;
@@ -143,7 +144,22 @@ export interface OwnerContactDirectoryItem {
   emails: string[];
   phones: string[];
   confidence_hint: number | null;
+  lead_probability_score: number;
   is_active: boolean;
   source_updated_at: string | null;
   updated_at: string;
+}
+
+export interface MarketingLeadScoreUpdate {
+  id: string;
+  owner_user_id: string;
+  lead_id: string;
+  surname: string | null;
+  name: string | null;
+  handle: string | null;
+  platform: string;
+  score_delta: number;
+  new_score: number;
+  metadata: unknown;
+  created_at: string;
 }

@@ -299,6 +299,24 @@ export function parseOwnerContactPayloadText(value: unknown): string {
   return parsed;
 }
 
+export function parseOwnerContactLeadProbabilityScore(
+  value: unknown,
+  fallback = 0
+): number {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) {
+    throw APIError.invalidArgument("lead_probability_score must be numeric");
+  }
+  const rounded = Math.round(n);
+  if (rounded < 0 || rounded > 100) {
+    throw APIError.invalidArgument("lead_probability_score must be between 0 and 100");
+  }
+  return rounded;
+}
+
 export function parseContactDirectoryListQuery(raw: {
   search?: string;
   limit?: number;
