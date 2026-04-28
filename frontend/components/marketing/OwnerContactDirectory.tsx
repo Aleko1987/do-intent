@@ -30,6 +30,12 @@ interface ListOwnerContactDirectoryResponse {
   items: OwnerContactDirectoryItemView[];
 }
 
+interface RepairOwnerContactsResponse {
+  scanned_rows: number;
+  repaired_rows: number;
+  created_rows: number;
+}
+
 const PLATFORM_OPTIONS: Array<{ id: ContactPlatform | "all"; label: string }> = [
   { id: "all", label: "All platforms" },
   { id: "instagram", label: "Instagram" },
@@ -49,6 +55,7 @@ export default function OwnerContactDirectory() {
   const [search, setSearch] = useState("");
   const [platform, setPlatform] = useState<ContactPlatform | "all">("all");
   const [includeInactive, setIncludeInactive] = useState(false);
+  const [repairing, setRepairing] = useState(false);
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -59,10 +66,10 @@ export default function OwnerContactDirectory() {
     return params.toString();
   }, [search, platform, includeInactive]);
 
-  async function apiFetch<T>(path: string): Promise<T> {
+  async function apiRequest<T>(path: string, method: "GET" | "POST"): Promise<T> {
     const token = await getToken();
     const response = await fetch(path, {
-      method: "GET",
+      method,
       headers: {
         "content-type": "application/json",
         ...(token ? { authorization: `Bearer ${token}` } : {}),
@@ -78,8 +85,9 @@ export default function OwnerContactDirectory() {
     setLoading(true);
     setError(null);
     try {
-      const response = await apiFetch<ListOwnerContactDirectoryResponse>(
-        `/marketing/owner-contacts?${queryString}`
+      const response = await apiRequest<ListOwnerContactDirectoryResponse>(
+        `/marketing/owner-contacts?${queryString}`,
+        "GET"
       );
       setRows(response.items);
     } catch (err) {
@@ -87,6 +95,23 @@ export default function OwnerContactDirectory() {
       setError(err instanceof Error ? err.message : "Failed to load contacts");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function repairMalformedRows() {
+    setRepairing(true);
+    setError(null);
+    try {
+      const result = await apiRequest<RepairOwnerContactsResponse>("/marketing/owner-contacts/repair", "POST");
+      setError(
+        `Repair completed. Scanned ${result.scanned_rows} rows, repaired ${result.repaired_rows}, created ${result.created_rows} contacts.`
+      );
+      await loadDirectory();
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Failed to repair malformed contacts");
+    } finally {
+      setRepairing(false);
     }
   }
 
@@ -130,6 +155,9 @@ export default function OwnerContactDirectory() {
           </Button>
           <Button size="sm" variant="outline" onClick={() => void loadDirectory()}>
             Refresh
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => void repairMalformedRows()} disabled={repairing}>
+            {repairing ? "Repairing..." : "Repair malformed paste rows"}
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">Loaded {rows.length} contacts.</p>

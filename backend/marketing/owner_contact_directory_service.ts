@@ -46,6 +46,12 @@ interface ImportOwnerContactsResult {
   errors: OwnerContactImportError[];
 }
 
+interface RepairOwnerContactImportsResult {
+  scanned_rows: number;
+  repaired_rows: number;
+  created_rows: number;
+}
+
 function isUniqueViolation(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const err = error as { code?: string };
@@ -727,6 +733,71 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
     accepted_rows: acceptedRows.length,
     rejected_rows: rejectedRows,
     errors: parsed.errors,
+  };
+}
+
+export async function repairMalformedOwnerContactImports(params: {
+  ownerUserId: string;
+  actorUserId: string;
+}): Promise<RepairOwnerContactImportsResult> {
+  const candidateRows = await db.rawQueryAll<{
+    id: string;
+    source: OwnerContactSource;
+    platform: OwnerContactPlatform;
+    display_name: string;
+  }>(
+    `
+      SELECT id, source, platform, display_name
+      FROM owner_contact_directory
+      WHERE owner_user_id = $1
+        AND source = 'paste_text'
+        AND is_active = true
+      ORDER BY updated_at DESC
+      LIMIT 500
+    `,
+    params.ownerUserId
+  );
+
+  let repairedRows = 0;
+  let createdRows = 0;
+
+  for (const row of candidateRows) {
+    const parsed = parseRecordsFromText(row.display_name, row.platform);
+    if (parsed.rows.length < 2) {
+      continue;
+    }
+
+    const imported = await importOwnerContacts({
+      ownerUserId: params.ownerUserId,
+      actorUserId: params.actorUserId,
+      source: row.source,
+      platform: row.platform,
+      mode: "delta",
+      format: "text",
+      payload: row.display_name,
+      correlationId: `repair:${row.id}`,
+    });
+    if (imported.accepted_rows === 0) {
+      continue;
+    }
+
+    await db.exec`
+      UPDATE owner_contact_directory
+      SET
+        is_active = false,
+        updated_at = now()
+      WHERE owner_user_id = ${params.ownerUserId}
+        AND id = ${row.id}
+    `;
+
+    repairedRows += 1;
+    createdRows += imported.accepted_rows;
+  }
+
+  return {
+    scanned_rows: candidateRows.length,
+    repaired_rows: repairedRows,
+    created_rows: createdRows,
   };
 }
 
