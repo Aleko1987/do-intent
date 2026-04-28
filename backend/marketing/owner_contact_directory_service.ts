@@ -246,40 +246,98 @@ function parseRecordsFromText(
   payload: string,
   defaultPlatform: OwnerContactPlatform
 ): { rows: ParsedContactImportRecord[]; errors: OwnerContactImportError[] } {
-  const lines = payload
-    .split(/\r?\n/g)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+  const normalizedPayload = payload.replace(/\s+/g, " ").trim();
+  const pairStartRegex = /([A-Za-z0-9._-]{2,})\s*·\s*/g;
+  const pairStarts = Array.from(normalizedPayload.matchAll(pairStartRegex));
+  const lines =
+    pairStarts.length > 0
+      ? pairStarts.map((match, index) => {
+          const handle = match[1];
+          const contentStart = (match.index ?? 0) + match[0].length;
+          const nextStart = pairStarts[index + 1]?.index ?? normalizedPayload.length;
+          const nameSegment = normalizedPayload.slice(contentStart, nextStart).trim();
+          return `${handle} · ${nameSegment}`;
+        })
+      : payload
+          .split(/\r?\n/g)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0);
 
   const rows: ParsedContactImportRecord[] = [];
   const errors: OwnerContactImportError[] = [];
+  const importedHandles = new Set<string>();
+
+  function looksLikeHandle(token: string): boolean {
+    return /[._0-9]/.test(token);
+  }
+
+  function extractTrailingHandles(name: string): { cleanedName: string; trailingHandles: string[] } {
+    const tokens = normalizeWhitespace(name).split(" ").filter(Boolean);
+    if (tokens.length <= 1) {
+      return { cleanedName: name, trailingHandles: [] };
+    }
+
+    const trailingHandles: string[] = [];
+    while (tokens.length > 1) {
+      const tail = tokens[tokens.length - 1];
+      if (!looksLikeHandle(tail)) {
+        break;
+      }
+      trailingHandles.unshift(normalizeHandle(tail));
+      tokens.pop();
+    }
+
+    return {
+      cleanedName: tokens.join(" "),
+      trailingHandles,
+    };
+  }
 
   lines.forEach((line, index) => {
     const row = index + 1;
     const emailMatch = line.match(/[^\s,;]+@[^\s,;]+\.[^\s,;]+/);
-    const handleMatches = Array.from(line.matchAll(/@([A-Za-z0-9._-]{2,40})/g));
+    const pairMatch = line.match(/^([A-Za-z0-9._-]{2,})\s*·\s*(.+)$/);
+    const explicitHandle = pairMatch?.[1] ?? null;
+    const textBody = pairMatch?.[2] ?? line;
+    const handleMatches = Array.from(textBody.matchAll(/@([A-Za-z0-9._-]{2,40})/g));
     const phoneMatch = line.match(/\+?\d[\d()\-\s]{5,20}\d/g);
 
-    const cleanedName = normalizeWhitespace(
-      line
+    const rawName = normalizeWhitespace(
+      textBody
         .replace(emailMatch?.[0] ?? "", "")
         .replace(phoneMatch?.[0] ?? "", "")
         .replace(/@([A-Za-z0-9._-]{2,40})/g, "")
         .replace(/[|,;]+/g, " ")
     );
+    const { cleanedName, trailingHandles } = extractTrailingHandles(rawName);
 
     if (!cleanedName) {
       errors.push({ row, reason: "could not infer display name from line" });
       return;
     }
 
-    const handles = handleMatches
-      .map((match) => ({
-        platform: defaultPlatform,
-        value: `@${match[1]}`,
-        normalized: normalizeHandle(match[1]).slice(0, 96),
-      }))
-      .filter((handle) => handle.normalized.length > 0);
+    const handles = [
+      ...(explicitHandle
+        ? [
+            {
+              platform: defaultPlatform,
+              value: explicitHandle,
+              normalized: normalizeHandle(explicitHandle).slice(0, 96),
+            },
+          ]
+        : []),
+      ...handleMatches
+        .map((match) => ({
+          platform: defaultPlatform,
+          value: `@${match[1]}`,
+          normalized: normalizeHandle(match[1]).slice(0, 96),
+        }))
+        .filter((handle) => handle.normalized.length > 0),
+    ];
+
+    if (explicitHandle) {
+      importedHandles.add(normalizeHandle(explicitHandle));
+    }
 
     rows.push({
       platform: defaultPlatform,
@@ -292,6 +350,32 @@ function parseRecordsFromText(
       source_updated_at: null,
       confidence_hint: null,
     });
+
+    for (const trailingHandle of trailingHandles) {
+      if (!trailingHandle || importedHandles.has(trailingHandle)) continue;
+      importedHandles.add(trailingHandle);
+      rows.push({
+        platform: defaultPlatform,
+        external_ref: null,
+        display_name: trailingHandle.slice(0, 180),
+        aliases: [],
+        handles: [
+          {
+            platform: defaultPlatform,
+            value: trailingHandle.slice(0, 96),
+            normalized: trailingHandle.slice(0, 96),
+          },
+        ],
+        emails: [],
+        phones: [],
+        source_updated_at: null,
+        confidence_hint: null,
+      });
+      errors.push({
+        row,
+        reason: `imported trailing standalone handle '${trailingHandle}' as separate contact`,
+      });
+    }
   });
 
   return { rows, errors };
