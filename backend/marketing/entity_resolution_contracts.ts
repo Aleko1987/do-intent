@@ -9,6 +9,7 @@ export type OwnerContactPlatform =
   | "website"
   | "manual_upload"
   | "unknown";
+export type OwnerContactScopeType = "workspace_owner" | "connected_account";
 
 export type ResolverMatchMethod = "exact" | "prefix" | "fuzzy";
 export type ResolverDecision = "resolved" | "ambiguous" | "unresolved";
@@ -116,6 +117,9 @@ export interface OwnerContactDirectoryRow {
   owner_user_id: string;
   source: OwnerContactSource;
   platform: OwnerContactPlatform;
+  owner_scope_type: OwnerContactScopeType;
+  owner_scope_ref: string;
+  owner_scope_label: string | null;
   external_ref: string | null;
   display_name: string;
   normalized_name: string;
@@ -135,6 +139,9 @@ export interface OwnerContactDirectoryItem {
   id: string;
   source: OwnerContactSource;
   platform: OwnerContactPlatform;
+  owner_scope_type: OwnerContactScopeType;
+  owner_scope_ref: string;
+  owner_scope_label: string | null;
   external_ref: string | null;
   display_name: string;
   normalized_name: string;

@@ -75,6 +75,9 @@ interface OwnerContactDirectoryItemView {
   id: string;
   source: "csv_upload" | "paste_text" | "api_refresh";
   platform: "instagram" | "facebook" | "whatsapp" | "email" | "website" | "manual_upload" | "unknown";
+  owner_scope_type: "workspace_owner" | "connected_account";
+  owner_scope_ref: string;
+  owner_scope_label: string | null;
   display_name: string;
   normalized_name: string;
   is_active: boolean;
@@ -496,6 +499,11 @@ export default function CandidateSignalReviewQueue() {
   const [contactImportPlatform, setContactImportPlatform] = useState<
     "instagram" | "facebook" | "whatsapp" | "email" | "website" | "manual_upload" | "unknown"
   >("instagram");
+  const [contactOwnerScopeType, setContactOwnerScopeType] = useState<"workspace_owner" | "connected_account">(
+    "workspace_owner"
+  );
+  const [contactOwnerScopeRef, setContactOwnerScopeRef] = useState("");
+  const [contactOwnerScopeLabel, setContactOwnerScopeLabel] = useState("");
   const [contactImportPayload, setContactImportPayload] = useState("");
   const [contactImportBusy, setContactImportBusy] = useState(false);
   const [rowChannelDrafts, setRowChannelDrafts] = useState<Record<string, CandidateSignalQueueItem["channel"]>>({});
@@ -625,6 +633,9 @@ export default function CandidateSignalReviewQueue() {
         body: JSON.stringify({
           source,
           platform: contactImportPlatform,
+          owner_scope_type: contactOwnerScopeType,
+          owner_scope_ref: contactOwnerScopeRef,
+          owner_scope_label: contactOwnerScopeLabel,
           mode: contactImportMode,
           format: contactImportFormat,
           payload: contactImportPayload,
@@ -1014,7 +1025,7 @@ export default function CandidateSignalReviewQueue() {
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+        <div className="grid grid-cols-1 md:grid-cols-8 gap-2">
           <select
             className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
             value={contactImportFormat}
@@ -1064,6 +1075,26 @@ export default function CandidateSignalReviewQueue() {
               </option>
             ))}
           </select>
+          <select
+            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
+            value={contactOwnerScopeType}
+            onChange={(e) => setContactOwnerScopeType(e.target.value as "workspace_owner" | "connected_account")}
+          >
+            <option value="workspace_owner">Database owner: Workspace owner</option>
+            <option value="connected_account">Database owner: Connected account</option>
+          </select>
+          <Input
+            className="h-9"
+            placeholder="Owner reference (e.g. _earthcure_)"
+            value={contactOwnerScopeRef}
+            onChange={(e) => setContactOwnerScopeRef(e.target.value)}
+          />
+          <Input
+            className="h-9"
+            placeholder="Owner display label (optional)"
+            value={contactOwnerScopeLabel}
+            onChange={(e) => setContactOwnerScopeLabel(e.target.value)}
+          />
           <Button size="sm" onClick={() => void handleImportOwnerContacts()} disabled={contactImportBusy}>
             {contactImportBusy ? "Importing..." : "Import contacts"}
           </Button>
@@ -1086,6 +1117,9 @@ export default function CandidateSignalReviewQueue() {
             ownerContacts.slice(0, 5).map((contact) => (
               <p key={contact.id}>
                 {contact.display_name}
+                {contact.owner_scope_label || contact.owner_scope_ref
+                  ? ` · owner: ${contact.owner_scope_label || contact.owner_scope_ref}`
+                  : ""}
                 {contact.platform ? ` · ${contact.platform}` : ""}
                 {contact.emails[0] ? ` · ${contact.emails[0]}` : ""}
                 {contact.handles[0]?.value ? ` · ${contact.handles[0].value}` : ""}

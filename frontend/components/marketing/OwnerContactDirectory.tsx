@@ -17,6 +17,9 @@ interface OwnerContactDirectoryItemView {
   id: string;
   source: "csv_upload" | "paste_text" | "api_refresh";
   platform: ContactPlatform;
+  owner_scope_type: "workspace_owner" | "connected_account";
+  owner_scope_ref: string;
+  owner_scope_label: string | null;
   display_name: string;
   normalized_name: string;
   is_active: boolean;
@@ -173,6 +176,7 @@ export default function OwnerContactDirectory() {
             <thead className="bg-muted/40">
               <tr className="text-left">
                 <th className="px-3 py-2 font-medium">Display</th>
+                <th className="px-3 py-2 font-medium">Database Owner</th>
                 <th className="px-3 py-2 font-medium">Platform</th>
                 <th className="px-3 py-2 font-medium">Source</th>
                 <th className="px-3 py-2 font-medium">Handle(s)</th>
@@ -188,6 +192,10 @@ export default function OwnerContactDirectory() {
                   <td className="px-3 py-2">
                     <div className="font-medium">{row.display_name}</div>
                     <div className="text-xs text-muted-foreground">{row.id}</div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <div>{row.owner_scope_label || row.owner_scope_ref}</div>
+                    <div className="text-xs text-muted-foreground">{row.owner_scope_type}</div>
                   </td>
                   <td className="px-3 py-2">{row.platform}</td>
                   <td className="px-3 py-2">{row.source}</td>
@@ -207,7 +215,7 @@ export default function OwnerContactDirectory() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">
+                  <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
                     No contacts found for current filters.
                   </td>
                 </tr>

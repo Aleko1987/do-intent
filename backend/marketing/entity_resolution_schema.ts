@@ -10,6 +10,7 @@ import type {
   OwnerContactImportMode,
   OwnerContactInputFormat,
   OwnerContactPlatform,
+  OwnerContactScopeType,
   OwnerContactSource,
   ResolverAuditV2,
   ResolverMatchMethod,
@@ -289,6 +290,13 @@ export function parseOwnerContactPlatform(value: unknown): OwnerContactPlatform 
   throw APIError.invalidArgument(
     "platform must be instagram, facebook, whatsapp, email, website, manual_upload, or unknown"
   );
+}
+
+export function parseOwnerContactScopeType(value: unknown): OwnerContactScopeType {
+  if (value === "workspace_owner" || value === "connected_account") {
+    return value;
+  }
+  throw APIError.invalidArgument("owner_scope_type must be workspace_owner or connected_account");
 }
 
 export function parseOwnerContactPayloadText(value: unknown): string {

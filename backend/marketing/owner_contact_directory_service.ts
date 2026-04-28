@@ -8,6 +8,7 @@ import type {
   OwnerContactImportMode,
   OwnerContactInputFormat,
   OwnerContactPlatform,
+  OwnerContactScopeType,
   OwnerContactSource,
   ResolverAuditV2,
   ResolverDecision,
@@ -32,6 +33,9 @@ interface ImportOwnerContactsParams {
   actorUserId: string;
   source: OwnerContactSource;
   platform: OwnerContactPlatform;
+  ownerScopeType: OwnerContactScopeType;
+  ownerScopeRef: string;
+  ownerScopeLabel: string;
   mode: OwnerContactImportMode;
   format: OwnerContactInputFormat;
   payload: string;
@@ -52,6 +56,8 @@ interface RepairOwnerContactImportsResult {
   created_rows: number;
 }
 
+const RESOLVER_CONTACT_LIMIT = 5000;
+
 function isUniqueViolation(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const err = error as { code?: string };
@@ -71,6 +77,18 @@ function normalizeImportedPlatform(value: string, fallback: OwnerContactPlatform
     return normalized;
   }
   return fallback;
+}
+
+function normalizeOwnerScopeRef(value: string, fallback: string): string {
+  const normalized = normalizeWhitespace(value).slice(0, 128);
+  if (normalized.length > 0) return normalized;
+  return normalizeWhitespace(fallback).slice(0, 128) || "workspace_owner";
+}
+
+function normalizeOwnerScopeLabel(value: string, fallback: string): string {
+  const normalized = normalizeWhitespace(value).slice(0, 180);
+  if (normalized.length > 0) return normalized;
+  return normalizeWhitespace(fallback).slice(0, 180) || "workspace_owner";
 }
 
 function normalizeWhitespace(value: string): string {
@@ -490,6 +508,9 @@ function normalizeContactRow(row: OwnerContactDirectoryRow): OwnerContactDirecto
     id: row.id,
     source: row.source,
     platform: row.platform,
+    owner_scope_type: row.owner_scope_type,
+    owner_scope_ref: row.owner_scope_ref,
+    owner_scope_label: row.owner_scope_label,
     external_ref: row.external_ref,
     display_name: row.display_name,
     normalized_name: row.normalized_name,
@@ -542,6 +563,8 @@ export async function listOwnerContactDirectory(params: {
 }
 
 export async function importOwnerContacts(params: ImportOwnerContactsParams): Promise<ImportOwnerContactsResult> {
+  const ownerScopeRef = normalizeOwnerScopeRef(params.ownerScopeRef, params.ownerUserId);
+  const ownerScopeLabel = normalizeOwnerScopeLabel(params.ownerScopeLabel, ownerScopeRef);
   const parsed = parseImportRecords(params.format, params.platform, params.payload);
   const acceptedRows = parsed.rows;
   const rejectedRows = parsed.errors.length;
@@ -554,6 +577,9 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
       owner_user_id,
       source,
       platform,
+      owner_scope_type,
+      owner_scope_ref,
+      owner_scope_label,
       mode,
       input_format,
       total_rows,
@@ -568,6 +594,9 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
       ${params.ownerUserId},
       ${params.source},
       ${params.platform},
+      ${params.ownerScopeType},
+      ${ownerScopeRef},
+      ${ownerScopeLabel},
       ${params.mode},
       ${params.format},
       ${totalRows},
@@ -590,6 +619,8 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
       WHERE owner_user_id = ${params.ownerUserId}
         AND source = ${params.source}
         AND platform = ${params.platform}
+        AND owner_scope_type = ${params.ownerScopeType}
+        AND owner_scope_ref = ${ownerScopeRef}
         AND is_active = true
     `;
   }
@@ -608,6 +639,8 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
         WHERE owner_user_id = ${params.ownerUserId}
           AND source = ${params.source}
           AND platform IS NOT DISTINCT FROM ${row.platform}
+          AND owner_scope_type = ${params.ownerScopeType}
+          AND owner_scope_ref = ${ownerScopeRef}
           AND external_ref = ${row.external_ref}
       `);
 
@@ -619,6 +652,8 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
           WHERE owner_user_id = ${params.ownerUserId}
             AND source = ${params.source}
             AND platform IS NOT DISTINCT FROM ${row.platform}
+            AND owner_scope_type = ${params.ownerScopeType}
+            AND owner_scope_ref = ${ownerScopeRef}
             AND normalized_name = ${normalizedName}
           ORDER BY updated_at DESC
           LIMIT 1
@@ -632,6 +667,9 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
           display_name = ${row.display_name},
           normalized_name = ${normalizedName},
           platform = ${row.platform},
+          owner_scope_type = ${params.ownerScopeType},
+          owner_scope_ref = ${ownerScopeRef},
+          owner_scope_label = ${ownerScopeLabel},
           aliases = ${JSON.stringify(row.aliases)},
           handles = ${JSON.stringify(row.handles)},
           emails = ${JSON.stringify(row.emails)},
@@ -654,6 +692,9 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
           owner_user_id,
           source,
           platform,
+          owner_scope_type,
+          owner_scope_ref,
+          owner_scope_label,
           external_ref,
           display_name,
           normalized_name,
@@ -671,6 +712,9 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
           ${params.ownerUserId},
           ${params.source},
           ${row.platform},
+          ${params.ownerScopeType},
+          ${ownerScopeRef},
+          ${ownerScopeLabel},
           ${row.external_ref},
           ${row.display_name},
           ${normalizedName},
@@ -697,6 +741,9 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
             FROM owner_contact_directory
             WHERE owner_user_id = ${params.ownerUserId}
               AND source = ${params.source}
+              AND platform IS NOT DISTINCT FROM ${row.platform}
+              AND owner_scope_type = ${params.ownerScopeType}
+              AND owner_scope_ref = ${ownerScopeRef}
               AND external_ref = ${row.external_ref}
             LIMIT 1
           `
@@ -710,6 +757,9 @@ export async function importOwnerContacts(params: ImportOwnerContactsParams): Pr
         UPDATE owner_contact_directory
         SET
           platform = ${row.platform},
+          owner_scope_type = ${params.ownerScopeType},
+          owner_scope_ref = ${ownerScopeRef},
+          owner_scope_label = ${ownerScopeLabel},
           display_name = ${row.display_name},
           normalized_name = ${normalizedName},
           aliases = ${JSON.stringify(row.aliases)},
@@ -744,10 +794,13 @@ export async function repairMalformedOwnerContactImports(params: {
     id: string;
     source: OwnerContactSource;
     platform: OwnerContactPlatform;
+    owner_scope_type: OwnerContactScopeType;
+    owner_scope_ref: string;
+    owner_scope_label: string | null;
     display_name: string;
   }>(
     `
-      SELECT id, source, platform, display_name
+      SELECT id, source, platform, owner_scope_type, owner_scope_ref, owner_scope_label, display_name
       FROM owner_contact_directory
       WHERE owner_user_id = $1
         AND source = 'paste_text'
@@ -772,6 +825,9 @@ export async function repairMalformedOwnerContactImports(params: {
       actorUserId: params.actorUserId,
       source: row.source,
       platform: row.platform,
+      ownerScopeType: row.owner_scope_type,
+      ownerScopeRef: row.owner_scope_ref,
+      ownerScopeLabel: row.owner_scope_label ?? row.owner_scope_ref,
       mode: "delta",
       format: "text",
       payload: row.display_name,
@@ -983,7 +1039,7 @@ export async function resolveLeadCandidatesAgainstOwnerContacts(params: {
   const contacts = await listOwnerContactDirectory({
     ownerUserId: params.ownerUserId,
     search: null,
-    limit: 500,
+    limit: RESOLVER_CONTACT_LIMIT,
     includeInactive: false,
     platform: null,
   });
