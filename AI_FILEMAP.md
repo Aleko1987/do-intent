@@ -1,97 +1,97 @@
-# File Map - DO Intent Project
+# AI File Map
 
-> Recent update summary: see `docs/RECENT_PROGRESS_2026-04-27.md`.
+## Repository Structure
+| Path | Purpose |
+|---|---|
+| `backend/` | Encore.dev backend services, raw APIs, database helpers, migrations, tests, and generated Encore files. |
+| `frontend/` | React/Vite frontend, generated Encore client, dashboard pages, tracking helpers, and UI components. |
+| `companion/` | Electron desktop companion for hotkey screenshot capture, OCR, optional local LLM extraction, and intake upload. |
+| `web/` | Legacy/minimal Express server wrapper for `/track` and `/ready`. |
+| `docs/` | Architecture, runbooks, social contract, stage plans, tracker snippets, and recent progress docs. |
+| `.github/` | GitHub workflows for Docker/image and migration automation. |
+| `.encore/`, `backend/.encore/` | Encore local/generated runtime data. Treat as tool-managed. |
+| `node_modules/`, `frontend/node_modules/`, `companion/node_modules/` | Installed dependencies. Do not inspect or edit for documentation unification. |
 
-## Backend Structure
-```
-backend/
-├── db/
-│   ├── db.ts                       # DB connection
-│   └── migrations/                 # SQL migrations
-├── intent_scorer/
-│   ├── encore.service.ts           # Service definition
-│   ├── types.ts                    # TypeScript interfaces
-│   ├── track.ts                    # Public /track endpoint (DB gated)
-│   ├── identify.ts                 # Anonymous -> identity promotion
-│   ├── health.ts                   # /health, /ready endpoints
-│   ├── ping.ts                     # /intent-scorer/ping
-│   ├── list_events.ts              # List scored events
-│   ├── compute_score.ts            # Score single event
-│   ├── recompute_scores.ts         # Batch recompute
-│   ├── list_rules.ts               # CRUD rules
-│   ├── update_rule.ts              # Update rule points
-│   ├── list_leads_intent.ts        # Auth/protected leads list
-│   ├── list_lead_rollups.ts        # Lead rollups (UI)
-│   ├── get_lead_trend.ts           # Lead trend (sparkline)
-│   ├── get_lead_top_signals.ts     # Top signals per lead
-│   └── seed_demo.ts                # Seed demo data
-├── marketing/
-│   ├── encore.service.ts
-│   ├── types.ts                    # MarketingLead, IntentEvent
-│   ├── identify.ts                 # /marketing/identify
-│   ├── ingest_intent_event.ts      # /marketing/ingest-intent-event + /api/v1/ingest
-│   ├── webhook_event.ts            # /marketing/events
-│   ├── events.ts                   # /api/v1/events debug list
-│   ├── list_leads.ts               # Basic lead listing
-│   └── create_lead.ts
-├── health/
-│   └── health.ts                   # /, /healthz, /health/version
-├── debug/
-│   └── debug_dbinfo.ts             # /api/v1/debug/dbinfo
-├── content/                        # Content planning APIs
-└── auth/
-    └── auth.ts                     # Clerk auth handler
-```
+## Root Documentation
+| File | Purpose |
+|---|---|
+| `AI_CONTEXT.md` | AI-readable product and maturity summary. |
+| `AI_FILEMAP.md` | This repo map. |
+| `AI_ARCHITECTURE.md` | AI-readable architecture overview. |
+| `AI_DATABASE.md` | AI-readable database/schema overview. |
+| `AI_API.md` | AI-readable API route overview. |
+| `AI_KEEP_DELETE.md` | Keep/delete/technical debt guidance. |
+| `AI_UNIFICATION_NOTES.md` | Notes for merging into a larger platform. |
+| `DEVELOPMENT.md` | Local dev, env, ingest, auth, and smoke-test instructions. |
+| `DEPLOY_RENDER_DOCKER.md` | Current Render/GHCR deployment guide. |
+| `INTEGRATIONS.md` | Website tracking/ingest integration notes. |
+| `TRACKING_AND_SCORING.md` | Tracking paths and scoring system summary. |
+| `INTENT_SCORER_README.md` / `INTENT_SCORER_SUMMARY.md` | Intent scorer feature documentation. |
 
-## Frontend Structure
-```
-frontend/
-├── pages/
-│   ├── IntentScorer.tsx            # Intent scorer UI (Leads/Events/Scores/Rules)
-│   ├── LeadIntent.tsx              # Lead intent dashboard
-│   ├── Marketing.tsx               # Marketing pipeline
-│   ├── Contact.tsx                 # Contact form + tracking
-│   ├── Pricing.tsx                 # Pricing page tracking
-│   └── CaseStudy.tsx               # Case study tracking
-├── components/
-│   ├── intent/
-│   │   ├── LeadsTab.tsx
-│   │   ├── EventsTab.tsx
-│   │   ├── ScoresTab.tsx
-│   │   ├── RulesTab.tsx
-│   │   └── LeadIntentDrawer.tsx
-│   ├── marketing/                  # Marketing pipeline components
-│   └── ui/                         # shadcn components
-├── lib/
-│   ├── doIntent.ts                 # Lead-based website integration
-│   ├── doIntentTracker.ts          # Anonymous-first tracking
-│   ├── useBackend.ts               # Backend client hook
-│   └── utils.ts
-└── App.tsx                          # Router setup
-```
+## Backend Folders
+| Folder | Purpose |
+|---|---|
+| `backend/auth/` | Clerk auth handler and Encore gateway. |
+| `backend/content/` | Authenticated content planning APIs and post logs. |
+| `backend/db/` | Postgres connection, migration runner, boot migrations, SQL migrations. |
+| `backend/health/` | Health endpoints. |
+| `backend/intent_scorer/` | Anonymous tracking, identify, scoring engine, score/rule APIs, rollups, tests. |
+| `backend/internal/` | Shared helpers for DB, CORS, env/secret resolution, owner user, correlation IDs, JSON types. |
+| `backend/marketing/` | Leads, events, candidate signals, entity resolution, owner contacts, social inbox, scoring config, tests. |
+| `backend/scripts/` | Build/deploy helper scripts. |
+| `backend/frontend/dist/` | Built frontend served by Encore; generated. |
+| `backend/encore.gen/` | Generated Encore clients/entrypoints; do not edit manually. |
 
-## Key Files for Leads + Intent Dashboards
-- Backend: `backend/intent_scorer/list_leads_intent.ts`
-- Backend: `backend/intent_scorer/list_lead_rollups.ts`
-- Backend: `backend/intent_scorer/get_lead_trend.ts`
-- Backend: `backend/intent_scorer/get_lead_top_signals.ts`
-- Frontend: `frontend/components/intent/LeadsTab.tsx`
-- Frontend: `frontend/components/intent/LeadIntentDrawer.tsx`
-- Frontend: `frontend/pages/IntentScorer.tsx`
-- Frontend: `frontend/pages/LeadIntent.tsx`
+## Frontend Folders
+| Folder / File | Purpose |
+|---|---|
+| `frontend/App.tsx` | Router and shell under basename `/app`. |
+| `frontend/main.tsx` | React bootstrap. |
+| `frontend/client.ts` | Generated Encore client with auth injection marker; treat as generated/sensitive. |
+| `frontend/pages/` | Product pages and dashboards: Marketing, IntentScorer, LeadIntent, Contact, Pricing, CaseStudy. |
+| `frontend/components/intent/` | Intent scorer tabs, lead drawer, events/scores/rules views. |
+| `frontend/components/marketing/` | Marketing pipeline, lead directory, candidate review, social inbox, owner contacts. |
+| `frontend/components/ui/` | Shared UI primitives. |
+| `frontend/lib/` | Website tracking helpers and backend client hooks. |
+| `frontend/src/lib/` | Clerk auth helper and fetch interceptor. |
+| `frontend/dist/` | Generated build output. |
 
-## Tracking & Ingest Environment Variables
-- `ENABLE_DB`: gates `/track` and `/api/v1/track` Postgres writes.
-- `DATABASE_URL`: Postgres connection string (pg Pool).
-- `DATABASE_USER`, `DATABASE_PASSWORD`, `DATABASE_HOSTPORT`, `DATABASE_NAME`: fallback DB config.
-- `INGEST_API_KEY`: required in production for `/marketing/ingest-intent-event` and `/api/v1/ingest` (`x-ingest-api-key`).
-- `ALLOWED_INGEST_ORIGINS`: optional origin allowlist.
-- `DISABLE_AUTH_FOR_INTENT_LIST`: enables `/intent-scorer/leads/public`.
+## Companion Folders
+| Folder / File | Purpose |
+|---|---|
+| `companion/src/main.ts` | Electron companion entrypoint. |
+| `companion/src/config.ts` | Required and optional capture/OCR/LLM env configuration. |
+| `companion/src/capture/` | Screen and region capture. |
+| `companion/src/ocr/` | Tesseract OCR. |
+| `companion/src/extraction/` | Optional local LLM extraction. |
+| `companion/src/hotkeys/` | Global hotkey parsing. |
+| `companion/src/intake/` | Upload client for DO-Intent capture intake. |
+| `companion/src/queue/` | Retry queue for failed uploads. |
+| `companion/dist/` | Generated companion build output. |
 
-## Track Endpoint Behavior Matrix
-| ENABLE_DB | DB configured | DB reachable | Response |
-| --- | --- | --- | --- |
-| not `"true"` | n/a | n/a | `200 { ok: true, stored: false, reason: "db_disabled" }` |
-| `"true"` | yes | yes | `200 { ok: true, stored: true }` |
-| `"true"` | no | n/a | `200 { ok: true, stored: false, reason: "db_error" }` |
-| `"true"` | yes | no / error | `200 { ok: true, stored: false, reason: "db_error", error_code: "<safe>" }` |
+## Config / Deployment Files
+| File | Purpose |
+|---|---|
+| `package.json` | Root Bun workspace and web wrapper scripts. |
+| `backend/package.json` | Backend build, migration, and guard scripts. |
+| `frontend/package.json` | Frontend Vite scripts and dependencies. |
+| `companion/package.json` | Companion build/test/dev scripts. |
+| `render.yaml` | Marked deprecated in file comments. |
+| `encore.app` | Encore app marker. |
+| `backend/infra-config.json` | Backend infra config; needs review before unification. |
+
+## Files Not To Touch Casually
+- `backend/db/migrations/`: migration history and repair scripts.
+- `backend/encore.gen/` and `frontend/client.ts`: generated Encore output.
+- `backend/auth/auth.ts`: Clerk auth and gateway behavior.
+- `backend/marketing/social_inbox.ts` and `docs/SOCIAL_INBOX_CONTRACT.md`: cross-repo DO-Socials contract surface.
+- `backend/internal/env_secrets.ts`: secret name resolution.
+- `companion/src/config.ts`: local capture/LLM env contract.
+- `eng.traineddata`: OCR model data.
+- Lock files: `bun.lock`, `package-lock.json`, `companion/package-lock.json`.
+
+## Open Questions / Needs Review
+- NEEDS REVIEW: Decide whether `web/` remains useful or is only legacy Render fallback.
+- NEEDS REVIEW: Decide whether `backend/frontend/dist`, `frontend/dist`, and `companion/dist` should be excluded from the future source repo.
+- NEEDS REVIEW: Confirm whether root `.env` templates should be added; currently only frontend env files were found and may contain environment-specific values.
+- UNKNOWN: Whether `backend/infra-config.json` is active in deployment.
