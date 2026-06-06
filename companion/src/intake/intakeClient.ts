@@ -12,12 +12,15 @@ function isRetryableStatus(status: number): boolean {
 
 export async function postCaptureIntake(params: {
   baseUrl: string;
+  path?: string;
   token: string;
   payload: Record<string, unknown>;
 }): Promise<IntakeResponse> {
   let response: Response;
   try {
-    response = await fetch(`${params.baseUrl}/marketing/capture-intake`, {
+    const path = params.path?.trim() || "/marketing/capture-intake";
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    response = await fetch(`${params.baseUrl.replace(/\/$/, "")}${normalizedPath}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",

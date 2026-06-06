@@ -13,6 +13,15 @@ import { postCaptureIntake } from "./intake/intakeClient.js";
 import { runOcrFromDataUrl } from "./ocr/runOcr.js";
 import { runLocalLlmExtraction, type LeadSuggestion } from "./extraction/localLlmExtractor.js";
 
+function installTimestampedConsole(): void {
+  for (const method of ["log", "info", "warn", "error"] as const) {
+    const original = console[method].bind(console);
+    console[method] = (...args: unknown[]) => original(`[${new Date().toISOString()}]`, ...args);
+  }
+}
+
+installTimestampedConsole();
+
 function showError(title: string, body: string): void {
   if (Notification.isSupported()) {
     new Notification({ title, body }).show();
@@ -195,6 +204,7 @@ async function bootstrap(): Promise<void> {
           const startedAtMs = Date.now();
           const intakeResponse = await postCaptureIntake({
             baseUrl: config.intakeBaseUrl,
+            path: config.intakePath,
             token: config.intakeToken,
             payload: item.payload,
           });

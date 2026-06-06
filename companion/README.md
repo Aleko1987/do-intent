@@ -6,7 +6,7 @@ This desktop companion captures cross-application screenshots with global hotkey
 
 ## Scope
 
-- Ingestion target: `POST /marketing/capture-intake` on DO-Intent.
+- Ingestion target: `POST /marketing/capture-intake` on DO-Intent by default. For unified production, set `DO_INTENT_CAPTURE_PATH=/api/v1/marketing/capture-intake`.
 - Human review gate remains mandatory in DO-Intent.
 - DO-Socials is not used in this ingestion step.
 
@@ -18,6 +18,7 @@ This desktop companion captures cross-application screenshots with global hotkey
 ## Required Environment Variables
 
 - `DO_INTENT_CAPTURE_BASE_URL` (example: `http://localhost:4000`)
+- `DO_INTENT_CAPTURE_PATH` (optional, default `/marketing/capture-intake`; use `/api/v1/marketing/capture-intake` for unified Vercel)
 - `DO_INTENT_CAPTURE_TOKEN` (Bearer token expected by DO-Intent capture endpoint)
 - `DO_INTENT_OWNER_USER_ID` (owner user id to attach candidate signal)
 

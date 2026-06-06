@@ -1,5 +1,6 @@
 export interface CompanionConfig {
   intakeBaseUrl: string;
+  intakePath: string;
   intakeToken: string;
   ownerUserId: string;
   defaultChannel: string;
@@ -49,6 +50,7 @@ function required(name: string): string {
 export function loadConfig(): CompanionConfig {
   return {
     intakeBaseUrl: required("DO_INTENT_CAPTURE_BASE_URL"),
+    intakePath: process.env.DO_INTENT_CAPTURE_PATH?.trim() || "/marketing/capture-intake",
     intakeToken: required("DO_INTENT_CAPTURE_TOKEN"),
     ownerUserId: required("DO_INTENT_OWNER_USER_ID"),
     defaultChannel: process.env.DO_INTENT_CAPTURE_CHANNEL?.trim() || "manual_upload",
