@@ -107,13 +107,15 @@ async function enrichCapturePayload(params: {
     }
   }
 
-  if (params.config.llmEnabled && rawText) {
+  if (params.config.llmEnabled && (rawText || (params.config.llmUseVision && params.imageDataUrl))) {
     const llmResult = await runLocalLlmExtraction({
       endpoint: params.config.llmEndpoint,
       model: params.config.llmModel,
       timeoutMs: params.config.llmTimeoutMs,
-      ocrText: rawText,
+      ocrText: rawText || "",
       minConfidence: params.config.minSuggestionConfidence,
+      imageDataUrl: params.imageDataUrl,
+      useVision: params.config.llmUseVision,
     });
     if (llmResult.ok) {
       suggestion = llmResult.suggestion;
@@ -124,6 +126,7 @@ async function enrichCapturePayload(params: {
       metadata.llm_confidence = llmResult.confidence;
       metadata.llm_extracted_at = llmResult.extractedAt;
       metadata.llm_ms = llmResult.elapsedMs;
+      metadata.llm_used_vision = llmResult.usedVision;
       metadata.lead_suggestion = Object.keys(llmResult.suggestion).length > 0 ? llmResult.suggestion : null;
       metadata.lead_suggestion_json =
         Object.keys(llmResult.suggestion).length > 0 ? JSON.stringify(llmResult.suggestion) : null;
@@ -135,10 +138,22 @@ async function enrichCapturePayload(params: {
           : null;
       metadata.lead_candidates_v2_json = JSON.stringify(llmResult.leadCandidates);
       metadata.llm_timeout_ms = params.config.llmTimeoutMs;
+      if (llmResult.socialCapture.actors.length > 0) {
+        metadata.social_capture_actors_json = JSON.stringify(llmResult.socialCapture);
+        metadata.social_capture_actor_count = llmResult.socialCapture.actors.length;
+      }
+      if (llmResult.socialCapture.signal_type) {
+        metadata.llm_signal_type = llmResult.socialCapture.signal_type;
+      }
+      if (llmResult.socialCapture.modal_type) {
+        metadata.llm_modal_type = llmResult.socialCapture.modal_type;
+      }
       console.info("[companion] LLM extraction completed", {
         correlationId: params.correlationId,
         elapsedMs: llmResult.elapsedMs,
         confidence: llmResult.confidence,
+        usedVision: llmResult.usedVision,
+        socialActorCount: llmResult.socialCapture.actors.length,
         hasSuggestion:
           Object.keys(llmResult.suggestion).length > 0 ||
           llmResult.analysis.entries.length > 0 ||

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 
-const MAX_SUGGESTION_JSON_BYTES = 8 * 1024;
+const MAX_SUGGESTION_JSON_BYTES = 16 * 1024;
 const MAX_FREEFORM_CHARS = 500;
+const PROMPT_VERSION = "local_extractor_v3";
 
 export interface LeadSuggestion {
   company_name?: string;
@@ -17,6 +18,17 @@ export interface LeadAnalysis {
   actions: string[];
   potential_lead: boolean | null;
   rationale?: string;
+}
+
+export interface SocialCaptureActor {
+  handle: string | null;
+  display_name: string | null;
+}
+
+export interface SocialCapture {
+  modal_type: string | null;
+  signal_type: string | null;
+  actors: SocialCaptureActor[];
 }
 
 export interface LeadCandidateV2 {
@@ -54,12 +66,14 @@ export interface LlmExtractionSuccess {
   ok: true;
   suggestion: LeadSuggestion;
   analysis: LeadAnalysis;
+  socialCapture: SocialCapture;
   confidence: number | null;
   provider: "ollama";
   model: string;
   extractedAt: string;
   elapsedMs: number;
   leadCandidates: LeadCandidatesPayloadV2;
+  usedVision: boolean;
 }
 
 export interface LlmExtractionFailure {
@@ -128,6 +142,39 @@ function sanitizePotentialLead(value: unknown): boolean | null {
   return null;
 }
 
+function sanitizeInstagramHandle(value: unknown): string | null {
+  const cleaned = sanitizeText(value, 64);
+  if (!cleaned) return null;
+  const handle = cleaned.replace(/^@/, "").toLowerCase().replace(/[^a-z0-9_.]/g, "");
+  return handle.length >= 3 ? handle : null;
+}
+
+export function sanitizeSocialCapture(value: unknown): SocialCapture {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { modal_type: null, signal_type: null, actors: [] };
+  }
+  const input = value as Record<string, unknown>;
+  const actors: SocialCaptureActor[] = [];
+  const seen = new Set<string>();
+  if (Array.isArray(input.actors)) {
+    for (const row of input.actors.slice(0, 24)) {
+      if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+      const record = row as Record<string, unknown>;
+      const handle = sanitizeInstagramHandle(record.handle ?? record.username);
+      const displayName = sanitizeText(record.display_name ?? record.displayName, 120) ?? null;
+      const key = handle || displayName?.toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      actors.push({ handle, display_name: displayName });
+    }
+  }
+  return {
+    modal_type: sanitizeText(input.modal_type, 64)?.toLowerCase() ?? null,
+    signal_type: sanitizeSuggestedEventType(input.signal_type) ?? null,
+    actors,
+  };
+}
+
 export function sanitizeSuggestion(value: unknown): LeadSuggestion {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -173,10 +220,25 @@ interface OllamaGenerateResponse {
   response?: string;
 }
 
-function buildPrompt(ocrText: string): string {
+function socialCaptureJsonSchema(): string[] {
+  return [
+    '  "social_capture": {',
+    '    "modal_type": "instagram_likes"|"facebook_reactions"|"instagram_follow_list"|"other"|null,',
+    '    "signal_type": "like"|"follow"|"comment"|"share"|"other"|null,',
+    '    "actors": [',
+    '      { "handle": string|null, "display_name": string|null }',
+    "    ]",
+    "  },",
+  ];
+}
+
+function buildTextPrompt(ocrText: string): string {
   const boundedText = ocrText.slice(0, 5000);
   return [
-    "You extract lead hints from OCR text.",
+    "You extract structured social engagement data from noisy OCR text.",
+    "Focus on Instagram/Facebook likes or reactions modals.",
+    "Each actor is one account row: username/handle plus optional display name.",
+    "Ignore browser chrome, Follow buttons, Likes headers, and UI junk.",
     "Return ONLY valid JSON with no markdown and no additional keys.",
     "Required shape:",
     "{",
@@ -194,17 +256,62 @@ function buildPrompt(ocrText: string): string {
     '    "potential_lead": boolean|null,',
     '    "rationale": string|null',
     "  },",
+    ...socialCaptureJsonSchema(),
     '  "llm_confidence": number|null',
     "}",
-    "Use null for unknown fields. Confidence must be between 0 and 1.",
+    "Rules:",
+    "- Put one object in social_capture.actors per visible account row.",
+    "- handle is the username without @.",
+    "- display_name is the human-readable name when visible, else null.",
+    "- Do not merge multiple people into one actor.",
+    "- Do not invent people not supported by OCR.",
     "OCR:",
     boundedText,
   ].join("\n");
 }
 
+function buildVisionPrompt(): string {
+  return [
+    "You analyze a screenshot of a social media app (Instagram or Facebook).",
+    "Extract every visible account/person row from a Likes, Reactions, or Follow list modal.",
+    "Return ONLY valid JSON with no markdown and no additional keys.",
+    "Required shape:",
+    "{",
+    '  "lead_suggestion": {',
+    '    "company_name": null,',
+    '    "contact_name": null,',
+    '    "email": null,',
+    '    "phone": null,',
+    '    "reason": null,',
+    '    "suggested_event_type": null',
+    "  },",
+    '  "lead_analysis": {',
+    '    "entries": string[],',
+    '    "actions": string[],',
+    '    "potential_lead": boolean|null,',
+    '    "rationale": string|null',
+    "  },",
+    ...socialCaptureJsonSchema(),
+    '  "llm_confidence": number|null',
+    "}",
+    "Rules:",
+    "- One actor per visible row in the modal list.",
+    "- handle is the username without @ (bold top line on Instagram).",
+    "- display_name is the gray secondary line when present, else null.",
+    "- Ignore Follow buttons, modal title, and close icon.",
+    "- Do not invent accounts that are not visibly listed.",
+  ].join("\n");
+}
+
+function dataUrlToBase64(dataUrl: string): string | null {
+  const match = /^data:image\/[a-z+]+;base64,(.+)$/i.exec(dataUrl.trim());
+  return match?.[1] ?? null;
+}
+
 function buildLeadCandidatesFromExtraction(params: {
   suggestion: LeadSuggestion;
   analysis: LeadAnalysis;
+  socialCapture: SocialCapture;
   confidence: number | null;
   model: string;
   elapsedMs: number;
@@ -219,27 +326,33 @@ function buildLeadCandidatesFromExtraction(params: {
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     .slice(0, 8);
   const intentType =
-    typeof params.suggestion.suggested_event_type === "string" && params.suggestion.suggested_event_type.length > 0
+    params.socialCapture.signal_type
+    || (typeof params.suggestion.suggested_event_type === "string" && params.suggestion.suggested_event_type.length > 0
       ? params.suggestion.suggested_event_type
-      : "other";
+      : "other");
 
   const snippets: LeadCandidateV2["evidence_snippets"] = [];
   if (params.ocrText.trim().length > 0) {
     snippets.push({ source: "ocr", text: params.ocrText.slice(0, 220) });
   }
+  for (const actor of params.socialCapture.actors.slice(0, 3)) {
+    const label = actor.display_name
+      ? `${actor.display_name}${actor.handle ? ` (@${actor.handle})` : ""}`
+      : actor.handle
+        ? `@${actor.handle}`
+        : null;
+    if (label) snippets.push({ source: "llm", text: label.slice(0, 220) });
+  }
   if (params.analysis.entries[0]) {
     snippets.push({ source: "llm", text: params.analysis.entries[0].slice(0, 220) });
-  }
-  if (params.analysis.actions[0]) {
-    snippets.push({ source: "llm", text: params.analysis.actions[0].slice(0, 220) });
   }
 
   const qualityFlags = new Set<LeadCandidatesPayloadV2["quality_flags"][number]>();
   if (params.llmError) qualityFlags.add("llm_timeout");
-  if (normalizedConfidence > 0 && normalizedConfidence < params.minConfidence) {
+  if (normalizedConfidence > 0 && normalizedConfidence < params.minConfidence && params.socialCapture.actors.length === 0) {
     qualityFlags.add("low_confidence");
   }
-  if (params.ocrText.trim().length < 20) {
+  if (params.ocrText.trim().length < 20 && params.socialCapture.actors.length === 0) {
     qualityFlags.add("ocr_sparse");
   }
 
@@ -248,7 +361,7 @@ function buildLeadCandidatesFromExtraction(params: {
     intent_type: intentType,
     confidence: Math.max(0, Math.min(1, normalizedConfidence)),
     evidence_snippets: snippets.slice(0, 6),
-    next_action: normalizedConfidence >= params.minConfidence ? "review" : "request_evidence",
+    next_action: normalizedConfidence >= params.minConfidence || params.socialCapture.actors.length > 0 ? "review" : "request_evidence",
     reasons,
     resolved_contact: null,
     resolution_candidates: [],
@@ -260,7 +373,7 @@ function buildLeadCandidatesFromExtraction(params: {
     model_meta: {
       provider: "ollama",
       model: params.model,
-      prompt_version: "local_extractor_v2",
+      prompt_version: PROMPT_VERSION,
       schema_version: "v2",
       elapsed_ms: params.elapsedMs,
       timeout_ms: params.timeoutMs,
@@ -283,21 +396,29 @@ export async function runLocalLlmExtraction(params: {
   timeoutMs: number;
   ocrText: string;
   minConfidence: number;
+  imageDataUrl?: string | null;
+  useVision?: boolean;
 }): Promise<LlmExtractionResult> {
   const startedAt = Date.now();
   const extractedAt = new Date().toISOString();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), params.timeoutMs).unref();
+  const imageBase64 = params.useVision && params.imageDataUrl ? dataUrlToBase64(params.imageDataUrl) : null;
+  const usedVision = Boolean(imageBase64);
 
   try {
+    const body: Record<string, unknown> = {
+      model: params.model,
+      stream: false,
+      prompt: usedVision ? buildVisionPrompt() : buildTextPrompt(params.ocrText),
+    };
+    if (imageBase64) {
+      body.images = [imageBase64];
+    }
     const response = await fetch(`${params.endpoint.replace(/\/$/, "")}/api/generate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model: params.model,
-        stream: false,
-        prompt: buildPrompt(params.ocrText),
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
     if (!response.ok) {
@@ -312,24 +433,32 @@ export async function runLocalLlmExtraction(params: {
     const parsed = JSON.parse(jsonSlice) as Record<string, unknown>;
     const suggestion = sanitizeSuggestion(parsed.lead_suggestion);
     const analysis = sanitizeLeadAnalysis(parsed.lead_analysis);
+    const socialCapture = sanitizeSocialCapture(parsed.social_capture);
     const confidence = sanitizeConfidence(parsed.llm_confidence);
+    const hasSocialActors = socialCapture.actors.length > 0;
     if (
-      (confidence ?? 0) < params.minConfidence ||
-      (countSuggestionFields(suggestion) === 0 && analysis.entries.length === 0 && analysis.actions.length === 0)
+      !hasSocialActors
+      && (
+        (confidence ?? 0) < params.minConfidence
+        || (countSuggestionFields(suggestion) === 0 && analysis.entries.length === 0 && analysis.actions.length === 0)
+      )
     ) {
       const elapsedMs = Date.now() - startedAt;
       return {
         ok: true,
         suggestion: {},
         analysis: { ...analysis, potential_lead: null },
+        socialCapture,
         confidence,
         provider: "ollama",
         model: params.model,
         extractedAt,
         elapsedMs,
+        usedVision,
         leadCandidates: buildLeadCandidatesFromExtraction({
           suggestion: {},
           analysis: { ...analysis, potential_lead: null },
+          socialCapture,
           confidence,
           model: params.model,
           elapsedMs,
@@ -346,14 +475,17 @@ export async function runLocalLlmExtraction(params: {
       ok: true,
       suggestion,
       analysis,
+      socialCapture,
       confidence,
       provider: "ollama",
       model: params.model,
       extractedAt,
       elapsedMs,
+      usedVision,
       leadCandidates: buildLeadCandidatesFromExtraction({
         suggestion,
         analysis,
+        socialCapture,
         confidence,
         model: params.model,
         elapsedMs,

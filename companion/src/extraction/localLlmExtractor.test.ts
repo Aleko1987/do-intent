@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { runLocalLlmExtraction, sanitizeLeadAnalysis, sanitizeSuggestion } from "./localLlmExtractor.js";
+import { runLocalLlmExtraction, sanitizeLeadAnalysis, sanitizeSocialCapture, sanitizeSuggestion } from "./localLlmExtractor.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -77,7 +77,38 @@ describe("runLocalLlmExtraction", () => {
     assert.deepEqual(result.analysis.actions, ["Requested quote"]);
     assert.equal(result.leadCandidates.schema_version, "v2");
     assert.equal(result.leadCandidates.lead_candidates.length, 1);
-    assert.equal(result.leadCandidates.model_meta.prompt_version, "local_extractor_v2");
+    assert.equal(result.leadCandidates.model_meta.prompt_version, "local_extractor_v3");
+  });
+
+  it("returns social capture actors from likes modal JSON", async () => {
+    globalThis.fetch = (async (_input, init) => {
+      const body = JSON.parse(String((init as RequestInit | undefined)?.body || "{}"));
+      assert.ok(Array.isArray(body.images));
+      return new Response(
+        JSON.stringify({
+          response:
+            '{"lead_suggestion":{},"lead_analysis":{"entries":[],"actions":[],"potential_lead":null},"social_capture":{"modal_type":"instagram_likes","signal_type":"like","actors":[{"handle":"ro_jimeneez","display_name":null},{"handle":"black_tatang","display_name":"VOODOO"},{"handle":"sujith.singh.399","display_name":"Sujith Singh"}]},"llm_confidence":0.92}',
+        }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    const result = await runLocalLlmExtraction({
+      endpoint: "http://127.0.0.1:11434",
+      model: "llama3.2-vision",
+      timeoutMs: 2000,
+      ocrText: "garbled ocr",
+      minConfidence: 0.35,
+      imageDataUrl: "data:image/png;base64,aGVsbG8=",
+      useVision: true,
+    });
+
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.usedVision, true);
+    assert.equal(result.socialCapture.actors.length, 3);
+    assert.equal(result.socialCapture.actors[1].handle, "black_tatang");
+    assert.equal(result.socialCapture.actors[2].display_name, "Sujith Singh");
   });
 
   it("returns empty suggestion when below confidence threshold", async () => {

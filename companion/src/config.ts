@@ -13,6 +13,7 @@ export interface CompanionConfig {
   appVersion: string | null;
   ocrEnabled: boolean;
   llmEnabled: boolean;
+  llmUseVision: boolean;
   llmEndpoint: string;
   llmModel: string;
   llmTimeoutMs: number;
@@ -62,9 +63,10 @@ export function loadConfig(): CompanionConfig {
     workstationId: process.env.DO_INTENT_WORKSTATION_ID?.trim() || null,
     appVersion: process.env.DO_INTENT_CAPTURE_APP_VERSION?.trim() || "1.0.0",
     ocrEnabled: parseBoolean("DO_INTENT_OCR_ENABLED", true),
-    llmEnabled: parseBoolean("DO_INTENT_LLM_ENABLED", false),
+    llmEnabled: parseBoolean("DO_INTENT_LLM_ENABLED", true),
+    llmUseVision: parseBoolean("DO_INTENT_LLM_USE_VISION", true),
     llmEndpoint: process.env.DO_INTENT_LLM_ENDPOINT?.trim() || "http://127.0.0.1:11434",
-    llmModel: process.env.DO_INTENT_LLM_MODEL?.trim() || "llama3.1:8b",
+    llmModel: process.env.DO_INTENT_LLM_MODEL?.trim() || "llama3.2-vision",
     llmTimeoutMs: parseNumber("DO_INTENT_LLM_TIMEOUT_MS", 12000),
     minSuggestionConfidence: parseBoundedNumber("DO_INTENT_MIN_SUGGESTION_CONFIDENCE", 0.35, 0, 1),
   };
