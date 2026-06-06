@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { runLocalLlmExtraction, sanitizeLeadAnalysis, sanitizeSocialCapture, sanitizeSuggestion } from "./localLlmExtractor.js";
+import { parseLlmJsonResponse, runLocalLlmExtraction, sanitizeLeadAnalysis, sanitizeSocialCapture, sanitizeSuggestion } from "./localLlmExtractor.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -48,6 +48,34 @@ describe("sanitizeLeadAnalysis", () => {
   });
 });
 
+describe("sanitizeSocialCapture", () => {
+  it("keeps only rows with valid instagram handles", () => {
+    const capture = sanitizeSocialCapture({
+      modal_type: "instagram_likes",
+      signal_type: "like",
+      actors: [
+        { handle: "nickharalambous", display_name: "Nick Haralambous" },
+        { handle: "BD Gomme", display_name: "BD Gomme" },
+        { handle: "adawg1987", display_name: "Alexandros Michaelides" },
+      ],
+    });
+    assert.equal(capture.actors.length, 2);
+    assert.equal(capture.actors[0]?.handle, "nickharalambous");
+    assert.equal(capture.actors[1]?.handle, "adawg1987");
+  });
+});
+
+describe("parseLlmJsonResponse", () => {
+  it("parses JSON with trailing commas", () => {
+    const parsed = parseLlmJsonResponse(`{
+      "social_capture": { "modal_type": "instagram_likes", "signal_type": "like", "actors": [ { "handle": "nini_hara", "display_name": "Andriani Nini" }, ] },
+      "llm_confidence": 0.8,
+    }`);
+    const capture = sanitizeSocialCapture(parsed.social_capture);
+    assert.equal(capture.actors[0]?.handle, "nini_hara");
+  });
+});
+
 describe("runLocalLlmExtraction", () => {
   it("returns sanitized suggestion from ollama JSON response", async () => {
     globalThis.fetch = (async () =>
@@ -78,6 +106,39 @@ describe("runLocalLlmExtraction", () => {
     assert.equal(result.leadCandidates.schema_version, "v2");
     assert.equal(result.leadCandidates.lead_candidates.length, 1);
     assert.equal(result.leadCandidates.model_meta.prompt_version, "local_extractor_v3");
+  });
+
+  it("retries once when the first JSON response is malformed", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(JSON.stringify({ response: "{ bad json: true, }" }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          response:
+            '{"lead_suggestion":{},"lead_analysis":{"entries":[],"actions":[],"potential_lead":null},"social_capture":{"modal_type":"instagram_likes","signal_type":"like","actors":[{"handle":"nini_hara","display_name":"Andriani Nini"}]},"llm_confidence":0.9}',
+        }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    const result = await runLocalLlmExtraction({
+      endpoint: "http://127.0.0.1:11434",
+      model: "llama3.2-vision",
+      timeoutMs: 2000,
+      ocrText: "garbled",
+      minConfidence: 0.35,
+      imageDataUrl: "data:image/png;base64,aGVsbG8=",
+      useVision: true,
+    });
+
+    assert.equal(calls, 2);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.socialCapture.actors[0]?.handle, "nini_hara");
+    assert.equal(result.leadCandidates.model_meta.fallback_used, true);
   });
 
   it("returns social capture actors from likes modal JSON", async () => {

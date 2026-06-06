@@ -36,8 +36,8 @@ This desktop companion captures cross-application screenshots with global hotkey
 - `DO_INTENT_LLM_ENABLED` (`true`/`false`, default `true`)
 - `DO_INTENT_LLM_USE_VISION` (`true`/`false`, default `true`; sends screenshot to Ollama vision model)
 - `DO_INTENT_LLM_ENDPOINT` (default `http://127.0.0.1:11434`)
-- `DO_INTENT_LLM_MODEL` (default `llama3.2-vision`)
-- `DO_INTENT_LLM_TIMEOUT_MS` (default `12000`)
+- `DO_INTENT_LLM_MODEL` (default `gemma3:27b`)
+- `DO_INTENT_LLM_TIMEOUT_MS` (default `120000`; 27B vision is slower than smaller models)
 - `DO_INTENT_MIN_SUGGESTION_CONFIDENCE` (`0..1`, default `0.35`)
 
 LLM extraction runs on every capture by default. It sends the cropped screenshot to a local Ollama vision model and returns structured `social_capture.actors` rows (handle + display name) for likes/reaction modals. The unified backend uses those actors before regex OCR parsing.
@@ -45,8 +45,10 @@ LLM extraction runs on every capture by default. It sends the cropped screenshot
 Install a vision model locally, for example:
 
 ```bash
-ollama pull llama3.2-vision
+ollama pull gemma3:27b
 ```
+
+Requires Ollama 0.6+ and roughly 18 GB VRAM/RAM for the 27B vision model. For lighter hardware use `gemma3:12b` or `llama3.2-vision` via `DO_INTENT_LLM_MODEL`.
 
 To disable vision and use OCR text only, set `DO_INTENT_LLM_USE_VISION=false`.
 

@@ -165,6 +165,7 @@ async function enrichCapturePayload(params: {
       metadata.llm_model = llmResult.model;
       metadata.llm_extracted_at = llmResult.extractedAt;
       metadata.llm_ms = llmResult.elapsedMs;
+      metadata.llm_used_vision = params.config.llmUseVision;
       metadata.llm_error = llmResult.error;
       metadata.llm_timeout_ms = params.config.llmTimeoutMs;
       console.warn("[companion] LLM extraction failed", {

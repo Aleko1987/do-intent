@@ -145,8 +145,13 @@ function sanitizePotentialLead(value: unknown): boolean | null {
 function sanitizeInstagramHandle(value: unknown): string | null {
   const cleaned = sanitizeText(value, 64);
   if (!cleaned) return null;
-  const handle = cleaned.replace(/^@/, "").toLowerCase().replace(/[^a-z0-9_.]/g, "");
-  return handle.length >= 3 ? handle : null;
+  const normalized = cleaned.replace(/^@/, "").toLowerCase();
+  if (!/^[a-z0-9_.]+$/.test(normalized)) return null;
+  return isValidInstagramHandle(normalized) ? normalized : null;
+}
+
+export function isValidInstagramHandle(handle: string | null | undefined): handle is string {
+  return Boolean(handle && /^[a-z][a-z0-9_.]{2,30}$/.test(handle));
 }
 
 export function sanitizeSocialCapture(value: unknown): SocialCapture {
@@ -161,10 +166,9 @@ export function sanitizeSocialCapture(value: unknown): SocialCapture {
       if (!row || typeof row !== "object" || Array.isArray(row)) continue;
       const record = row as Record<string, unknown>;
       const handle = sanitizeInstagramHandle(record.handle ?? record.username);
+      if (!handle || seen.has(handle)) continue;
       const displayName = sanitizeText(record.display_name ?? record.displayName, 120) ?? null;
-      const key = handle || displayName?.toLowerCase();
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
+      seen.add(handle);
       actors.push({ handle, display_name: displayName });
     }
   }
@@ -204,12 +208,31 @@ export function sanitizeLeadAnalysis(value: unknown): LeadAnalysis {
 }
 
 function extractJsonObject(text: string): string {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
+  const trimmed = String(text || "").trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "");
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) {
     throw new Error("LLM response did not include JSON object");
   }
-  return text.slice(start, end + 1);
+  return trimmed.slice(start, end + 1);
+}
+
+export function parseLlmJsonResponse(rawText: string): Record<string, unknown> {
+  const slice = extractJsonObject(rawText);
+  const attempts = [
+    slice,
+    slice.replace(/,\s*([}\]])/g, "$1"),
+    slice.replace(/([{,]\s*)'([^']+)'(\s*:)/g, "$1\"$2\"$3").replace(/:\s*'([^']*)'/g, ": \"$1\""),
+  ];
+  let lastError: unknown = null;
+  for (const attempt of attempts) {
+    try {
+      return JSON.parse(attempt) as Record<string, unknown>;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("LLM response JSON could not be parsed");
 }
 
 function countSuggestionFields(suggestion: LeadSuggestion): number {
@@ -274,7 +297,7 @@ function buildVisionPrompt(): string {
   return [
     "You analyze a screenshot of a social media app (Instagram or Facebook).",
     "Extract every visible account/person row from a Likes, Reactions, or Follow list modal.",
-    "Return ONLY valid JSON with no markdown and no additional keys.",
+    "Return ONLY valid JSON. Use double quotes for all keys and strings. No comments or trailing commas.",
     "Required shape:",
     "{",
     '  "lead_suggestion": {',
@@ -286,20 +309,46 @@ function buildVisionPrompt(): string {
     '    "suggested_event_type": null',
     "  },",
     '  "lead_analysis": {',
-    '    "entries": string[],',
-    '    "actions": string[],',
-    '    "potential_lead": boolean|null,',
-    '    "rationale": string|null',
+    '    "entries": [],',
+    '    "actions": [],',
+    '    "potential_lead": null,',
+    '    "rationale": null',
     "  },",
-    ...socialCaptureJsonSchema(),
-    '  "llm_confidence": number|null',
+    '  "social_capture": {',
+    '    "modal_type": "instagram_likes",',
+    '    "signal_type": "like",',
+    '    "actors": [',
+    '      { "handle": "joseluis_zreik", "display_name": "Jose Luis Zreik" },',
+    '      { "handle": "viorelmo2026", "display_name": "Viorel" },',
+    '      { "handle": "simon.kohler180699", "display_name": "Simon Kohler" },',
+    '      { "handle": "nini_hara", "display_name": "Andriani Nini" },',
+    '      { "handle": "adawg1987", "display_name": "Alexandros Michaelides" },',
+    '      { "handle": "nickharalambous", "display_name": "Nick Haralambous" }',
+    "    ]",
+    "  },",
+    '  "llm_confidence": 0.9',
     "}",
     "Rules:",
+    "- Extract EVERY visible row in the modal list, including partially visible top/bottom rows.",
     "- One actor per visible row in the modal list.",
-    "- handle is the username without @ (bold top line on Instagram).",
+    "- handle is the lowercase username without @ (bold top line on Instagram).",
     "- display_name is the gray secondary line when present, else null.",
-    "- Ignore Follow buttons, modal title, and close icon.",
+    "- Ignore Follow/Following buttons, modal title, and close icon.",
     "- Do not invent accounts that are not visibly listed.",
+    "- Every actor must include a valid handle.",
+  ].join("\n");
+}
+
+function buildVisionRetryPrompt(): string {
+  return [
+    "Return ONLY valid JSON for visible Instagram likes/follow rows in the screenshot.",
+    "Use double quotes. No markdown.",
+    "{",
+    '  "lead_suggestion": { "company_name": null, "contact_name": null, "email": null, "phone": null, "reason": null, "suggested_event_type": null },',
+    '  "lead_analysis": { "entries": [], "actions": [], "potential_lead": null, "rationale": null },',
+    '  "social_capture": { "modal_type": "instagram_likes", "signal_type": "like", "actors": [ { "handle": "username", "display_name": "Display Name" } ] },',
+    '  "llm_confidence": 0.8',
+    "}",
   ].join("\n");
 }
 
@@ -390,6 +439,93 @@ function errorMessage(error: unknown): string {
   return "LLM extraction failed";
 }
 
+async function requestOllamaExtraction(params: {
+  endpoint: string;
+  model: string;
+  timeoutMs: number;
+  prompt: string;
+  imageBase64: string | null;
+  formatJson: boolean;
+}): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), params.timeoutMs).unref();
+  try {
+    const body: Record<string, unknown> = {
+      model: params.model,
+      stream: false,
+      prompt: params.prompt,
+    };
+    if (params.formatJson) body.format = "json";
+    if (params.imageBase64) body.images = [params.imageBase64];
+    const response = await fetch(`${params.endpoint.replace(/\/$/, "")}/api/generate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`LLM endpoint failed (${response.status})`);
+    }
+    const payload = (await response.json()) as OllamaGenerateResponse;
+    return typeof payload.response === "string" ? payload.response : "";
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function buildExtractionSuccess(params: {
+  parsed: Record<string, unknown>;
+  model: string;
+  extractedAt: string;
+  elapsedMs: number;
+  usedVision: boolean;
+  minConfidence: number;
+  ocrText: string;
+  timeoutMs: number;
+  fallbackUsed: boolean;
+}): LlmExtractionSuccess {
+  const suggestion = sanitizeSuggestion(params.parsed.lead_suggestion);
+  const analysis = sanitizeLeadAnalysis(params.parsed.lead_analysis);
+  const socialCapture = sanitizeSocialCapture(params.parsed.social_capture);
+  const confidence = sanitizeConfidence(params.parsed.llm_confidence);
+  const hasSocialActors = socialCapture.actors.length > 0;
+  const normalizedSuggestion = !hasSocialActors
+    && (
+      (confidence ?? 0) < params.minConfidence
+      || (countSuggestionFields(suggestion) === 0 && analysis.entries.length === 0 && analysis.actions.length === 0)
+    )
+    ? {}
+    : suggestion;
+  const normalizedAnalysis = !hasSocialActors && (confidence ?? 0) < params.minConfidence
+    ? { ...analysis, potential_lead: null }
+    : analysis;
+  return {
+    ok: true,
+    suggestion: normalizedSuggestion,
+    analysis: normalizedAnalysis,
+    socialCapture,
+    confidence,
+    provider: "ollama",
+    model: params.model,
+    extractedAt: params.extractedAt,
+    elapsedMs: params.elapsedMs,
+    usedVision: params.usedVision,
+    leadCandidates: buildLeadCandidatesFromExtraction({
+      suggestion: normalizedSuggestion,
+      analysis: normalizedAnalysis,
+      socialCapture,
+      confidence,
+      model: params.model,
+      elapsedMs: params.elapsedMs,
+      timeoutMs: params.timeoutMs,
+      fallbackUsed: params.fallbackUsed,
+      llmError: false,
+      minConfidence: params.minConfidence,
+      ocrText: params.ocrText,
+    }),
+  };
+}
+
 export async function runLocalLlmExtraction(params: {
   endpoint: string;
   model: string;
@@ -401,111 +537,57 @@ export async function runLocalLlmExtraction(params: {
 }): Promise<LlmExtractionResult> {
   const startedAt = Date.now();
   const extractedAt = new Date().toISOString();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), params.timeoutMs).unref();
   const imageBase64 = params.useVision && params.imageDataUrl ? dataUrlToBase64(params.imageDataUrl) : null;
   const usedVision = Boolean(imageBase64);
-
-  try {
-    const body: Record<string, unknown> = {
-      model: params.model,
-      stream: false,
+  const attempts = [
+    {
       prompt: usedVision ? buildVisionPrompt() : buildTextPrompt(params.ocrText),
-    };
-    if (imageBase64) {
-      body.images = [imageBase64];
-    }
-    const response = await fetch(`${params.endpoint.replace(/\/$/, "")}/api/generate`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`LLM endpoint failed (${response.status})`);
-    }
-    const payload = (await response.json()) as OllamaGenerateResponse;
-    const rawText = typeof payload.response === "string" ? payload.response : "";
-    const jsonSlice = extractJsonObject(rawText);
-    if (Buffer.byteLength(jsonSlice, "utf8") > MAX_SUGGESTION_JSON_BYTES) {
-      throw new Error("LLM suggestion payload too large");
-    }
-    const parsed = JSON.parse(jsonSlice) as Record<string, unknown>;
-    const suggestion = sanitizeSuggestion(parsed.lead_suggestion);
-    const analysis = sanitizeLeadAnalysis(parsed.lead_analysis);
-    const socialCapture = sanitizeSocialCapture(parsed.social_capture);
-    const confidence = sanitizeConfidence(parsed.llm_confidence);
-    const hasSocialActors = socialCapture.actors.length > 0;
-    if (
-      !hasSocialActors
-      && (
-        (confidence ?? 0) < params.minConfidence
-        || (countSuggestionFields(suggestion) === 0 && analysis.entries.length === 0 && analysis.actions.length === 0)
-      )
-    ) {
-      const elapsedMs = Date.now() - startedAt;
-      return {
-        ok: true,
-        suggestion: {},
-        analysis: { ...analysis, potential_lead: null },
-        socialCapture,
-        confidence,
-        provider: "ollama",
+      formatJson: true,
+    },
+    {
+      prompt: usedVision ? buildVisionRetryPrompt() : buildTextPrompt(params.ocrText),
+      formatJson: true,
+    },
+  ];
+
+  let lastError: unknown = null;
+  for (const [index, attempt] of attempts.entries()) {
+    try {
+      const rawText = await requestOllamaExtraction({
+        endpoint: params.endpoint,
+        model: params.model,
+        timeoutMs: params.timeoutMs,
+        prompt: attempt.prompt,
+        imageBase64,
+        formatJson: attempt.formatJson,
+      });
+      const jsonSlice = extractJsonObject(rawText);
+      if (Buffer.byteLength(jsonSlice, "utf8") > MAX_SUGGESTION_JSON_BYTES) {
+        throw new Error("LLM suggestion payload too large");
+      }
+      const parsed = parseLlmJsonResponse(rawText);
+      return buildExtractionSuccess({
+        parsed,
         model: params.model,
         extractedAt,
-        elapsedMs,
+        elapsedMs: Date.now() - startedAt,
         usedVision,
-        leadCandidates: buildLeadCandidatesFromExtraction({
-          suggestion: {},
-          analysis: { ...analysis, potential_lead: null },
-          socialCapture,
-          confidence,
-          model: params.model,
-          elapsedMs,
-          timeoutMs: params.timeoutMs,
-          fallbackUsed: true,
-          llmError: false,
-          minConfidence: params.minConfidence,
-          ocrText: params.ocrText,
-        }),
-      };
-    }
-    const elapsedMs = Date.now() - startedAt;
-    return {
-      ok: true,
-      suggestion,
-      analysis,
-      socialCapture,
-      confidence,
-      provider: "ollama",
-      model: params.model,
-      extractedAt,
-      elapsedMs,
-      usedVision,
-      leadCandidates: buildLeadCandidatesFromExtraction({
-        suggestion,
-        analysis,
-        socialCapture,
-        confidence,
-        model: params.model,
-        elapsedMs,
-        timeoutMs: params.timeoutMs,
-        fallbackUsed: false,
-        llmError: false,
         minConfidence: params.minConfidence,
         ocrText: params.ocrText,
-      }),
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      error: errorMessage(error),
-      provider: "ollama",
-      model: params.model,
-      extractedAt,
-      elapsedMs: Date.now() - startedAt,
-    };
-  } finally {
-    clearTimeout(timeout);
+        timeoutMs: params.timeoutMs,
+        fallbackUsed: index > 0,
+      });
+    } catch (error) {
+      lastError = error;
+    }
   }
+
+  return {
+    ok: false,
+    error: errorMessage(lastError),
+    provider: "ollama",
+    model: params.model,
+    extractedAt,
+    elapsedMs: Date.now() - startedAt,
+  };
 }
